@@ -1,6 +1,6 @@
 {
   "name": "vune",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A small SwiftUI-like declarative UI layer for Vue with optional build-time macros.",
   "type": "module",
   "sideEffects": false,
@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test:runtime": "node --test tests/core.test.mjs tests/view.test.mjs tests/macro.test.mjs tests/interop.test.mjs",
+    "test:runtime": "node --test tests/core.test.mjs tests/view.test.mjs tests/macro.test.mjs tests/interop.test.mjs tests/widgets.test.mjs",
     "test:ssr": "node --test tests/ssr.test.mjs",
     "test": "npm run build && npm run test:types && npm run test:runtime && npm run test:ssr",
     "dev": "vite --config examples/vite.config.ts",

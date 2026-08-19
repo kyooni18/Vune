@@ -27,6 +27,32 @@ export {
 } from './elements.js'
 
 export {
+  Image,
+  Label,
+  Link,
+  Picker,
+  ProgressView,
+  Slider,
+  Stepper,
+} from './controls.js'
+
+export {
+  LazyGrid,
+  LazyHStack,
+  LazyVStack,
+  List,
+  Section,
+} from './collections.js'
+
+export {
+  Alert,
+  Menu,
+  NavigationLink,
+  NavigationStack,
+  Sheet,
+} from './presentation.js'
+
+export {
   KeepAlive,
   Suspense,
   Teleport,
@@ -69,15 +95,42 @@ export type {
 } from './types.js'
 
 export type {
-  StatelessViewDefinition,
-  ViewBody,
-  ViewDefinition,
-} from './view.js'
-
-export type {
   ButtonProps,
   TextAreaOptions,
   TextFieldOptions,
   TextProps,
   ToggleProps,
 } from './elements.js'
+
+export type {
+  ImageFit,
+  ImageOptions,
+  LabelOptions,
+  PickerOption,
+  PickerProps,
+  ProgressViewOptions,
+  SliderOptions,
+  StepperOptions,
+} from './controls.js'
+
+export type {
+  LazyGridOptions,
+  LazyHStackOptions,
+  LazyOptions,
+  LazyVStackOptions,
+  ListOptions,
+  SectionOptions,
+} from './collections.js'
+
+export type {
+  AlertAction,
+  AlertOptions,
+  RouterLike,
+  SheetOptions,
+} from './presentation.js'
+
+export type {
+  StatelessViewDefinition,
+  ViewBody,
+  ViewDefinition,
+} from './view.js'

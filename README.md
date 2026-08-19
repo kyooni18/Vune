@@ -84,6 +84,56 @@ HStack(
 
 The rule is simple: Vune owns the component's external layout slot; Vue owns the component itself. `withProps()` and `attr()` remain explicit escape hatches when attributes should go directly to the component VNode.
 
+## Extended primitives
+
+Vune 0.9 adds common application building blocks without adding a second renderer or UI runtime:
+
+```ts
+Image('/avatar.png', { alt: 'Profile', fit: 'cover', loading: 'lazy' })
+Label('Profile', Text('●'))
+Link('Settings', '/settings')
+
+ProgressView(progress, { max: 1 })
+Picker(category, categories)
+Slider(volume, { min: 0, max: 1, step: 0.05 })
+Stepper(quantity, { min: 0, max: 10 })
+
+List(
+  Section('Account',
+    Text('Profile'),
+    Text('Security'),
+  ),
+)
+
+LazyVStack({ estimatedItemSize: 56 }, ...rows)
+LazyHStack(...cards)
+LazyGrid({ columns: 3, estimatedItemSize: 160 }, ...cards)
+```
+
+`Lazy*` uses browser-native `content-visibility` hints. Vue still owns all VNodes and component instances; use any normal Vue virtualization component when true windowed virtualization is needed.
+
+Navigation stays router-agnostic. A Vue Router instance can be passed directly because it already exposes `push()`:
+
+```ts
+NavigationStack(
+  router,
+  VStack(
+    NavigationLink('/profile', 'Profile'),
+    NavigationLink({ name: 'settings' }, 'Settings'),
+  ),
+)
+```
+
+Presentation primitives use existing platform/Vue behavior:
+
+```ts
+Sheet(showingDetails, detailsView)
+Alert(showingAlert, { title: 'Delete item?' })
+Menu('Actions', editButton, deleteButton)
+```
+
+`Sheet()` and `Alert()` use Vue `Teleport`; `Menu()` uses native `details` / `summary`.
+
 ## Core primitives
 
 ```ts
@@ -114,10 +164,11 @@ The explicit `View()` API remains supported for non-Vite projects and advanced c
 npm test
 ```
 
-The suite covers VNode interoperability, component layout hosting, props/slots/emits/refs/lifecycle preservation, coordinate-free layout, `View()` state lifetime, macro transforms, controls, model binding, type contracts, SSR, and Vue 3.3/latest compatibility in CI.
+The suite covers VNode interoperability, component layout hosting, props/slots/emits/refs/lifecycle preservation, coordinate-free layout, `View()` state lifetime, macro transforms, native controls, collections, presentation primitives, model binding, type contracts, SSR, and Vue 3.3/latest compatibility in CI.
 
 ## Documentation
 
+- [Additional primitives](docs/WIDGETS.md)
 - [Macros](docs/MACROS.md)
 - [View API](docs/VIEW.md)
 - [API reference](docs/API.md)

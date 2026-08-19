@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0
+
+- Added `Image`, `Label`, and `Link` native-web primitives.
+- Added `ProgressView`, `Picker`, `Slider`, and `Stepper` controls with Vue ref bindings.
+- Added semantic `List` and `Section` collection primitives.
+- Added `LazyVStack`, `LazyHStack`, and `LazyGrid` using browser-native `content-visibility` hints without introducing a virtualization runtime.
+- Added router-agnostic `NavigationStack` and `NavigationLink`; Vue Router instances work through their existing `push()` API without making `vue-router` a Vune dependency.
+- Added Teleport-based `Sheet` and `Alert`, plus a native `details`/`summary` `Menu`.
+- Preserved the 0.8 component-layout boundary: Vune owns external layout while Vue owns component props, slots, emits, refs, lifecycle, state and rendering.
+- Added runtime and type-contract coverage for the new primitives.
+
 ## 0.8.0
 
 - Made ordinary Vue component VNodes first-class Vune layout items through a neutral outer layout host.
