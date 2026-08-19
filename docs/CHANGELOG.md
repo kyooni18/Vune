@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Added coordinate-free semantic stack options: `VStack({ alignment, spacing })`, `HStack({ alignment, spacing })`, and `ZStack({ alignment })`.
+- Added SwiftUI-style alignment names including `leading`, `trailing`, `topLeading`, and `bottomTrailing`.
+- Added `.alignment()` for semantic alignment on styled nodes and containers.
+- Added `frame({ maxWidth: 'infinity' })` / `maxHeight: 'infinity'` expansion plus frame alignment.
+- Kept `.position()`, `.align()`, `.justify()`, transforms, and raw CSS available as lower-level escape hatches.
+- Added runtime and type-contract coverage for semantic layout behavior.
+
 ## 0.4.0
 
 - Added `ScrollView()` with vertical, horizontal, and two-axis native overflow behavior.

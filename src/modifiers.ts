@@ -1,5 +1,6 @@
 import { cloneVNode, type CSSProperties, type Ref, type VNode, type VNodeRef } from 'vue'
 import type {
+  Alignment,
   Axis,
   BorderOptions,
   ClassValue,
@@ -15,6 +16,68 @@ const styledProxySet = new WeakSet<object>()
 
 function cssLength(value: Length): string {
   return typeof value === 'number' ? `${value}px` : value
+}
+
+function resolvedStyle(vnode: VNode): CSSProperties {
+  const source = vnode.props?.style
+  if (!source) return {}
+  if (!Array.isArray(source)) return typeof source === 'object' ? source as CSSProperties : {}
+  return Object.assign({}, ...source.map(item => {
+    if (Array.isArray(item)) return Object.assign({}, ...item)
+    return typeof item === 'object' && item !== null ? item : {}
+  }))
+}
+
+function alignmentParts(alignment: Alignment): {
+  horizontal: 'leading' | 'center' | 'trailing'
+  vertical: 'top' | 'center' | 'bottom'
+} {
+  switch (alignment) {
+    case 'leading': return { horizontal: 'leading', vertical: 'center' }
+    case 'trailing': return { horizontal: 'trailing', vertical: 'center' }
+    case 'top': return { horizontal: 'center', vertical: 'top' }
+    case 'bottom': return { horizontal: 'center', vertical: 'bottom' }
+    case 'topLeading': return { horizontal: 'leading', vertical: 'top' }
+    case 'topTrailing': return { horizontal: 'trailing', vertical: 'top' }
+    case 'bottomLeading': return { horizontal: 'leading', vertical: 'bottom' }
+    case 'bottomTrailing': return { horizontal: 'trailing', vertical: 'bottom' }
+    default: return { horizontal: 'center', vertical: 'center' }
+  }
+}
+
+function semanticAlignmentStyle(vnode: VNode, alignment: Alignment): CSSProperties {
+  const current = resolvedStyle(vnode)
+  const { horizontal, vertical } = alignmentParts(alignment)
+  const horizontalFlex = horizontal === 'leading'
+    ? 'flex-start'
+    : horizontal === 'trailing'
+      ? 'flex-end'
+      : 'center'
+  const verticalFlex = vertical === 'top'
+    ? 'flex-start'
+    : vertical === 'bottom'
+      ? 'flex-end'
+      : 'center'
+
+  if (current.display === 'grid') {
+    return {
+      justifyItems: horizontal === 'leading' ? 'start' : horizontal === 'trailing' ? 'end' : 'center',
+      alignItems: vertical === 'top' ? 'start' : vertical === 'bottom' ? 'end' : 'center',
+    }
+  }
+
+  if (current.display === 'flex') {
+    const column = String(current.flexDirection ?? 'row').startsWith('column')
+    return column
+      ? { alignItems: horizontalFlex, justifyContent: verticalFlex }
+      : { justifyContent: horizontalFlex, alignItems: verticalFlex }
+  }
+
+  return {
+    display: 'flex',
+    justifyContent: horizontalFlex,
+    alignItems: verticalFlex,
+  }
 }
 
 function edgeStyle(prefix: 'padding' | 'margin', axis: Axis, value: Length): CSSProperties {
@@ -114,9 +177,22 @@ const modifiers: Modifiers = {
     if (options.width !== undefined) style.width = cssLength(options.width)
     if (options.height !== undefined) style.height = cssLength(options.height)
     if (options.minWidth !== undefined) style.minWidth = cssLength(options.minWidth)
-    if (options.maxWidth !== undefined) style.maxWidth = cssLength(options.maxWidth)
+    if (options.maxWidth === 'infinity') {
+      style.width = '100%'
+      style.maxWidth = '100%'
+    } else if (options.maxWidth !== undefined) {
+      style.maxWidth = cssLength(options.maxWidth)
+    }
     if (options.minHeight !== undefined) style.minHeight = cssLength(options.minHeight)
-    if (options.maxHeight !== undefined) style.maxHeight = cssLength(options.maxHeight)
+    if (options.maxHeight === 'infinity') {
+      style.height = '100%'
+      style.maxHeight = '100%'
+    } else if (options.maxHeight !== undefined) {
+      style.maxHeight = cssLength(options.maxHeight)
+    }
+    if (options.alignment !== undefined) {
+      Object.assign(style, semanticAlignmentStyle(this, options.alignment))
+    }
     return patchStyle(this, style)
   },
 
@@ -198,6 +274,10 @@ const modifiers: Modifiers = {
 
   justify(this: VNode, value: NonNullable<CSSProperties['justifyContent']>) {
     return patchStyle(this, { justifyContent: value })
+  },
+
+  alignment(this: VNode, value: Alignment) {
+    return patchStyle(this, semanticAlignmentStyle(this, value))
   },
 
   position(this: VNode, value: NonNullable<CSSProperties['position']>) {

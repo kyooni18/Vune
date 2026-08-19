@@ -16,7 +16,9 @@ import {
   TextField,
   Toggle,
   VStack,
+  ZStack,
   type ComponentProps,
+  type Alignment,
   type ComponentSlots,
   type ScrollAxis,
 } from '../src/index.js'
@@ -32,6 +34,7 @@ Component(FunctionalCard, { title: 'Hello', count: 2 })
 // @ts-expect-error count must be numeric
 Component(FunctionalCard, { title: 'Hello', count: 'bad' })
 
+// Public-instance extraction used by imported SFC / defineComponent-like types.
 type SfcLike = abstract new () => {
   $props: {
     title: string
@@ -92,3 +95,17 @@ Rectangle().width(120).height(60).background('#eee')
 RoundedRectangle(12).width(120).height(60)
 Circle().width(40).height(40)
 Capsule().width(80).height(28)
+
+const semanticAlignment: Alignment = 'topTrailing'
+VStack({ alignment: 'leading', spacing: 12 }, Text('A'), Text('B'))
+HStack({ alignment: 'top', spacing: 8 }, Text('A'), Text('B'))
+ZStack({ alignment: semanticAlignment }, Text('Back'), Text('Front'))
+Text('Fill').frame({ maxWidth: 'infinity', alignment: 'leading' })
+Text('Aligned').alignment('bottomTrailing')
+
+// @ts-expect-error VStack only accepts horizontal semantic alignment
+VStack({ alignment: 'top' }, Text('Invalid'))
+// @ts-expect-error HStack only accepts vertical semantic alignment
+HStack({ alignment: 'leading' }, Text('Invalid'))
+// @ts-expect-error unsupported semantic alignment
+ZStack({ alignment: 'upperRight' }, Text('Invalid'))

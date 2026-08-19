@@ -25,6 +25,8 @@ export default defineComponent({
 
         HStack(
           Button('+', increment),
+
+          // Ordinary Vue VNodes work directly.
           h(ExistingCard, { count: count.value }),
         ).gap(8),
       )
@@ -45,12 +47,48 @@ npm install vune vue
 
 Vue is a peer dependency. The package supports Vue 3.3+.
 
+## Coordinate-free layout
+
+Vune's default layout model is relationship-based rather than coordinate-based. Use stacks, semantic alignment, spacing, frames, and `Spacer()` before reaching for CSS positioning.
+
+```ts
+VStack({ alignment: 'leading', spacing: 12 },
+  Text('Profile').fontSize(28).bold(),
+  Text('No x/y coordinates required.'),
+
+  HStack({ alignment: 'center', spacing: 8 },
+    Button('Cancel', cancel),
+    Spacer(),
+    Button('Save', save),
+  )
+    .frame({ maxWidth: 'infinity' }),
+)
+```
+
+Semantic alignments use SwiftUI-style names: `leading`, `center`, `trailing`, `top`, `bottom`, `topLeading`, `topTrailing`, `bottomLeading`, and `bottomTrailing`. Stack constructors accept the alignments that make sense on their cross axis:
+
+```ts
+VStack({ alignment: 'leading', spacing: 16 }, ...children)
+HStack({ alignment: 'top', spacing: 12 }, ...children)
+ZStack({ alignment: 'topTrailing' }, background, badge)
+```
+
+A frame can expand to the available width or height without manual coordinates:
+
+```ts
+Text('Settings')
+  .frame({ maxWidth: 'infinity', alignment: 'leading' })
+```
+
+`.position()`, transforms, and raw CSS layout modifiers remain available as escape hatches for unusual web layouts, but they are not the primary layout path.
+
 ## Why this stays compatible with Vue
 
 The library does not create a second component model. A DSL node is still a Vue VNode:
 
 ```ts
 const title = Text('Profile')
+
 h('header', null, [title])
 ```
 

@@ -66,6 +66,16 @@ Slot typing uses the same idea with public `$slots`.
 
 The implementation deliberately does not parse runtime `props` options itself; Vue remains the source of truth for component types.
 
+## Coordinate-free layout
+
+Ordinary Vune layout should describe relationships rather than coordinates. Prefer `VStack`, `HStack`, `ZStack`, `Grid`, semantic alignment, spacing, `frame()`, and `Spacer()` before using explicit positioning or transforms.
+
+The public layout vocabulary intentionally uses names such as `leading`, `trailing`, `topLeading`, and `bottomTrailing` so callers can express intent without translating it into `top`, `left`, or pixel offsets. `frame({ maxWidth: 'infinity' })` represents filling the available parent width without requiring manual size arithmetic.
+
+This is a default path, not a restriction. Web layouts occasionally need CSS positioning, transforms, or application-specific style rules, so `.position()`, `.style()`, `.align()`, and `.justify()` remain available as lower-level escape hatches. The library should not hide CSS when CSS is genuinely the right tool.
+
+Semantic frame alignment still follows the library's no-hidden-wrapper rule: modifiers patch the node's own layout styles rather than inserting an implicit DOM element.
+
 ## Styling
 
 Common style operations are exposed as modifiers for readability. `style()` remains the universal escape hatch.

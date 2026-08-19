@@ -60,7 +60,9 @@ export default defineComponent({
 
     return function render() {
       return VStack(
+        { alignment: 'leading', spacing: 16 },
         HStack(
+          { spacing: 12 },
           Text('Vune').fontSize(28).bold(),
           Spacer(),
 
@@ -68,9 +70,12 @@ export default defineComponent({
           Component(NativeBadge, { label: 'Vue component' }),
         ),
 
-        Text(() => `Count: ${count.value}`).foreground('#666'),
+        Text(() => `Count: ${count.value}`)
+          .foreground('#666')
+          .frame({ maxWidth: 'infinity', alignment: 'leading' }),
 
         ZStack(
+          { alignment: 'center' },
           RoundedRectangle(18)
             .height(150)
             .background('linear-gradient(135deg, #eef2ff, #f8fafc)'),
@@ -126,6 +131,7 @@ export default defineComponent({
           .border({ color: '#bbb' }),
 
         HStack(
+          { spacing: 8 },
           Button('−', decrement),
           Button('+', increment),
 
@@ -135,9 +141,8 @@ export default defineComponent({
           // Raw() is only needed when adding modifiers to an existing VNode.
           Raw(h('strong', null, `Hello, ${name.value}`))
             .margin('left', 8),
-        ).gap(8),
+        ),
       )
-        .gap(16)
         .padding(24)
         .frame({ maxWidth: 640 })
         .margin('horizontal', 'auto')

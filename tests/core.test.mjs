@@ -144,6 +144,49 @@ test('layout primitives create predictable CSS structures', () => {
   assert.equal(z.children[1].key, 'front')
 })
 
+test('semantic stack alignment and spacing avoid coordinate-style layout', () => {
+  const column = VStack(
+    { alignment: 'leading', spacing: 12 },
+    Text('Title'),
+    Text('Body'),
+  )
+  assert.equal(styleOf(column).alignItems, 'flex-start')
+  assert.equal(styleOf(column).gap, '12px')
+
+  const row = HStack(
+    { alignment: 'top', spacing: 8 },
+    Text('A'),
+    Text('B'),
+  )
+  assert.equal(styleOf(row).alignItems, 'flex-start')
+  assert.equal(styleOf(row).gap, '8px')
+
+  const overlay = ZStack(
+    { alignment: 'bottomTrailing' },
+    Text('Back'),
+    Text('Badge'),
+  )
+  assert.equal(styleOf(overlay).justifyItems, 'end')
+  assert.equal(styleOf(overlay).alignItems, 'end')
+})
+
+test('frame infinity and semantic alignment expand without explicit coordinates', () => {
+  const title = Text('Hello').frame({
+    maxWidth: 'infinity',
+    alignment: 'leading',
+  })
+
+  assert.equal(styleOf(title).width, '100%')
+  assert.equal(styleOf(title).maxWidth, '100%')
+  assert.equal(styleOf(title).display, 'flex')
+  assert.equal(styleOf(title).justifyContent, 'flex-start')
+  assert.equal(styleOf(title).alignItems, 'center')
+
+  const column = VStack(Text('A'), Text('B')).alignment('topTrailing')
+  assert.equal(styleOf(column).alignItems, 'flex-end')
+  assert.equal(styleOf(column).justifyContent, 'flex-start')
+})
+
 test('ScrollView maps axes directly to native overflow behavior', () => {
   const vertical = ScrollView(VStack(Text('A'), Text('B'))).height(120)
   assert.equal(vertical.type, 'div')

@@ -20,9 +20,12 @@ import type {
   ComponentProps,
   ComponentSlots,
   GridOptions,
+  HStackOptions,
   Length,
   ScrollAxis,
   NativeProps,
+  VStackOptions,
+  ZStackOptions,
   StyledVNode,
   Value,
 } from './types.js'
@@ -40,6 +43,38 @@ function flatten(children: VNodeChild[]): VNodeChild[] {
 
   for (const child of children) append(child)
   return result
+}
+
+function isStackOptions(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && !isVNode(value)
+}
+
+function horizontalAlignment(value: 'leading' | 'center' | 'trailing'): 'flex-start' | 'center' | 'flex-end' {
+  return value === 'leading' ? 'flex-start' : value === 'trailing' ? 'flex-end' : 'center'
+}
+
+function verticalAlignment(value: 'top' | 'center' | 'bottom'): 'flex-start' | 'center' | 'flex-end' {
+  return value === 'top' ? 'flex-start' : value === 'bottom' ? 'flex-end' : 'center'
+}
+
+function stackAlignment(value: ZStackOptions['alignment']): {
+  justifyItems: 'start' | 'center' | 'end'
+  alignItems: 'start' | 'center' | 'end'
+} {
+  const horizontal = value?.includes('Leading') || value === 'leading'
+    ? 'start'
+    : value?.includes('Trailing') || value === 'trailing'
+      ? 'end'
+      : 'center'
+  const vertical = value?.startsWith('top') || value === 'top'
+    ? 'start'
+    : value?.startsWith('bottom') || value === 'bottom'
+      ? 'end'
+      : 'center'
+  return { justifyItems: horizontal, alignItems: vertical }
 }
 
 function cssTrack(value: number | string): string {
@@ -148,7 +183,12 @@ export function Capsule(): StyledVNode {
   return Box().radius('9999px')
 }
 
-export function VStack(...children: VNodeChild[]): StyledVNode {
+export function VStack(...children: VNodeChild[]): StyledVNode
+export function VStack(options: VStackOptions, ...children: VNodeChild[]): StyledVNode
+export function VStack(...args: any[]): StyledVNode {
+  const options: VStackOptions = isStackOptions(args[0]) ? args[0] as VStackOptions : {}
+  const children = isStackOptions(args[0]) ? args.slice(1) : args
+
   return styled(
     h(
       'div',
@@ -156,6 +196,12 @@ export function VStack(...children: VNodeChild[]): StyledVNode {
         style: {
           display: 'flex',
           flexDirection: 'column',
+          ...(options.alignment === undefined
+            ? {}
+            : { alignItems: horizontalAlignment(options.alignment) }),
+          ...(options.spacing === undefined
+            ? {}
+            : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
         },
       },
       flatten(children),
@@ -163,7 +209,12 @@ export function VStack(...children: VNodeChild[]): StyledVNode {
   )
 }
 
-export function HStack(...children: VNodeChild[]): StyledVNode {
+export function HStack(...children: VNodeChild[]): StyledVNode
+export function HStack(options: HStackOptions, ...children: VNodeChild[]): StyledVNode
+export function HStack(...args: any[]): StyledVNode {
+  const options: HStackOptions = isStackOptions(args[0]) ? args[0] as HStackOptions : {}
+  const children = isStackOptions(args[0]) ? args.slice(1) : args
+
   return styled(
     h(
       'div',
@@ -171,7 +222,10 @@ export function HStack(...children: VNodeChild[]): StyledVNode {
         style: {
           display: 'flex',
           flexDirection: 'row',
-          alignItems: 'center',
+          alignItems: verticalAlignment(options.alignment ?? 'center'),
+          ...(options.spacing === undefined
+            ? {}
+            : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
         },
       },
       flatten(children),
@@ -182,7 +236,11 @@ export function HStack(...children: VNodeChild[]): StyledVNode {
 /**
  * Overlays children in the same CSS grid cell. Each child gets one lightweight layer wrapper.
  */
-export function ZStack(...children: VNodeChild[]): StyledVNode {
+export function ZStack(...children: VNodeChild[]): StyledVNode
+export function ZStack(options: ZStackOptions, ...children: VNodeChild[]): StyledVNode
+export function ZStack(...args: any[]): StyledVNode {
+  const options: ZStackOptions = isStackOptions(args[0]) ? args[0] as ZStackOptions : {}
+  const children = isStackOptions(args[0]) ? args.slice(1) : args
   const layers = flatten(children).map((child) =>
     h(
       'div',
@@ -200,6 +258,7 @@ export function ZStack(...children: VNodeChild[]): StyledVNode {
       {
         style: {
           display: 'grid',
+          ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)),
         },
       },
       layers,

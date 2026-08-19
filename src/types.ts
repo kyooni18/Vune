@@ -13,6 +13,18 @@ import type {
 export type Value<T> = MaybeRefOrGetter<T>
 export type Length = number | string
 export type ScrollAxis = 'vertical' | 'horizontal' | 'both'
+export type HorizontalAlignment = 'leading' | 'center' | 'trailing'
+export type VerticalAlignment = 'top' | 'center' | 'bottom'
+export type Alignment =
+  | 'center'
+  | 'leading'
+  | 'trailing'
+  | 'top'
+  | 'bottom'
+  | 'topLeading'
+  | 'topTrailing'
+  | 'bottomLeading'
+  | 'bottomTrailing'
 export type Axis =
   | 'all'
   | 'horizontal'
@@ -67,9 +79,24 @@ export interface FrameOptions {
   width?: Length
   height?: Length
   minWidth?: Length
-  maxWidth?: Length
+  maxWidth?: Length | 'infinity'
   minHeight?: Length
-  maxHeight?: Length
+  maxHeight?: Length | 'infinity'
+  alignment?: Alignment
+}
+
+export interface VStackOptions {
+  alignment?: HorizontalAlignment
+  spacing?: Length
+}
+
+export interface HStackOptions {
+  alignment?: VerticalAlignment
+  spacing?: Length
+}
+
+export interface ZStackOptions {
+  alignment?: Alignment
 }
 
 export interface BorderOptions {
@@ -128,6 +155,7 @@ export interface Modifiers {
   order(value: number): StyledVNode
   align(value: NonNullable<CSSProperties['alignItems']>): StyledVNode
   justify(value: NonNullable<CSSProperties['justifyContent']>): StyledVNode
+  alignment(value: Alignment): StyledVNode
 
   position(value: NonNullable<CSSProperties['position']>): StyledVNode
   overflow(value: NonNullable<CSSProperties['overflow']>): StyledVNode

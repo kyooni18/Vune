@@ -38,6 +38,7 @@ export { Model } from './model.js'
 export { styled } from './modifiers.js'
 
 export type {
+  Alignment,
   AnyComponent,
   Axis,
   BorderOptions,
@@ -48,6 +49,8 @@ export type {
   EventHandler,
   FrameOptions,
   GridOptions,
+  HStackOptions,
+  HorizontalAlignment,
   Length,
   ModelOptions,
   Modifiers,
@@ -57,7 +60,10 @@ export type {
   SlotRenderer,
   StyledVNode,
   UIChild,
+  VerticalAlignment,
+  VStackOptions,
   Value,
+  ZStackOptions,
 } from './types.js'
 
 export type {
