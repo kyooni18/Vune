@@ -62,7 +62,7 @@ export function List(...args: any[]): StyledVNode {
             : { borderTop: '1px solid rgba(127, 127, 127, 0.22)' }),
         },
       },
-      layoutChild(child),
+      [layoutChild(child)],
     ),
   )
 
@@ -91,7 +91,7 @@ export interface SectionOptions {
 function sectionPart(value: VNodeChild | string | undefined, role: 'heading' | 'note'): VNodeChild | null {
   if (value === undefined) return null
   const child = typeof value === 'string' ? Text(value) : value
-  return h('div', { role }, child)
+  return h('div', { role }, [child])
 }
 
 export function Section(...children: VNodeChild[]): StyledVNode
