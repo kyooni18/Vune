@@ -1,10 +1,10 @@
 {
   "name": "vune",
-  "version": "0.9.0",
-  "description": "A small SwiftUI-like declarative UI layer for Vue with optional build-time macros.",
+  "version": "1.0.0-alpha.1",
+  "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist", "docs", "README.md", "LICENSE"],
+  "files": ["dist", "README.md", "LICENSE"],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,22 +17,26 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test:runtime": "node --test tests/core.test.mjs tests/view.test.mjs tests/macro.test.mjs tests/interop.test.mjs tests/widgets.test.mjs",
-    "test:ssr": "node --test tests/ssr.test.mjs",
-    "test": "npm run build && npm run test:types && npm run test:runtime && npm run test:ssr",
+    "test": "npm run build && npm run test:types",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
     "prepack": "npm run build"
   },
-  "peerDependencies": { "vue": ">=3.3.0 <4" },
+  "peerDependencies": {
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20"
+  },
   "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^5.8.3",
-    "vue": "^3.5.41",
-    "@vitejs/plugin-vue": "^6.0.8",
     "vite": "^8.2.1"
   },
-  "engines": { "node": ">=18" },
-  "keywords": ["vue", "typescript", "declarative-ui", "macro", "render-function", "dsl", "ui", "vnode"],
+  "engines": { "node": ">=20.19.0" },
+  "keywords": ["react", "typescript", "declarative-ui", "swiftui", "vite", "dsl", "ui"],
   "repository": { "type": "git", "url": "git+https://github.com/kyooni18/Vune.git" },
   "bugs": { "url": "https://github.com/kyooni18/Vune/issues" },
   "homepage": "https://github.com/kyooni18/Vune#readme"

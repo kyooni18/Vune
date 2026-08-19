@@ -13,5 +13,14 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  "files": [
+    "src/index.ts",
+    "src/elements.ts",
+    "src/layout.ts",
+    "src/modifiers.ts",
+    "src/state.ts",
+    "src/types.ts",
+    "src/view.ts",
+    "src/vite.ts"
+  ]
 }
