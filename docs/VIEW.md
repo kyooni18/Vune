@@ -1,33 +1,36 @@
 # View API
 
-`View()` is the normal entry point for declaring a Vune component without writing Vue render boilerplate.
+Vune has two view entry points. Macro-first projects normally use lowercase `view(...)`; projects that do not want a build transform can use `View(...)` directly.
 
-## Stateless views
+## Macro-first view
+
+After adding `vuneMacro()` to Vite, normal source can avoid `setup()`, `render()`, and arrow wrappers:
 
 ```ts
-import { Text, View, VStack } from 'vune'
+import { Action, Button, State, Text, VStack, view } from 'vune'
 
-export default View(() =>
+const count = State(0)
+
+export default view(
   VStack(
-    Text('Hello'),
-    Text('Declarative Vue without a hand-written render function.'),
+    Text(`Count: ${count.value}`),
+    Button('+', Action(count.value += 1)),
   )
 )
 ```
 
-## Stateful views
+`State()` is relocated into per-instance component state, `view(...)` becomes the reactive view body, and `Action(...)` becomes an event callback at build time.
+
+## Manual fallback
+
+The underlying runtime API remains public:
 
 ```ts
 import { ref } from 'vue'
 import { Button, Text, View, VStack } from 'vune'
 
 export default View({
-  name: 'Counter',
-
-  state: () => ({
-    count: ref(0),
-  }),
-
+  state: () => ({ count: ref(0) }),
   body: ({ count }) =>
     VStack(
       Text(() => count.value),
@@ -36,10 +39,6 @@ export default View({
 })
 ```
 
-`state()` executes inside Vue component setup and exactly once for each component instance. This means Vue refs, computed values, composables, and lifecycle registration can be created there while keeping `setup()` out of application-facing Vune code.
+`View()` is useful outside Vite, when writing library internals, or whenever explicit functions are preferable.
 
-`body` becomes the Vue render body internally. It is reevaluated through Vue's normal reactivity, so getters such as `Text(() => count.value)` participate in the same dependency tracking as an ordinary Vue render function.
-
-## Escape to Vue
-
-`View()` is convenience, not a separate runtime. Existing components may continue to use `defineComponent()`, render functions, SFC templates, JSX, or `h()`. Vune primitives are real VNodes and interoperate with those approaches directly.
+Both forms still use Vue's renderer, reactivity, components, composables, and VNodes. The macro is syntax sugar, not a second runtime.

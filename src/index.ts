@@ -34,6 +34,7 @@ export {
   TransitionGroup,
 } from './builtins.js'
 
+export { Action, State, view } from './macro.js'
 export { Model } from './model.js'
 export { styled } from './modifiers.js'
 export { View } from './view.js'

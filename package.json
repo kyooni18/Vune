@@ -1,7 +1,7 @@
 {
   "name": "vune",
-  "version": "0.6.0",
-  "description": "A small SwiftUI-like declarative UI layer for Vue that returns real Vue VNodes.",
+  "version": "0.7.0",
+  "description": "A small SwiftUI-like declarative UI layer for Vue with optional build-time macros.",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -18,13 +18,17 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test:runtime": "node --test tests/core.test.mjs tests/view.test.mjs",
+    "test:runtime": "node --test tests/core.test.mjs tests/view.test.mjs tests/macro.test.mjs",
     "test:ssr": "node --test tests/ssr.test.mjs",
     "test": "npm run build && npm run test:types && npm run test:runtime && npm run test:ssr",
     "dev": "vite --config examples/vite.config.ts",
@@ -47,6 +51,7 @@
     "vue",
     "typescript",
     "declarative-ui",
+    "macro",
     "render-function",
     "dsl",
     "ui",

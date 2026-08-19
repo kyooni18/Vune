@@ -1,14 +1,20 @@
 # Changelog
 
+## 0.7.0
+
+- Added the optional `vuneMacro()` Vite transform through the `vune/vite` package entry.
+- Added macro-first `view(...)`, `State(...)`, and `Action(...)` forms so ordinary Vune view source can avoid `setup()`, `render()`, and common `() =>` wrappers.
+- `State(...)` declarations are relocated into per-component-instance state during the transform.
+- `Action(expression)` is rewritten into a deferred event callback rather than evaluating during render.
+- Reworked the example app to contain no authored arrow functions.
+- Added macro transform runtime tests, type-contract coverage, documentation, and explicit runtime errors when macro-only forms are used without the plugin.
+- Kept `View()` as the macro-free fallback and Vue as the only renderer/reactivity system.
+
 ## 0.6.0
 
-- Added `View()` as the primary declarative component entry point.
-- Normal Vune views no longer need callers to write `defineComponent()`, `setup()`, or a render function.
-- Added `View(() => body)` for stateless views.
-- Added `View({ state, body })` for stateful views; state is created once per Vue component instance while `body` participates in Vue reactive rendering.
-- Reworked the example app and README to use `View()` as the default style.
-- Added dedicated runtime and type-contract tests for the View API.
-- Kept ordinary Vue SFCs, `defineComponent()`, render functions, composables, lifecycle hooks, and `h()` as fully supported escape/interoperability paths.
+- Added `View()` as a declarative component entry point that hides `defineComponent()`, `setup()`, and hand-written render functions.
+- Added stateful and stateless view forms while preserving per-instance Vue state lifetime.
+- Reworked the example and README around declarative views.
 
 ## 0.5.0
 
@@ -33,12 +39,12 @@
 - Added `Box()` as an explicit `div` styling boundary.
 - Changed `Group()` to return a plain Vue Fragment without modifier chaining.
 - Preserved keyed child identity through `ZStack()` layer wrappers.
-- Switched bound native control listener composition to Vue `mergeProps()` semantics.
+- Switched native bound controls to Vue `mergeProps()` listener semantics.
 - Added Vue native HTML attribute types and Vue 3.3/latest compatibility CI.
 
 ## 0.2.0
 
-- Added typed `Component()`, `Grid`, `ZStack`, `TextArea`, model helpers, typed events, Vue built-in wrappers, runtime/type/SSR tests, and expanded documentation.
+- Added typed `Component()`, `Grid`, `ZStack`, `TextArea`, model helpers, key/ref helpers, typed DOM events, Vue built-ins, and expanded tests/docs.
 
 ## 0.1.0
 
