@@ -1,4 +1,11 @@
 import { cloneVNode, type CSSProperties, type Ref, type VNode, type VNodeRef } from 'vue'
+import {
+  copyLayoutProps,
+  isComponentVNode,
+  layoutStyleOf,
+  setLayoutClass,
+  setLayoutStyle,
+} from './layout.js'
 import type {
   Alignment,
   Axis,
@@ -19,6 +26,7 @@ function cssLength(value: Length): string {
 }
 
 function resolvedStyle(vnode: VNode): CSSProperties {
+  if (isComponentVNode(vnode)) return layoutStyleOf(vnode) ?? {}
   const source = vnode.props?.style
   if (!source) return {}
   if (!Array.isArray(source)) return typeof source === 'object' ? source as CSSProperties : {}
@@ -101,10 +109,18 @@ function edgeStyle(prefix: 'padding' | 'margin', axis: Axis, value: Length): CSS
 }
 
 function patch(vnode: VNode, extraProps: Record<string, unknown>, mergeRef = false): StyledVNode {
-  return styled(cloneVNode(vnode, extraProps, mergeRef))
+  const clone = cloneVNode(vnode, extraProps, mergeRef)
+  copyLayoutProps(vnode, clone)
+  return styled(clone)
 }
 
 function patchStyle(vnode: VNode, style: CSSProperties): StyledVNode {
+  if (isComponentVNode(vnode)) {
+    const clone = cloneVNode(vnode)
+    copyLayoutProps(vnode, clone)
+    setLayoutStyle(clone, style)
+    return styled(clone)
+  }
   return patch(vnode, { style })
 }
 
@@ -332,6 +348,12 @@ const modifiers: Modifiers = {
   },
 
   className(this: VNode, value: ClassValue) {
+    if (isComponentVNode(this)) {
+      const clone = cloneVNode(this)
+      copyLayoutProps(this, clone)
+      setLayoutClass(clone, value)
+      return styled(clone)
+    }
     return patch(this, { class: value })
   },
 

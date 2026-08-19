@@ -15,6 +15,12 @@ import {
   type VNodeProps,
   type VNodeRef,
 } from 'vue'
+import {
+  isComponentVNode,
+  layoutChild,
+  layoutChildren,
+  layoutPropsOf,
+} from './layout.js'
 import { styled } from './modifiers.js'
 import type {
   ComponentProps,
@@ -91,9 +97,6 @@ export function Element(
   return styled(h(tag, props, flatten(children)))
 }
 
-/**
- * Creates an ordinary Vue component VNode while preserving public prop and slot types.
- */
 export function Component<C extends VueComponent>(
   component: C,
   props: ComponentProps<C> | null = null,
@@ -102,10 +105,8 @@ export function Component<C extends VueComponent>(
   return styled(h(component as any, props as any, slots as any))
 }
 
-/** @deprecated Use Component() instead. */
 export const ComponentNode = Component
 
-/** Identity helper useful when extracting a slots object into a local variable. */
 export function Slots<S extends Record<string, ((...args: any[]) => VNodeChild) | undefined>>(
   slots: S,
 ): S {
@@ -124,24 +125,14 @@ export function TemplateRef(reference: VNodeRef, child: VNode, merge = false): S
   return styled(child).templateRef(reference, merge)
 }
 
-/**
- * Groups children without creating a DOM element. Because a Fragment has no CSS box,
- * Group intentionally does not expose modifier chaining. Use Box() when a real
- * styling boundary is required.
- */
 export function Group(...children: VNodeChild[]): VNode {
   return h(Fragment, null, flatten(children))
 }
 
-/** Creates a neutral div that can be used as an explicit styling boundary. */
 export function Box(...children: VNodeChild[]): StyledVNode {
-  return styled(h('div', null, flatten(children)))
+  return styled(h('div', null, layoutChildren(flatten(children))))
 }
 
-/**
- * Creates a native overflow container without introducing a custom scrolling system.
- * Compose multiple children with a stack or Group before passing them in.
- */
 export function ScrollView(
   child: VNodeChild,
   axis: ScrollAxis = 'vertical',
@@ -150,35 +141,22 @@ export function ScrollView(
   const overflowY = axis === 'vertical' || axis === 'both' ? 'auto' : 'hidden'
 
   return styled(
-    h(
-      'div',
-      {
-        style: {
-          overflowX,
-          overflowY,
-        },
-      },
-      child,
-    ),
+    h('div', { style: { overflowX, overflowY } }, layoutChild(child)),
   )
 }
 
-/** A neutral rectangular CSS box. */
 export function Rectangle(): StyledVNode {
   return Box()
 }
 
-/** A rectangular CSS box with a configurable corner radius. */
 export function RoundedRectangle(radius: Length = 8): StyledVNode {
   return Box().radius(radius)
 }
 
-/** A CSS box with a 50% border radius. Use equal width and height for a circle. */
 export function Circle(): StyledVNode {
   return Box().radius('50%')
 }
 
-/** A pill-shaped CSS box using an effectively unbounded corner radius. */
 export function Capsule(): StyledVNode {
   return Box().radius('9999px')
 }
@@ -196,15 +174,11 @@ export function VStack(...args: any[]): StyledVNode {
         style: {
           display: 'flex',
           flexDirection: 'column',
-          ...(options.alignment === undefined
-            ? {}
-            : { alignItems: horizontalAlignment(options.alignment) }),
-          ...(options.spacing === undefined
-            ? {}
-            : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
+          ...(options.alignment === undefined ? {} : { alignItems: horizontalAlignment(options.alignment) }),
+          ...(options.spacing === undefined ? {} : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
         },
       },
-      flatten(children),
+      layoutChildren(flatten(children)),
     ),
   )
 }
@@ -223,44 +197,41 @@ export function HStack(...args: any[]): StyledVNode {
           display: 'flex',
           flexDirection: 'row',
           alignItems: verticalAlignment(options.alignment ?? 'center'),
-          ...(options.spacing === undefined
-            ? {}
-            : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
+          ...(options.spacing === undefined ? {} : { gap: typeof options.spacing === 'number' ? `${options.spacing}px` : options.spacing }),
         },
       },
-      flatten(children),
+      layoutChildren(flatten(children)),
     ),
   )
 }
 
-/**
- * Overlays children in the same CSS grid cell. Each child gets one lightweight layer wrapper.
- */
 export function ZStack(...children: VNodeChild[]): StyledVNode
 export function ZStack(options: ZStackOptions, ...children: VNodeChild[]): StyledVNode
 export function ZStack(...args: any[]): StyledVNode {
   const options: ZStackOptions = isStackOptions(args[0]) ? args[0] as ZStackOptions : {}
   const children = isStackOptions(args[0]) ? args.slice(1) : args
-  const layers = flatten(children).map((child) =>
-    h(
+  const layers = flatten(children).map((child) => {
+    const component = isVNode(child) && isComponentVNode(child)
+    const layout = component ? layoutPropsOf(child as VNode) : undefined
+    return h(
       'div',
       {
         key: isVNode(child) ? child.key : undefined,
-        style: { gridArea: '1 / 1' },
+        ...(component ? { 'data-vune-layout-host': '' } : {}),
+        ...(layout?.class === undefined ? {} : { class: layout.class }),
+        style: {
+          gridArea: '1 / 1',
+          ...(component ? { minWidth: 0, minHeight: 0, ...(layout?.style ?? {}) } : {}),
+        },
       },
       child,
-    ),
-  )
+    )
+  })
 
   return styled(
     h(
       'div',
-      {
-        style: {
-          display: 'grid',
-          ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)),
-        },
-      },
+      { style: { display: 'grid', ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)) } },
       layers,
     ),
   )
@@ -281,15 +252,11 @@ export function Grid(
         style: {
           display: 'grid',
           gridTemplateColumns: cssTrack(options.columns ?? 1),
-          ...(options.rows === undefined
-            ? {}
-            : { gridTemplateRows: cssTrack(options.rows) }),
-          ...(options.autoFlow === undefined
-            ? {}
-            : { gridAutoFlow: options.autoFlow }),
+          ...(options.rows === undefined ? {} : { gridTemplateRows: cssTrack(options.rows) }),
+          ...(options.autoFlow === undefined ? {} : { gridAutoFlow: options.autoFlow }),
         },
       },
-      flatten(children),
+      layoutChildren(flatten(children)),
     ),
   )
 }
@@ -310,13 +277,7 @@ export function Button(
   action: (event: MouseEvent) => unknown,
   props: ButtonProps | null = null,
 ): StyledVNode {
-  return styled(
-    h(
-      'button',
-      mergeProps(props ?? {}, { type: 'button', onClick: action }),
-      String(toValue(label)),
-    ),
-  )
+  return styled(h('button', mergeProps(props ?? {}, { type: 'button', onClick: action }), String(toValue(label))))
 }
 
 export type TextFieldOptions = InputHTMLAttributes & VNodeProps
@@ -330,16 +291,7 @@ export function TextField(
     if (target) value.value = target.value
   }
 
-  return styled(
-    h(
-      'input',
-      mergeProps(
-        { onInput: update },
-        options,
-        { value: value.value },
-      ),
-    ),
-  )
+  return styled(h('input', mergeProps({ onInput: update }, options, { value: value.value })))
 }
 
 export type TextAreaOptions = TextareaHTMLAttributes & VNodeProps
@@ -353,16 +305,7 @@ export function TextArea(
     if (target) value.value = target.value
   }
 
-  return styled(
-    h(
-      'textarea',
-      mergeProps(
-        { onInput: update },
-        options,
-        { value: value.value },
-      ),
-    ),
-  )
+  return styled(h('textarea', mergeProps({ onInput: update }, options, { value: value.value })))
 }
 
 export type ToggleProps = InputHTMLAttributes & VNodeProps
@@ -377,17 +320,7 @@ export function Toggle(
   }
 
   return styled(
-    h(
-      'input',
-      mergeProps(
-        { onChange: update },
-        props ?? {},
-        {
-          type: 'checkbox',
-          checked: value.value,
-        },
-      ),
-    ),
+    h('input', mergeProps({ onChange: update }, props ?? {}, { type: 'checkbox', checked: value.value })),
   )
 }
 
@@ -397,11 +330,7 @@ export function Spacer(minLength?: Length): StyledVNode {
       'aria-hidden': 'true',
       style: {
         flexGrow: 1,
-        flexBasis: minLength === undefined
-          ? '0px'
-          : typeof minLength === 'number'
-            ? `${minLength}px`
-            : minLength,
+        flexBasis: minLength === undefined ? '0px' : typeof minLength === 'number' ? `${minLength}px` : minLength,
       },
     }),
   )

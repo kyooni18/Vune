@@ -27,24 +27,18 @@ const count = State(0)
 export default view(
   VStack(
     { alignment: 'leading', spacing: 16 },
-
-    Text(`Count: ${count.value}`)
-      .fontSize(28)
-      .bold(),
-
+    Text(`Count: ${count.value}`).fontSize(28).bold(),
     HStack(
       { spacing: 8 },
       Button('−', Action(count.value -= 1)),
       Button('+', Action(count.value += 1)),
       Spacer(),
-    )
-      .frame({ maxWidth: 'infinity' }),
-  )
-    .padding(24),
+    ).frame({ maxWidth: 'infinity' }),
+  ).padding(24),
 )
 ```
 
-`State()` becomes per-component-instance reactive state, `view(...)` becomes the Vue render body, and `Action(expression)` becomes an event callback during the Vite transform. The source stays valid TypeScript and the generated code still delegates to Vue.
+`State()` becomes per-component-instance reactive state, `view(...)` becomes the Vue render body, and `Action(expression)` becomes an event callback during the Vite transform.
 
 ## Install
 
@@ -58,23 +52,37 @@ Vue is a peer dependency. Vune supports Vue 3.3+.
 
 Vune prefers relationships over coordinates. Start with `VStack`, `HStack`, `ZStack`, `Grid`, semantic alignment, spacing, `frame`, and `Spacer()` instead of manual x/y placement.
 
+## Native Vue components are first-class layout items
+
+Ordinary Vue components can sit beside Vune primitives and `Spacer()` without changing the component itself:
+
 ```ts
-VStack(
-  { alignment: 'leading', spacing: 12 },
-  Text('Profile').fontSize(28).bold(),
-  HStack(
-    { spacing: 8 },
-    Button('Cancel', cancel),
-    Spacer(),
-    Button('Save', save),
-  )
-    .frame({ maxWidth: 'infinity' }),
+import ProfileCard from './ProfileCard.vue'
+
+HStack(
+  Text('Profile'),
+  Spacer(),
+  Component(ProfileCard, { user })
+    .padding(12)
+    .frame({ minWidth: 240 }),
 )
 ```
 
-Semantic alignment names include `leading`, `center`, `trailing`, `top`, `bottom`, `topLeading`, `topTrailing`, `bottomLeading`, and `bottomTrailing`.
+Inside Vune layout containers, an ordinary Vue component gets one neutral outer layout host. Vune modifiers such as `padding`, `frame`, `grow`, alignment and visual styles apply to that host instead of being pushed through the component root via attribute fallthrough.
 
-Low-level `.position()`, transforms, `.style()`, `.align()`, and `.justify()` remain available as escape hatches when web-specific control is genuinely needed.
+The component VNode stays intact inside the host. Vue continues to own props, slots, emits, local refs/state, provide/inject, lifecycle hooks, template refs and rendering. Fragment/multi-root components and `inheritAttrs: false` components therefore remain one Vune layout item without changing their internals.
+
+Plain Vue VNodes work too:
+
+```ts
+HStack(
+  Text('Chart'),
+  Spacer(),
+  h(ThirdPartyChart, chartProps),
+)
+```
+
+The rule is simple: Vune owns the component's external layout slot; Vue owns the component itself. `withProps()` and `attr()` remain explicit escape hatches when attributes should go directly to the component VNode.
 
 ## Core primitives
 
@@ -94,29 +102,11 @@ Button('Save', save)
 TextField(name)
 TextArea(description)
 Toggle(enabled)
-
-Rectangle()
-RoundedRectangle(12)
-Circle()
-Capsule()
 ```
 
 ## No-macro fallback
 
-The explicit `View()` API remains supported for non-Vite projects and advanced code:
-
-```ts
-export default View({
-  state: () => ({ count: ref(0) }),
-  body: ({ count }) => VStack(Text(() => count.value)),
-})
-```
-
-Vune macros only rewrite the reserved `State`, `view`, and `Action` forms. They do not rewrite arbitrary JavaScript functions, so normal language and Vue behavior stay predictable.
-
-## Vue interoperability
-
-Vune does not introduce a second renderer or component model. Ordinary Vue VNodes can be placed inside Vune layouts, `Component()` can construct typed Vue components, and `Raw()` can add modifiers to an existing VNode.
+The explicit `View()` API remains supported for non-Vite projects and advanced code.
 
 ## Tests
 
@@ -124,9 +114,7 @@ Vune does not introduce a second renderer or component model. Ordinary Vue VNode
 npm test
 ```
 
-The suite covers VNode interoperability, coordinate-free layout, `View()` state lifetime, macro transforms, controls, model binding, type contracts, SSR, and Vue 3.3/latest compatibility in CI.
-
-Repository development uses Vite 8, so the demo toolchain requires Node 20.19+ or 22.12+. The published library keeps its package-level Node range at 18+.
+The suite covers VNode interoperability, component layout hosting, props/slots/emits/refs/lifecycle preservation, coordinate-free layout, `View()` state lifetime, macro transforms, controls, model binding, type contracts, SSR, and Vue 3.3/latest compatibility in CI.
 
 ## Documentation
 

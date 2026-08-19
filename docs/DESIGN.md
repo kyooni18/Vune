@@ -2,83 +2,36 @@
 
 ## Goals
 
-Vune is intended to be a readability layer over Vue render functions.
+Vune should keep Vue as the only renderer and reactivity system, return real VNodes, preserve JavaScript control flow and Vue component typing, and keep optional build-time transforms small and explicit.
 
-It should:
+## Native-component layout boundary
 
-1. keep Vue as the only renderer and reactivity system,
-2. return real VNodes,
-3. preserve normal JavaScript control flow,
-4. preserve component prop and slot typing where Vue exposes it,
-5. make escape to `h()` and raw CSS/props immediate,
-6. keep optional build-time transforms small, explicit, and independent from the runtime renderer.
+An opaque Vue component has two responsibilities that Vune must not confuse: its external position in the Vune layout and its internal Vue component tree/behavior.
 
-It should not become a second framework.
+For direct component children of Vune layout boundaries, Vune creates one neutral layout host. Layout/style metadata is attached to the outer host while the original component VNode remains its child.
 
-## Optional macro layer
+This makes Fragment/multi-root components and `inheritAttrs: false` deterministic layout items. Vune does not inspect or rewrite a component's rendered root to position it.
 
-The Vite macro is syntax sugar over the public runtime APIs. It rewrites only Vune-owned forms: `State(...)`, the default exported `view(...)`, and `Action(...)` expressions inside that view. The transformed result delegates to `View()` and Vue refs.
+Props, slots, emits, model bindings, keys and template refs remain on the component VNode. Local refs/state, composables, provide/inject and lifecycle remain Vue-owned. Keyed component identity is copied to the host so keyed sibling reordering preserves parent-level identity.
 
-The macro must not invent a second component lifecycle, renderer, reactivity graph, or expression language. It should be possible to understand the generated semantics in terms of ordinary `View()`, functions, and Vue state.
+Once inside a Vune layout, Vune intentionally owns the outer flex/grid item while the component owns everything inside it.
 
-Macro-free code remains supported. `View()` is the explicit fallback when a project does not use Vite or does not want source transformation.
+Automatic hosts are limited to Vune layout boundaries (`VStack`, `HStack`, `Grid`, `ZStack`, `Box`, `ScrollView`). Arbitrary `Element(tag, ...)` composition does not inject a `div`, because doing so could invalidate semantic HTML.
 
-## VNode identity
+## Styling
 
-Styled nodes are VNodes wrapped by a transparent JavaScript Proxy. The Proxy only intercepts modifier names. Any normal VNode field continues to come from the target.
+On native VNodes, style modifiers patch normal VNode style props. On component VNodes used in Vune layout, style-oriented modifiers are stored as layout-host metadata instead of being pushed through component attribute fallthrough.
 
-Calling a modifier does not mutate the target. It delegates to Vue's `cloneVNode()` and returns a styled clone.
-
-This preserves Vue class/style merging, event-listener composition, patch metadata, and original-node reuse.
-
-## Reserved VNode field names
-
-A Proxy method must never shadow a field that Vue's renderer reads from a VNode. Important collisions include `key`, `ref`, and `transition`, so the public modifier names are `keyed()`, `templateRef()`, and `cssTransition()`.
-
-## Reactivity
-
-Vune does not create a second reactive system. Runtime state is backed by Vue refs and Vue remains responsible for dependency tracking and invalidation.
-
-With the macro, top-level `State(...)` declarations associated with the default `view(...)` are relocated into per-component-instance state. Without the macro, `View({ state, body })` provides the same lifetime explicitly.
-
-## Component typing
-
-`ComponentProps<C>` infers public `$props` from component constructors when available, with functional-component fallbacks. Slot typing follows the same public-instance approach. Vue remains the source of truth for component types.
+`withProps()` and `attr()` remain explicit component-level escape hatches. `Group()` remains an unstyled Fragment.
 
 ## Coordinate-free layout
 
 Ordinary Vune layout should describe relationships rather than coordinates. Prefer `VStack`, `HStack`, `ZStack`, `Grid`, semantic alignment, spacing, `frame()`, and `Spacer()` before explicit positioning or transforms.
 
-The public vocabulary uses semantic names such as `leading`, `trailing`, `topLeading`, and `bottomTrailing`. `frame({ maxWidth: 'infinity' })` represents filling the available parent width without manual size arithmetic.
+## Reactivity and macros
 
-This is a default path, not a restriction. `.position()`, `.style()`, `.align()`, `.justify()`, and transforms remain lower-level escape hatches for web layouts that genuinely need them.
-
-## Styling
-
-Common style operations are exposed as modifiers for readability. `style()` remains the universal escape hatch.
-
-A modifier patches VNode props and does not imply a DOM wrapper. On component VNodes, styles follow Vue's ordinary attribute-fallthrough rules. `Group()` is an unstyled Fragment; `Box()` is the explicit real-DOM styling boundary.
-
-## Wrapper identity
-
-Primitives that add structural wrappers preserve identity at the sibling level Vue patches. `ZStack()` copies a keyed child VNode's key to its grid-layer wrapper while leaving the child untouched.
-
-## Controlled native props
-
-`TextField`, `TextArea`, and `Toggle` own the props required for their binding contract. User props are merged with Vue's `mergeProps()` so event listeners compose while controlled props remain authoritative.
-
-## Control flow
-
-There is no custom `If`, `ForEach`, or general expression language. JavaScript and TypeScript remain the control-flow language. The macro does not rewrite arbitrary lambdas or third-party APIs.
-
-## Built-ins
-
-Wrappers for Transition, TransitionGroup, Teleport, Suspense, and KeepAlive call the corresponding Vue exports rather than reimplementing those features.
+Vune does not create a second reactive system. Runtime state is backed by Vue refs and Vue remains responsible for dependency tracking and invalidation. The optional Vite macro remains syntax sugar over the public runtime APIs and must not create a second lifecycle, renderer or expression language.
 
 ## Compatibility policy
 
 The peer range is Vue 3.3 through Vue 3.x. New APIs should preserve that compatibility range unless a major version explicitly raises it.
-
-## Native scrolling and basic shapes
-
-`ScrollView()` maps directly to native CSS overflow. `Rectangle()`, `RoundedRectangle()`, `Circle()`, and `Capsule()` are thin presets over ordinary CSS boxes. Vector geometry and a separate graphics runtime remain out of scope.
