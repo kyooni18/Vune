@@ -1,30 +1,48 @@
-import { h, isVNode, type CSSProperties, type VNode, type VNodeChild } from 'vue'
+import {
+  Fragment,
+  createElement,
+  isValidElement,
+  type CSSProperties,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 import type { ClassValue } from './types.js'
 
 export interface ComponentLayoutProps {
-  class?: ClassValue
+  className?: ClassValue
   style?: CSSProperties
 }
 
-const componentLayoutProps = new WeakMap<object, ComponentLayoutProps>()
+export const vuneIntrinsic = Symbol.for('vune.intrinsic')
 
-export function isComponentVNode(vnode: VNode): boolean {
-  const type = vnode.type as any
-  if (typeof type === 'function') return true
-  if (typeof type !== 'object' || type === null) return false
-  if (type.__isTeleport === true) return false
+const componentLayoutProps = new WeakMap<object, ComponentLayoutProps>()
+const proxyTargets = new WeakMap<object, ReactElement>()
+
+function identity(element: ReactElement): ReactElement {
+  return proxyTargets.get(element as object) ?? element
+}
+
+export function registerStyledProxy(proxy: object, target: ReactElement): void {
+  proxyTargets.set(proxy, target)
+}
+
+export function markIntrinsic<T extends Function>(component: T): T {
+  Object.defineProperty(component, vuneIntrinsic, { value: true })
+  return component
+}
+
+export function isComponentElement(element: ReactElement): boolean {
+  const type = element.type as any
+  if (typeof type === 'string' || type === Fragment) return false
+  if (type?.[vuneIntrinsic] === true) return false
   return true
 }
 
-export function layoutPropsOf(vnode: VNode): ComponentLayoutProps | undefined {
-  return componentLayoutProps.get(vnode as object)
+export function layoutPropsOf(element: ReactElement): ComponentLayoutProps | undefined {
+  return componentLayoutProps.get(identity(element) as object)
 }
 
-export function layoutStyleOf(vnode: VNode): CSSProperties | undefined {
-  return layoutPropsOf(vnode)?.style
-}
-
-export function copyLayoutProps(source: VNode, target: VNode): void {
+export function copyLayoutProps(source: ReactElement, target: ReactElement): void {
   const props = layoutPropsOf(source)
   if (!props) return
   componentLayoutProps.set(target as object, {
@@ -33,45 +51,45 @@ export function copyLayoutProps(source: VNode, target: VNode): void {
   })
 }
 
-export function setLayoutStyle(vnode: VNode, style: CSSProperties): void {
-  const current = layoutPropsOf(vnode)
-  componentLayoutProps.set(vnode as object, {
+export function setLayoutStyle(element: ReactElement, style: CSSProperties): void {
+  const target = identity(element)
+  const current = componentLayoutProps.get(target as object)
+  componentLayoutProps.set(target as object, {
     ...current,
-    style: {
-      ...(current?.style ?? {}),
-      ...style,
-    },
+    style: { ...(current?.style ?? {}), ...style },
   })
 }
 
-export function setLayoutClass(vnode: VNode, value: ClassValue): void {
-  const current = layoutPropsOf(vnode)
-  componentLayoutProps.set(vnode as object, {
-    ...current,
-    class: value,
-  })
+export function setLayoutClass(element: ReactElement, className: ClassValue): void {
+  const target = identity(element)
+  const current = componentLayoutProps.get(target as object)
+  componentLayoutProps.set(target as object, { ...current, className })
 }
 
-export function layoutChild(child: VNodeChild): VNodeChild {
-  if (!isVNode(child) || !isComponentVNode(child)) return child
+function classNameOf(value: ClassValue): string | undefined {
+  if (Array.isArray(value)) return value.filter(Boolean).join(' ')
+  return value as string | undefined
+}
 
+export function layoutChild(child: ReactNode): ReactNode {
+  if (!isValidElement(child) || !isComponentElement(child)) return child
   const layout = layoutPropsOf(child)
-  return h(
+  return createElement(
     'div',
     {
       key: child.key ?? undefined,
       'data-vune-layout-host': '',
-      ...(layout?.class === undefined ? {} : { class: layout.class }),
+      className: classNameOf(layout?.className),
       style: {
         minWidth: 0,
         minHeight: 0,
         ...(layout?.style ?? {}),
       },
     },
-    [child],
+    child,
   )
 }
 
-export function layoutChildren(children: VNodeChild[]): VNodeChild[] {
+export function layoutChildren(children: ReactNode[]): ReactNode[] {
   return children.map(layoutChild)
 }
