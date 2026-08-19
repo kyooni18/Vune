@@ -8,10 +8,6 @@ export interface ComponentLayoutProps {
 
 const componentLayoutProps = new WeakMap<object, ComponentLayoutProps>()
 
-/**
- * True for ordinary Vue component VNodes. Native elements, Fragments, text,
- * comments and Teleports are not treated as opaque component layout items.
- */
 export function isComponentVNode(vnode: VNode): boolean {
   const type = vnode.type as any
   if (typeof type === 'function') return true
@@ -56,11 +52,6 @@ export function setLayoutClass(vnode: VNode, value: ClassValue): void {
   })
 }
 
-/**
- * Wraps an opaque Vue component in one neutral layout box. The original
- * component VNode stays intact inside the box, so refs, props, slots, emits,
- * state and lifecycle remain owned by Vue while Vune owns only its outer slot.
- */
 export function layoutChild(child: VNodeChild): VNodeChild {
   if (!isVNode(child) || !isComponentVNode(child)) return child
 
@@ -68,7 +59,7 @@ export function layoutChild(child: VNodeChild): VNodeChild {
   return h(
     'div',
     {
-      key: child.key,
+      key: child.key ?? undefined,
       'data-vune-layout-host': '',
       ...(layout?.class === undefined ? {} : { class: layout.class }),
       style: {
@@ -77,7 +68,7 @@ export function layoutChild(child: VNodeChild): VNodeChild {
         ...(layout?.style ?? {}),
       },
     },
-    child,
+    [child],
   )
 }
 
