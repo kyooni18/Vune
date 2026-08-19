@@ -1,10 +1,9 @@
 <script lang="ts">
-import { defineComponent, h, ref } from 'vue'
+import { h, ref } from 'vue'
 import {
   Button,
   Capsule,
   Circle,
-  Component,
   Grid,
   HStack,
   Raw,
@@ -16,137 +15,95 @@ import {
   TextArea,
   TextField,
   Toggle,
+  View,
   VStack,
   ZStack,
 } from '../src/index'
 
-const NativeBadge = defineComponent({
-  name: 'NativeBadge',
-  props: {
-    label: { type: String, required: true },
-  },
-  setup(props) {
-    return () => h(
-      'span',
-      {
-        style: {
-          padding: '3px 7px',
-          border: '1px solid currentColor',
-          borderRadius: '999px',
-          fontSize: '12px',
-        },
-      },
-      props.label,
-    )
-  },
-})
-
-export default defineComponent({
+export default View({
   name: 'App',
 
-  setup() {
-    const count = ref(0)
-    const name = ref('Hare')
-    const notes = ref('Normal Vue code and the DSL can coexist.')
-    const enabled = ref(true)
+  state: () => ({
+    count: ref(0),
+    name: ref('Hare'),
+    notes: ref('Vune can hide Vue render boilerplate while keeping Vue reactivity.'),
+    enabled: ref(true),
+  }),
 
-    function increment() {
-      count.value += 1
-    }
+  body: ({ count, name, notes, enabled }) =>
+    VStack(
+      { alignment: 'leading', spacing: 16 },
 
-    function decrement() {
-      count.value -= 1
-    }
+      HStack(
+        { spacing: 12 },
+        Text('Vune').fontSize(28).bold(),
+        Spacer(),
+        Text('Declarative Vue').foreground('#667085'),
+      )
+        .frame({ maxWidth: 'infinity' }),
 
-    return function render() {
-      return VStack(
-        { alignment: 'leading', spacing: 16 },
+      Text(() => `Count: ${count.value}`)
+        .foreground('#666')
+        .frame({ maxWidth: 'infinity', alignment: 'leading' }),
+
+      ZStack(
+        { alignment: 'center' },
+        RoundedRectangle(18)
+          .height(150)
+          .background('linear-gradient(135deg, #eef2ff, #f8fafc)'),
+        VStack(
+          { alignment: 'center', spacing: 6 },
+          Text('No setup() or render()').fontSize(20).bold(),
+          Text('View() keeps those details inside Vune.')
+            .foreground('#667085'),
+        )
+          .padding(20),
+      )
+        .frame({ maxWidth: 'infinity' }),
+
+      ScrollView(
         HStack(
           { spacing: 12 },
-          Text('Vune').fontSize(28).bold(),
-          Spacer(),
-
-          // Typed normal Vue component through the helper.
-          Component(NativeBadge, { label: 'Vue component' }),
+          ZStack(Rectangle().width(96).height(64).background('#e2e8f0'), Text('Rectangle').fontSize(12)),
+          ZStack(RoundedRectangle(14).width(96).height(64).background('#dbeafe'), Text('Rounded').fontSize(12)),
+          ZStack(Circle().width(64).height(64).background('#ddd6fe'), Text('Circle').fontSize(12)),
+          ZStack(Capsule().width(112).height(48).background('#dcfce7'), Text('Capsule').fontSize(12)),
         ),
+        'horizontal',
+      )
+        .padding('vertical', 4)
+        .maxWidth('100%'),
 
-        Text(() => `Count: ${count.value}`)
-          .foreground('#666')
-          .frame({ maxWidth: 'infinity', alignment: 'leading' }),
-
-        ZStack(
-          { alignment: 'center' },
-          RoundedRectangle(18)
-            .height(150)
-            .background('linear-gradient(135deg, #eef2ff, #f8fafc)'),
-
-          VStack(
-            Text('CSS-native shapes').fontSize(20).bold(),
-            Text('ZStack + shape primitives stay ordinary Vue/CSS boxes.')
-              .foreground('#667085'),
-          )
-            .gap(6)
-            .padding(20),
-        ),
-
-        ScrollView(
-          HStack(
-            ZStack(
-              Rectangle().width(96).height(64).background('#e2e8f0'),
-              Text('Rectangle').fontSize(12),
-            ),
-            ZStack(
-              RoundedRectangle(14).width(96).height(64).background('#dbeafe'),
-              Text('Rounded').fontSize(12),
-            ),
-            ZStack(
-              Circle().width(64).height(64).background('#ddd6fe'),
-              Text('Circle').fontSize(12),
-            ),
-            ZStack(
-              Capsule().width(112).height(48).background('#dcfce7'),
-              Text('Capsule').fontSize(12),
-            ),
-          ).gap(12),
-          'horizontal',
-        )
-          .padding('vertical', 4)
-          .maxWidth('100%'),
-
-        Grid(2,
-          TextField(name, { placeholder: 'Name' })
-            .padding(10)
-            .radius(8)
-            .border({ color: '#bbb' }),
-
-          HStack(
-            Toggle(enabled),
-            Text(() => enabled.value ? 'Enabled' : 'Disabled'),
-          ).gap(8),
-        ).gap(10),
-
-        TextArea(notes, { rows: 4 })
+      Grid(
+        2,
+        TextField(name, { placeholder: 'Name' })
           .padding(10)
           .radius(8)
           .border({ color: '#bbb' }),
-
         HStack(
           { spacing: 8 },
-          Button('−', decrement),
-          Button('+', increment),
-
-          // A normal h() VNode can be inserted directly.
-          h('em', null, 'plain h()'),
-
-          // Raw() is only needed when adding modifiers to an existing VNode.
-          Raw(h('strong', null, `Hello, ${name.value}`))
-            .margin('left', 8),
+          Toggle(enabled),
+          Text(() => enabled.value ? 'Enabled' : 'Disabled'),
         ),
+      ).gap(10),
+
+      TextArea(notes, { rows: 4 })
+        .padding(10)
+        .radius(8)
+        .border({ color: '#bbb' }),
+
+      HStack(
+        { spacing: 8 },
+        Button('−', () => count.value -= 1),
+        Button('+', () => count.value += 1),
+        Spacer(),
+        h('em', null, 'plain Vue VNode'),
+        Raw(h('strong', null, `Hello, ${name.value}`)).margin('left', 8),
       )
-        .padding(24)
-        .frame({ maxWidth: 640 })
-        .margin('horizontal', 'auto')
-    }
-  },
+        .frame({ maxWidth: 'infinity' }),
+    )
+      .padding(24)
+      .frame({ maxWidth: 640 })
+      .margin('horizontal', 'auto'),
 })
 </script>

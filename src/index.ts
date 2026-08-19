@@ -36,6 +36,7 @@ export {
 
 export { Model } from './model.js'
 export { styled } from './modifiers.js'
+export { View } from './view.js'
 
 export type {
   Alignment,
@@ -65,6 +66,12 @@ export type {
   Value,
   ZStackOptions,
 } from './types.js'
+
+export type {
+  StatelessViewDefinition,
+  ViewBody,
+  ViewDefinition,
+} from './view.js'
 
 export type {
   ButtonProps,

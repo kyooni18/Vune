@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- Added `View()` as the primary declarative component entry point.
+- Normal Vune views no longer need callers to write `defineComponent()`, `setup()`, or a render function.
+- Added `View(() => body)` for stateless views.
+- Added `View({ state, body })` for stateful views; state is created once per Vue component instance while `body` participates in Vue reactive rendering.
+- Reworked the example app and README to use `View()` as the default style.
+- Added dedicated runtime and type-contract tests for the View API.
+- Kept ordinary Vue SFCs, `defineComponent()`, render functions, composables, lifecycle hooks, and `h()` as fully supported escape/interoperability paths.
+
 ## 0.5.0
 
 - Added coordinate-free semantic stack options: `VStack({ alignment, spacing })`, `HStack({ alignment, spacing })`, and `ZStack({ alignment })`.
@@ -21,29 +31,14 @@
 ## 0.3.0
 
 - Added `Box()` as an explicit `div` styling boundary.
-- Changed `Group()` to return a plain Vue Fragment without modifier chaining, avoiding CSS modifiers that could not have a box to affect.
-- Preserved keyed child identity through `ZStack()` layer wrappers by copying child keys to the sibling wrapper level.
-- Switched `TextField`, `TextArea`, and `Toggle` listener composition to Vue `mergeProps()` semantics.
-- Made controlled native props authoritative (`TextField`/`TextArea` value, `Toggle` type/checked, and `Button` type).
-- Added Vue native HTML attribute types for `Text`, `Button`, `TextField`, `TextArea`, and `Toggle`.
-- Added compatibility CI for Vue 3.3 and the latest Vue 3.x line.
-- Documented VNode-prop modifier semantics, component attribute fallthrough, and explicit DOM styling boundaries.
+- Changed `Group()` to return a plain Vue Fragment without modifier chaining.
+- Preserved keyed child identity through `ZStack()` layer wrappers.
+- Switched bound native control listener composition to Vue `mergeProps()` semantics.
+- Added Vue native HTML attribute types and Vue 3.3/latest compatibility CI.
 
 ## 0.2.0
 
-- Added `Component()` with public prop and slot type inference.
-- Kept `ComponentNode` as a deprecated compatibility alias.
-- Added `Grid`, `ZStack`, and `TextArea` primitives.
-- Added `Key`, `TemplateRef`, `Slots`, and `Model` helpers.
-- Added `.model()` support for default and named Vue component models.
-- Added optional model input/output transforms.
-- Added `.keyed()` and `.templateRef()` without shadowing VNode fields.
-- Added typed DOM event modifiers.
-- Added more typography, flex, position, overflow, cursor, shadow, transform, z-index, and CSS transition modifiers.
-- Added wrappers for Vue Transition, TransitionGroup, Teleport, Suspense, and KeepAlive.
-- Added runtime, type-contract, and SSR tests.
-- Added API, interoperability, design, and migration documentation.
-- Expanded the example application.
+- Added typed `Component()`, `Grid`, `ZStack`, `TextArea`, model helpers, typed events, Vue built-in wrappers, runtime/type/SSR tests, and expanded documentation.
 
 ## 0.1.0
 
