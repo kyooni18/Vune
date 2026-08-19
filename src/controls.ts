@@ -4,13 +4,14 @@ import {
   isVNode,
   mergeProps,
   toValue,
-  type Data,
   type Ref,
   type VNodeChild,
 } from 'vue'
 import { HStack, Text, VStack, Button } from './elements.js'
 import { styled } from './modifiers.js'
 import type { Length, NativeProps, StyledVNode, Value } from './types.js'
+
+type MergeableProps = Record<string, any>
 
 export type ImageFit = 'contain' | 'cover' | 'fill' | 'none' | 'scale-down'
 
@@ -22,7 +23,7 @@ export type ImageOptions = NativeProps & {
 
 export function Image(source: Value<string>, options: ImageOptions = {}): StyledVNode {
   const { fit, ...props } = options
-  return styled(h('img', mergeProps(props as Data, {
+  return styled(h('img', mergeProps(props as MergeableProps, {
     src: String(toValue(source)),
     ...(fit === undefined ? {} : { style: { objectFit: fit } }),
   })))
@@ -41,14 +42,14 @@ export function Label(title: VNodeChild | Value<string | number>, icon: VNodeChi
 }
 
 export function Link(label: VNodeChild | Value<string | number>, href: Value<string>, props: NativeProps = {}): StyledVNode {
-  return styled(h('a', mergeProps(props as Data, { href: String(toValue(href)) }), [content(label)]))
+  return styled(h('a', mergeProps(props as MergeableProps, { href: String(toValue(href)) }), [content(label)]))
 }
 
 export type ProgressViewOptions = NativeProps & { max?: number; label?: VNodeChild | Value<string | number> }
 
 export function ProgressView(value?: Value<number> | null, options: ProgressViewOptions = {}): StyledVNode {
   const { max = 1, label, ...props } = options
-  const progress = styled(h('progress', mergeProps(props as Data, {
+  const progress = styled(h('progress', mergeProps(props as MergeableProps, {
     max,
     ...(value == null ? {} : { value: Number(toValue(value)) }),
   })))
@@ -66,7 +67,7 @@ export function Picker<T extends string | number>(selection: Ref<T>, options: re
     const selected = options.find(option => String(option.value) === target.value)
     if (selected) selection.value = selected.value
   }
-  return styled(h('select', mergeProps({ onChange: update }, props as Data, { value: String(selection.value) }), options.map(option =>
+  return styled(h('select', mergeProps({ onChange: update }, props as MergeableProps, { value: String(selection.value) }), options.map(option =>
     h('option', { value: String(option.value), disabled: option.disabled }, option.label),
   )))
 }
@@ -79,7 +80,7 @@ export function Slider(value: Ref<number>, options: SliderOptions = {}): StyledV
     const target = event.target as HTMLInputElement | null
     if (target) value.value = Number(target.value)
   }
-  return styled(h('input', mergeProps({ onInput: update }, props as Data, { type: 'range', min, max, step, value: value.value })))
+  return styled(h('input', mergeProps({ onInput: update }, props as MergeableProps, { type: 'range', min, max, step, value: value.value })))
 }
 
 export interface StepperOptions { min?: number; max?: number; step?: number; label?: Value<string | number>; spacing?: Length }
