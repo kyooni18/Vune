@@ -1,6 +1,6 @@
 {
   "name": "vune",
-  "version": "1.0.0-alpha.3",
+  "version": "1.0.0-alpha.4",
   "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
   "type": "module",
   "sideEffects": false,
