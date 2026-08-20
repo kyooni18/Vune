@@ -1,8 +1,13 @@
-import { cloneVNode, type CSSProperties, type Ref, type VNode, type VNodeRef } from 'vue'
+import {
+  cloneElement,
+  type CSSProperties,
+  type ReactElement,
+} from 'react'
 import {
   copyLayoutProps,
-  isComponentVNode,
-  layoutStyleOf,
+  isComponentElement,
+  layoutPropsOf,
+  registerStyledProxy,
   setLayoutClass,
   setLayoutStyle,
 } from './layout.js'
@@ -13,27 +18,42 @@ import type {
   ClassValue,
   FrameOptions,
   Length,
-  ModelOptions,
   Modifiers,
-  StyledVNode,
+  StyledElement,
 } from './types.js'
 
-const proxyCache = new WeakMap<object, StyledVNode>()
-const styledProxySet = new WeakSet<object>()
+const proxyCache = new WeakMap<object, StyledElement>()
+const proxyTargets = new WeakMap<object, ReactElement>()
+
+function raw(element: ReactElement): ReactElement {
+  return proxyTargets.get(element as object) ?? element
+}
 
 function cssLength(value: Length): string {
   return typeof value === 'number' ? `${value}px` : value
 }
 
-function resolvedStyle(vnode: VNode): CSSProperties {
-  if (isComponentVNode(vnode)) return layoutStyleOf(vnode) ?? {}
-  const source = vnode.props?.style
-  if (!source) return {}
-  if (!Array.isArray(source)) return typeof source === 'object' ? source as CSSProperties : {}
-  return Object.assign({}, ...source.map(item => {
-    if (Array.isArray(item)) return Object.assign({}, ...item)
-    return typeof item === 'object' && item !== null ? item : {}
-  }))
+function currentStyle(element: ReactElement): CSSProperties {
+  if (isComponentElement(element)) return layoutPropsOf(element)?.style ?? {}
+  const value = (raw(element).props as any)?.style
+  return value && typeof value === 'object' ? value as CSSProperties : {}
+}
+
+function patch(element: ReactElement, extraProps: Record<string, unknown>): StyledElement {
+  const target = raw(element)
+  const clone = cloneElement(target, extraProps as any)
+  copyLayoutProps(element, clone)
+  return styled(clone)
+}
+
+function patchStyle(element: ReactElement, style: CSSProperties): StyledElement {
+  if (isComponentElement(element)) {
+    const clone = cloneElement(raw(element))
+    copyLayoutProps(element, clone)
+    setLayoutStyle(clone, style)
+    return styled(clone)
+  }
+  return patch(element, { style: { ...currentStyle(element), ...style } })
 }
 
 function alignmentParts(alignment: Alignment): {
@@ -53,19 +73,11 @@ function alignmentParts(alignment: Alignment): {
   }
 }
 
-function semanticAlignmentStyle(vnode: VNode, alignment: Alignment): CSSProperties {
-  const current = resolvedStyle(vnode)
+function semanticAlignmentStyle(element: ReactElement, alignment: Alignment): CSSProperties {
+  const current = currentStyle(element)
   const { horizontal, vertical } = alignmentParts(alignment)
-  const horizontalFlex = horizontal === 'leading'
-    ? 'flex-start'
-    : horizontal === 'trailing'
-      ? 'flex-end'
-      : 'center'
-  const verticalFlex = vertical === 'top'
-    ? 'flex-start'
-    : vertical === 'bottom'
-      ? 'flex-end'
-      : 'center'
+  const horizontalFlex = horizontal === 'leading' ? 'flex-start' : horizontal === 'trailing' ? 'flex-end' : 'center'
+  const verticalFlex = vertical === 'top' ? 'flex-start' : vertical === 'bottom' ? 'flex-end' : 'center'
 
   if (current.display === 'grid') {
     return {
@@ -73,385 +85,134 @@ function semanticAlignmentStyle(vnode: VNode, alignment: Alignment): CSSProperti
       alignItems: vertical === 'top' ? 'start' : vertical === 'bottom' ? 'end' : 'center',
     }
   }
-
   if (current.display === 'flex') {
     const column = String(current.flexDirection ?? 'row').startsWith('column')
     return column
       ? { alignItems: horizontalFlex, justifyContent: verticalFlex }
       : { justifyContent: horizontalFlex, alignItems: verticalFlex }
   }
-
-  return {
-    display: 'flex',
-    justifyContent: horizontalFlex,
-    alignItems: verticalFlex,
-  }
+  return { display: 'flex', justifyContent: horizontalFlex, alignItems: verticalFlex }
 }
 
 function edgeStyle(prefix: 'padding' | 'margin', axis: Axis, value: Length): CSSProperties {
   const length = cssLength(value)
-  const style: CSSProperties = {}
-  const writable = style as Record<string, string | number | undefined>
-
-  if (axis === 'all') {
-    writable[prefix] = length
-    return style
-  }
-
-  const edges = axis === 'horizontal'
-    ? ['Left', 'Right']
-    : axis === 'vertical'
-      ? ['Top', 'Bottom']
-      : [axis[0].toUpperCase() + axis.slice(1)]
-
-  for (const edge of edges) writable[`${prefix}${edge}`] = length
-  return style
-}
-
-function patch(vnode: VNode, extraProps: Record<string, unknown>, mergeRef = false): StyledVNode {
-  const clone = cloneVNode(vnode, extraProps, mergeRef)
-  copyLayoutProps(vnode, clone)
-  return styled(clone)
-}
-
-function patchStyle(vnode: VNode, style: CSSProperties): StyledVNode {
-  if (isComponentVNode(vnode)) {
-    const clone = cloneVNode(vnode)
-    copyLayoutProps(vnode, clone)
-    setLayoutStyle(clone, style)
-    return styled(clone)
-  }
-  return patch(vnode, { style })
-}
-
-function eventPropName(event: string): string {
-  if (event.startsWith('on') && event.length > 2) return event
-  if (!event) throw new Error('Event name cannot be empty')
-  return `on${event[0].toUpperCase()}${event.slice(1)}`
-}
-
-function applyModel<T>(vnode: VNode, value: Ref<T>, options: ModelOptions<T> = {}): StyledVNode {
-  const name = options.name ?? 'modelValue'
-  const event = `onUpdate:${name}`
-  const exposed = options.transformIn ? options.transformIn(value.value) : value.value
-
-  return patch(vnode, {
-    [name]: exposed,
-    [event]: (next: unknown) => {
-      value.value = options.transformOut
-        ? options.transformOut(next)
-        : next as T
-    },
-  })
+  if (axis === 'all') return { [prefix]: length } as CSSProperties
+  if (axis === 'horizontal') return { [`${prefix}Left`]: length, [`${prefix}Right`]: length } as CSSProperties
+  if (axis === 'vertical') return { [`${prefix}Top`]: length, [`${prefix}Bottom`]: length } as CSSProperties
+  const edge = axis[0].toUpperCase() + axis.slice(1)
+  return { [`${prefix}${edge}`]: length } as CSSProperties
 }
 
 const modifiers: Modifiers = {
-  padding(this: VNode, axisOrValue: Axis | Length, maybeValue?: Length) {
-    if (maybeValue === undefined) {
-      return patchStyle(this, { padding: cssLength(axisOrValue as Length) })
-    }
-    return patchStyle(this, edgeStyle('padding', axisOrValue as Axis, maybeValue))
+  padding(this: ReactElement, axisOrValue: Axis | Length, maybeValue?: Length) {
+    return maybeValue === undefined
+      ? patchStyle(this, { padding: cssLength(axisOrValue as Length) })
+      : patchStyle(this, edgeStyle('padding', axisOrValue as Axis, maybeValue))
   },
-
-  margin(this: VNode, axisOrValue: Axis | Length, maybeValue?: Length) {
-    if (maybeValue === undefined) {
-      return patchStyle(this, { margin: cssLength(axisOrValue as Length) })
-    }
-    return patchStyle(this, edgeStyle('margin', axisOrValue as Axis, maybeValue))
+  margin(this: ReactElement, axisOrValue: Axis | Length, maybeValue?: Length) {
+    return maybeValue === undefined
+      ? patchStyle(this, { margin: cssLength(axisOrValue as Length) })
+      : patchStyle(this, edgeStyle('margin', axisOrValue as Axis, maybeValue))
   },
-
-  gap(this: VNode, value: Length) {
-    return patchStyle(this, { gap: cssLength(value) })
-  },
-
-  width(this: VNode, value: Length) {
-    return patchStyle(this, { width: cssLength(value) })
-  },
-
-  height(this: VNode, value: Length) {
-    return patchStyle(this, { height: cssLength(value) })
-  },
-
-  minWidth(this: VNode, value: Length) {
-    return patchStyle(this, { minWidth: cssLength(value) })
-  },
-
-  maxWidth(this: VNode, value: Length) {
-    return patchStyle(this, { maxWidth: cssLength(value) })
-  },
-
-  minHeight(this: VNode, value: Length) {
-    return patchStyle(this, { minHeight: cssLength(value) })
-  },
-
-  maxHeight(this: VNode, value: Length) {
-    return patchStyle(this, { maxHeight: cssLength(value) })
-  },
-
-  frame(this: VNode, options: FrameOptions) {
+  gap(this: ReactElement, value: Length) { return patchStyle(this, { gap: cssLength(value) }) },
+  width(this: ReactElement, value: Length) { return patchStyle(this, { width: cssLength(value) }) },
+  height(this: ReactElement, value: Length) { return patchStyle(this, { height: cssLength(value) }) },
+  minWidth(this: ReactElement, value: Length) { return patchStyle(this, { minWidth: cssLength(value) }) },
+  maxWidth(this: ReactElement, value: Length) { return patchStyle(this, { maxWidth: cssLength(value) }) },
+  minHeight(this: ReactElement, value: Length) { return patchStyle(this, { minHeight: cssLength(value) }) },
+  maxHeight(this: ReactElement, value: Length) { return patchStyle(this, { maxHeight: cssLength(value) }) },
+  frame(this: ReactElement, options: FrameOptions) {
     const style: CSSProperties = {}
     if (options.width !== undefined) style.width = cssLength(options.width)
     if (options.height !== undefined) style.height = cssLength(options.height)
     if (options.minWidth !== undefined) style.minWidth = cssLength(options.minWidth)
-    if (options.maxWidth === 'infinity') {
-      style.width = '100%'
-      style.maxWidth = '100%'
-    } else if (options.maxWidth !== undefined) {
-      style.maxWidth = cssLength(options.maxWidth)
-    }
+    if (options.maxWidth === 'infinity') Object.assign(style, { width: '100%', maxWidth: '100%', alignSelf: 'stretch' })
+    else if (options.maxWidth !== undefined) style.maxWidth = cssLength(options.maxWidth)
     if (options.minHeight !== undefined) style.minHeight = cssLength(options.minHeight)
-    if (options.maxHeight === 'infinity') {
-      style.height = '100%'
-      style.maxHeight = '100%'
-    } else if (options.maxHeight !== undefined) {
-      style.maxHeight = cssLength(options.maxHeight)
-    }
-    if (options.alignment !== undefined) {
-      Object.assign(style, semanticAlignmentStyle(this, options.alignment))
-    }
+    if (options.maxHeight === 'infinity') Object.assign(style, { height: '100%', maxHeight: '100%', alignSelf: 'stretch' })
+    else if (options.maxHeight !== undefined) style.maxHeight = cssLength(options.maxHeight)
+    if (options.alignment !== undefined) Object.assign(style, semanticAlignmentStyle(this, options.alignment))
     return patchStyle(this, style)
   },
-
-  background(this: VNode, value: NonNullable<CSSProperties['background']>) {
-    return patchStyle(this, { background: value })
-  },
-
-  foreground(this: VNode, value: NonNullable<CSSProperties['color']>) {
-    return patchStyle(this, { color: value })
-  },
-
-  opacity(this: VNode, value: number) {
-    return patchStyle(this, { opacity: value })
-  },
-
-  radius(this: VNode, value: Length) {
-    return patchStyle(this, { borderRadius: cssLength(value) })
-  },
-
-  border(this: VNode, options: BorderOptions = {}) {
+  background(this: ReactElement, value: any) { return patchStyle(this, { background: value }) },
+  foreground(this: ReactElement, value: any) { return patchStyle(this, { color: value }) },
+  opacity(this: ReactElement, value: number) { return patchStyle(this, { opacity: value }) },
+  radius(this: ReactElement, value: Length) { return patchStyle(this, { borderRadius: cssLength(value) }) },
+  border(this: ReactElement, options: BorderOptions = {}) {
     return patchStyle(this, {
       borderWidth: cssLength(options.width ?? 1),
       borderColor: options.color ?? 'currentColor',
       borderStyle: options.style ?? 'solid',
     })
   },
-
-  shadow(this: VNode, value: NonNullable<CSSProperties['boxShadow']>) {
-    return patchStyle(this, { boxShadow: value })
-  },
-
-  fontSize(this: VNode, value: Length) {
-    return patchStyle(this, { fontSize: cssLength(value) })
-  },
-
-  fontWeight(this: VNode, value: NonNullable<CSSProperties['fontWeight']>) {
-    return patchStyle(this, { fontWeight: value })
-  },
-
-  fontFamily(this: VNode, value: NonNullable<CSSProperties['fontFamily']>) {
-    return patchStyle(this, { fontFamily: value })
-  },
-
-  lineHeight(this: VNode, value: NonNullable<CSSProperties['lineHeight']>) {
-    return patchStyle(this, { lineHeight: value })
-  },
-
-  textAlign(this: VNode, value: NonNullable<CSSProperties['textAlign']>) {
-    return patchStyle(this, { textAlign: value })
-  },
-
-  bold(this: VNode) {
-    return patchStyle(this, { fontWeight: 600 })
-  },
-
-  grow(this: VNode, value = 1) {
-    return patchStyle(this, { flexGrow: value })
-  },
-
-  shrink(this: VNode, value = 1) {
-    return patchStyle(this, { flexShrink: value })
-  },
-
-  flex(this: VNode, value: NonNullable<CSSProperties['flex']>) {
-    return patchStyle(this, { flex: value })
-  },
-
-  wrap(this: VNode, value: NonNullable<CSSProperties['flexWrap']> = 'wrap') {
-    return patchStyle(this, { flexWrap: value })
-  },
-
-  order(this: VNode, value: number) {
-    return patchStyle(this, { order: value })
-  },
-
-  align(this: VNode, value: NonNullable<CSSProperties['alignItems']>) {
-    return patchStyle(this, { alignItems: value })
-  },
-
-  justify(this: VNode, value: NonNullable<CSSProperties['justifyContent']>) {
-    return patchStyle(this, { justifyContent: value })
-  },
-
-  alignment(this: VNode, value: Alignment) {
-    return patchStyle(this, semanticAlignmentStyle(this, value))
-  },
-
-  position(this: VNode, value: NonNullable<CSSProperties['position']>) {
-    return patchStyle(this, { position: value })
-  },
-
-  overflow(this: VNode, value: NonNullable<CSSProperties['overflow']>) {
-    return patchStyle(this, { overflow: value })
-  },
-
-  cursor(this: VNode, value: NonNullable<CSSProperties['cursor']>) {
-    return patchStyle(this, { cursor: value })
-  },
-
-  zIndex(this: VNode, value: NonNullable<CSSProperties['zIndex']>) {
-    return patchStyle(this, { zIndex: value })
-  },
-
-  transform(this: VNode, value: NonNullable<CSSProperties['transform']>) {
-    return patchStyle(this, { transform: value })
-  },
-
-  cssTransition(this: VNode, value: NonNullable<CSSProperties['transition']>) {
-    return patchStyle(this, { transition: value })
-  },
-
-  id(this: VNode, value: string) {
-    return patch(this, { id: value })
-  },
-
-  role(this: VNode, value: string) {
-    return patch(this, { role: value })
-  },
-
-  disabled(this: VNode, value = true) {
-    return patch(this, { disabled: value })
-  },
-
-  keyed(this: VNode, value: PropertyKey) {
-    return patch(this, { key: value })
-  },
-
-  templateRef(this: VNode, value: VNodeRef, merge = false) {
-    return patch(this, { ref: value }, merge)
-  },
-
-  model<T>(this: VNode, value: Ref<T>, nameOrOptions?: string | ModelOptions<T>) {
-    const options = typeof nameOrOptions === 'string'
-      ? { name: nameOrOptions }
-      : nameOrOptions
-    return applyModel(this, value, options)
-  },
-
-  className(this: VNode, value: ClassValue) {
-    if (isComponentVNode(this)) {
-      const clone = cloneVNode(this)
+  shadow(this: ReactElement, value: any) { return patchStyle(this, { boxShadow: value }) },
+  fontSize(this: ReactElement, value: Length) { return patchStyle(this, { fontSize: cssLength(value) }) },
+  fontWeight(this: ReactElement, value: any) { return patchStyle(this, { fontWeight: value }) },
+  fontFamily(this: ReactElement, value: any) { return patchStyle(this, { fontFamily: value }) },
+  lineHeight(this: ReactElement, value: any) { return patchStyle(this, { lineHeight: value }) },
+  textAlign(this: ReactElement, value: any) { return patchStyle(this, { textAlign: value }) },
+  bold(this: ReactElement) { return patchStyle(this, { fontWeight: 600 }) },
+  grow(this: ReactElement, value = 1) { return patchStyle(this, { flexGrow: value }) },
+  shrink(this: ReactElement, value = 1) { return patchStyle(this, { flexShrink: value }) },
+  flex(this: ReactElement, value: any) { return patchStyle(this, { flex: value }) },
+  wrap(this: ReactElement, value: any = 'wrap') { return patchStyle(this, { flexWrap: value }) },
+  order(this: ReactElement, value: number) { return patchStyle(this, { order: value }) },
+  align(this: ReactElement, value: any) { return patchStyle(this, { alignItems: value }) },
+  justify(this: ReactElement, value: any) { return patchStyle(this, { justifyContent: value }) },
+  alignment(this: ReactElement, value: Alignment) { return patchStyle(this, semanticAlignmentStyle(this, value)) },
+  position(this: ReactElement, value: any) { return patchStyle(this, { position: value }) },
+  overflow(this: ReactElement, value: any) { return patchStyle(this, { overflow: value }) },
+  cursor(this: ReactElement, value: any) { return patchStyle(this, { cursor: value }) },
+  zIndex(this: ReactElement, value: any) { return patchStyle(this, { zIndex: value }) },
+  transform(this: ReactElement, value: any) { return patchStyle(this, { transform: value }) },
+  cssTransition(this: ReactElement, value: any) { return patchStyle(this, { transition: value }) },
+  id(this: ReactElement, value: string) { return patch(this, { id: value }) },
+  role(this: ReactElement, value: string) { return patch(this, { role: value }) },
+  disabled(this: ReactElement, value = true) { return patch(this, { disabled: value }) },
+  keyed(this: ReactElement, value: any) { return patch(this, { key: value }) },
+  elementRef(this: ReactElement, value: any) { return patch(this, { ref: value }) },
+  className(this: ReactElement, value: ClassValue) {
+    if (isComponentElement(this)) {
+      const clone = cloneElement(raw(this))
       copyLayoutProps(this, clone)
       setLayoutClass(clone, value)
       return styled(clone)
     }
-    return patch(this, { class: value })
+    const className = Array.isArray(value) ? value.filter(Boolean).join(' ') : value
+    return patch(this, { className })
   },
-
-  style(this: VNode, value: CSSProperties) {
-    return patchStyle(this, value)
-  },
-
-  withProps(this: VNode, value: Record<string, unknown>) {
-    return patch(this, value)
-  },
-
-  attr(this: VNode, name: string, value: unknown) {
-    return patch(this, { [name]: value })
-  },
-
-  on(this: VNode, event: string, handler: (...args: any[]) => unknown) {
-    return patch(this, { [eventPropName(event)]: handler })
-  },
-
-  onClick(this: VNode, handler: (event: MouseEvent) => unknown) {
-    return patch(this, { onClick: handler })
-  },
-
-  onDblClick(this: VNode, handler: (event: MouseEvent) => unknown) {
-    return patch(this, { onDblclick: handler })
-  },
-
-  onInput(this: VNode, handler: (event: InputEvent) => unknown) {
-    return patch(this, { onInput: handler })
-  },
-
-  onChange(this: VNode, handler: (event: Event) => unknown) {
-    return patch(this, { onChange: handler })
-  },
-
-  onKeyDown(this: VNode, handler: (event: KeyboardEvent) => unknown) {
-    return patch(this, { onKeydown: handler })
-  },
-
-  onKeyUp(this: VNode, handler: (event: KeyboardEvent) => unknown) {
-    return patch(this, { onKeyup: handler })
-  },
-
-  onFocus(this: VNode, handler: (event: FocusEvent) => unknown) {
-    return patch(this, { onFocus: handler })
-  },
-
-  onBlur(this: VNode, handler: (event: FocusEvent) => unknown) {
-    return patch(this, { onBlur: handler })
-  },
-
-  onSubmit(this: VNode, handler: (event: SubmitEvent) => unknown) {
-    return patch(this, { onSubmit: handler })
-  },
-
-  onPointerDown(this: VNode, handler: (event: PointerEvent) => unknown) {
-    return patch(this, { onPointerdown: handler })
-  },
-
-  onPointerMove(this: VNode, handler: (event: PointerEvent) => unknown) {
-    return patch(this, { onPointermove: handler })
-  },
-
-  onPointerUp(this: VNode, handler: (event: PointerEvent) => unknown) {
-    return patch(this, { onPointerup: handler })
-  },
-
-  onMouseEnter(this: VNode, handler: (event: MouseEvent) => unknown) {
-    return patch(this, { onMouseenter: handler })
-  },
-
-  onMouseLeave(this: VNode, handler: (event: MouseEvent) => unknown) {
-    return patch(this, { onMouseleave: handler })
-  },
+  style(this: ReactElement, value: CSSProperties) { return patchStyle(this, value) },
+  withProps(this: ReactElement, value: Record<string, unknown>) { return patch(this, value) },
+  attr(this: ReactElement, name: string, value: unknown) { return patch(this, { [name]: value }) },
+  on(this: ReactElement, event: string, handler: (...args: any[]) => unknown) { return patch(this, { [event]: handler }) },
+  onClick(this: ReactElement, handler: any) { return patch(this, { onClick: handler }) },
+  onInput(this: ReactElement, handler: any) { return patch(this, { onInput: handler }) },
+  onChange(this: ReactElement, handler: any) { return patch(this, { onChange: handler }) },
+  onKeyDown(this: ReactElement, handler: any) { return patch(this, { onKeyDown: handler }) },
+  onKeyUp(this: ReactElement, handler: any) { return patch(this, { onKeyUp: handler }) },
+  onFocus(this: ReactElement, handler: any) { return patch(this, { onFocus: handler }) },
+  onBlur(this: ReactElement, handler: any) { return patch(this, { onBlur: handler }) },
+  onSubmit(this: ReactElement, handler: any) { return patch(this, { onSubmit: handler }) },
 }
 
-const modifierNames = new Set(Reflect.ownKeys(modifiers))
-
-export function styled(vnode: VNode): StyledVNode {
-  if (styledProxySet.has(vnode as object)) return vnode as StyledVNode
-
-  const cached = proxyCache.get(vnode as object)
+export function styled(element: ReactElement): StyledElement {
+  const target = raw(element)
+  const cached = proxyCache.get(target as object)
   if (cached) return cached
 
-  const proxy = new Proxy(vnode as StyledVNode, {
-    get(target, property, receiver) {
-      if (modifierNames.has(property)) {
-        const modifier = Reflect.get(modifiers, property) as (...args: any[]) => StyledVNode
-        return (...args: any[]) => modifier.apply(target, args)
+  let proxy: StyledElement
+  proxy = new Proxy(target as StyledElement, {
+    get(current, property, receiver) {
+      if (typeof property === 'string' && property in modifiers) {
+        const modifier = (modifiers as any)[property]
+        return (...args: any[]) => modifier.apply(proxy, args)
       }
-      return Reflect.get(target, property, receiver)
-    },
-    set(target, property, value, receiver) {
-      return Reflect.set(target, property, value, receiver)
+      return Reflect.get(current as object, property, receiver)
     },
   })
 
-  proxyCache.set(vnode as object, proxy)
-  styledProxySet.add(proxy as object)
+  proxyCache.set(target as object, proxy)
+  proxyTargets.set(proxy as object, target)
+  registerStyledProxy(proxy as object, target)
   return proxy
 }

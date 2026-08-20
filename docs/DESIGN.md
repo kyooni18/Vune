@@ -1,37 +1,39 @@
-# Design notes
+# Vune React design
 
-## Goals
+Vune is a declarative TypeScript UI layer that uses React as its renderer rather than introducing a second rendering engine.
 
-Vune should keep Vue as the only renderer and reactivity system, return real VNodes, preserve JavaScript control flow and Vue component typing, and keep optional build-time transforms small and explicit.
+## Layout
 
-## Native-component layout boundary
+The normal API expresses relationships rather than coordinates. `VStack`, `HStack`, `ZStack`, `Grid`, `Spacer`, alignment, spacing, and `frame` are the primary layout vocabulary. Low-level CSS remains available through modifiers when needed.
 
-An opaque Vue component has two responsibilities that Vune must not confuse: its external position in the Vune layout and its internal Vue component tree/behavior.
+## React ownership boundary
 
-For direct component children of Vune layout boundaries, Vune creates one neutral layout host. Layout/style metadata is attached to the outer host while the original component VNode remains its child.
+Vune owns the external layout slot of a child. React owns the child component itself.
 
-This makes Fragment/multi-root components and `inheritAttrs: false` deterministic layout items. Vune does not inspect or rewrite a component's rendered root to position it.
+For ordinary React components, Vune stores layout metadata outside the React element and inserts one neutral layout host when the component is placed inside a Vune layout container. This avoids relying on prop forwarding or assuming a single DOM root inside the component.
 
-Props, slots, emits, model bindings, keys and template refs remain on the component VNode. Local refs/state, composables, provide/inject and lifecycle remain Vue-owned. Keyed component identity is copied to the host so keyed sibling reordering preserves parent-level identity.
+Component props, hooks, refs, context, children, and rendering remain React-owned.
 
-Once inside a Vune layout, Vune intentionally owns the outer flex/grid item while the component owns everything inside it.
+## Modifier model
 
-Automatic hosts are limited to Vune layout boundaries (`VStack`, `HStack`, `Grid`, `ZStack`, `Box`, `ScrollView`). Arbitrary `Element(tag, ...)` composition does not inject a `div`, because doing so could invalidate semantic HTML.
+React elements are treated as immutable. Vune modifiers use `cloneElement()` and a proxy facade for method chaining. Component layout metadata is kept separately rather than mutating React element objects.
 
-## Styling
+## State model
 
-On native VNodes, style modifiers patch normal VNode style props. On component VNodes used in Vune layout, style-oriented modifiers are stored as layout-host metadata instead of being pushed through component attribute fallthrough.
+`State()` is a small observable value with a `.value` API. A Vune `view()` tracks State reads during render and subscribes the React component to those values.
 
-`withProps()` and `attr()` remain explicit component-level escape hatches. `Group()` remains an unstyled Fragment.
+With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Vune component instance, so two instances of the same View do not share local state.
 
-## Coordinate-free layout
+## Macros
 
-Ordinary Vune layout should describe relationships rather than coordinates. Prefer `VStack`, `HStack`, `ZStack`, `Grid`, semantic alignment, spacing, `frame()`, and `Spacer()` before explicit positioning or transforms.
+The macro is build-time sugar only. It does not replace React at runtime.
 
-## Reactivity and macros
+- `State(initial)` becomes per-view state by moving the declaration into the View state factory.
+- `view(expression)` becomes a reactive render body.
+- `Action(expression)` becomes a deferred callback.
 
-Vune does not create a second reactive system. Runtime state is backed by Vue refs and Vue remains responsible for dependency tracking and invalidation. The optional Vite macro remains syntax sugar over the public runtime APIs and must not create a second lifecycle, renderer or expression language.
+The explicit runtime APIs remain available when macros are undesirable.
 
-## Compatibility policy
+## Interoperability
 
-The peer range is Vue 3.3 through Vue 3.x. New APIs should preserve that compatibility range unless a major version explicitly raises it.
+`Component()` creates normal React component elements. `Raw()` accepts existing React elements. Because Vune ultimately returns React elements and components, existing React libraries can be mixed in rather than wrapped behind a separate renderer.

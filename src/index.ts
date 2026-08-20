@@ -4,9 +4,9 @@ export {
   Capsule,
   Circle,
   Component,
-  ComponentNode,
   Divider,
   Element,
+  ElementRef,
   Grid,
   Group,
   HStack,
@@ -15,9 +15,7 @@ export {
   Rectangle,
   RoundedRectangle,
   ScrollView,
-  Slots,
   Spacer,
-  TemplateRef,
   Text,
   TextArea,
   TextField,
@@ -52,43 +50,26 @@ export {
   Sheet,
 } from './presentation.js'
 
-export {
-  KeepAlive,
-  Suspense,
-  Teleport,
-  Transition,
-  TransitionGroup,
-} from './builtins.js'
-
-export { Action, State, view } from './macro.js'
-export { Model } from './model.js'
+export { Action, State } from './state.js'
 export { styled } from './modifiers.js'
-export { View } from './view.js'
+export { view } from './view.js'
 
 export type {
   Alignment,
-  AnyComponent,
   Axis,
   BorderOptions,
   ClassValue,
   ComponentProps,
-  ComponentSlots,
-  ElementType,
-  EventHandler,
   FrameOptions,
   GridOptions,
   HStackOptions,
-  HorizontalAlignment,
   Length,
-  ModelOptions,
   Modifiers,
   NativeProps,
   ScrollAxis,
-  SlotMap,
-  SlotRenderer,
-  StyledVNode,
+  StateRef,
+  StyledElement,
   UIChild,
-  VerticalAlignment,
   VStackOptions,
   Value,
   ZStackOptions,
@@ -129,8 +110,4 @@ export type {
   SheetOptions,
 } from './presentation.js'
 
-export type {
-  StatelessViewDefinition,
-  ViewBody,
-  ViewDefinition,
-} from './view.js'
+export type { ViewContent, ViewDefinition } from './view.js'

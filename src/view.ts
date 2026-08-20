@@ -1,43 +1,59 @@
-import { defineComponent, type Component, type VNodeChild } from 'vue'
+import {
+  Fragment,
+  createElement,
+  useRef,
+  type ComponentType,
+  type ReactNode,
+} from 'react'
+import { layoutChild } from './layout.js'
+import { useReactiveValue } from './state.js'
 
-export type ViewBody = () => VNodeChild
+export type ViewContent = ReactNode | (() => ReactNode)
 
-export interface StatelessViewDefinition {
-  name?: string
-  body: ViewBody
-}
-
-export interface ViewDefinition<State> {
-  name?: string
+export interface ViewDefinition<State extends Record<string, unknown>> {
   state: () => State
-  body: (state: State) => VNodeChild
+  body: (state: State) => ReactNode
 }
 
-/**
- * Defines a Vue component without requiring callers to write defineComponent(),
- * setup(), or a render function. State is created once per component instance;
- * body is evaluated by Vue on each reactive render.
- */
-export function View(body: ViewBody): Component
-export function View(definition: StatelessViewDefinition): Component
-export function View<State>(definition: ViewDefinition<State>): Component
-export function View<State>(
-  definitionOrBody: ViewBody | StatelessViewDefinition | ViewDefinition<State>,
-): Component {
-  const definition: StatelessViewDefinition | ViewDefinition<State> =
-    typeof definitionOrBody === 'function'
-      ? { body: definitionOrBody }
-      : definitionOrBody
+function isViewDefinition<State extends Record<string, unknown>>(
+  value: ViewContent | ViewDefinition<State>,
+): value is ViewDefinition<State> {
+  return typeof value === 'object'
+    && value !== null
+    && 'state' in value
+    && typeof (value as ViewDefinition<State>).state === 'function'
+    && 'body' in value
+    && typeof (value as ViewDefinition<State>).body === 'function'
+}
 
-  return defineComponent({
-    name: definition.name,
-    setup() {
-      if ('state' in definition) {
-        const state = definition.state()
-        return () => definition.body(state)
-      }
+export function view<State extends Record<string, unknown>>(definition: ViewDefinition<State>): ComponentType
+export function view(content: ViewContent): ComponentType
+export function view<State extends Record<string, unknown>>(
+  input: ViewContent | ViewDefinition<State>,
+): ComponentType {
+  function VuneView() {
+    const instance = useRef<{ initialized: boolean; state: State | null }>({
+      initialized: false,
+      state: null,
+    })
 
-      return () => definition.body()
-    },
-  })
+    const definition = isViewDefinition(input) ? input : null
+    if (definition && !instance.current.initialized) {
+      instance.current.state = definition.state()
+      instance.current.initialized = true
+    }
+
+    const node = useReactiveValue<ReactNode>(() => {
+      if (definition) return definition.body(instance.current.state as State)
+      const content = input as ViewContent
+      return typeof content === 'function'
+        ? (content as () => ReactNode)()
+        : content
+    })
+
+    return createElement(Fragment, null, layoutChild(node))
+  }
+
+  VuneView.displayName = 'VuneView'
+  return VuneView
 }
