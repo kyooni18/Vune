@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-alpha.4
+
+- Made arrays and plain objects stored in `State()` mutation-aware, including nested plain-object updates such as `items.value.push(...)` and `items.value[0].done = true`.
+- Kept React elements, frozen values, class instances, `Map`, `Set`, and other special objects outside the mutable-container proxy path.
+- Fixed `Spacer(minLength)` so an explicit minimum length is not lost to flex shrinking.
+- Expanded React interoperability coverage for `memo`, `forwardRef`, `Raw(...)`, and directly-created React component elements inside Vune layout containers.
+- Revalidated TypeScript build, runtime tests, macro transforms, and the React/Vite demo in CI.
+
 ## 1.0.0-alpha.3
 
 - Switched Vune state subscriptions to React `useSyncExternalStore` semantics.
