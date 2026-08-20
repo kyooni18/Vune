@@ -40,6 +40,12 @@ test('view produces a renderable React component', () => {
   assert.match(html, /Hello Vune/)
 })
 
+test('view passes React props into its body', () => {
+  const Greeting = view(({ name }) => Text(`Hello, ${name}`))
+  const html = renderToStaticMarkup(createElement(Greeting, { name: 'Vune' }))
+  assert.match(html, /Hello, Vune/)
+})
+
 test('view state factories are scoped to a component instance', () => {
   let factoryCalls = 0
   const App = view({
@@ -53,4 +59,14 @@ test('view state factories are scoped to a component instance', () => {
   const html = renderToStaticMarkup(createElement(App))
   assert.match(html, /Count: 2/)
   assert.equal(factoryCalls, 1)
+})
+
+test('view state factories can initialize from React props', () => {
+  const Counter = view({
+    state: ({ initial }) => ({ count: State(initial) }),
+    body: ({ count }, { label }) => Text(`${label}: ${count.value}`),
+  })
+
+  const html = renderToStaticMarkup(createElement(Counter, { initial: 3, label: 'Count' }))
+  assert.match(html, /Count: 3/)
 })
