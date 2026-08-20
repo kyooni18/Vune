@@ -255,6 +255,6 @@ CI currently checks TypeScript build output, public type usage, runtime renderin
 
 ## Status
 
-The React rewrite is currently versioned as `1.0.0-alpha.2`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
+The React rewrite is currently versioned as `1.0.0-alpha.3`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
 See [Design](docs/DESIGN.md), [Migration](docs/MIGRATION.md), and [Changelog](docs/CHANGELOG.md).
