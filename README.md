@@ -75,6 +75,35 @@ import App from './App'
 createRoot(document.getElementById('app')!).render(createElement(App))
 ```
 
+## Reusable views with props
+
+`view()` can also create reusable React components with typed props:
+
+```ts
+const Greeting = view((props: { name: string }) =>
+  Text(`Hello, ${props.name}`),
+)
+```
+
+State-scoped views can initialize their local Vune state from React props too:
+
+```ts
+type CounterProps = {
+  initial: number
+  label: string
+}
+
+const Counter = view({
+  state: (props: CounterProps) => ({
+    count: State(props.initial),
+  }),
+  body: ({ count }, props) =>
+    Text(`${props.label}: ${count.value}`),
+})
+```
+
+The state factory runs once per mounted component instance. Later prop changes are passed to the body without recreating that instance state.
+
 ## Coordinate-free layout
 
 Vune prefers relationships over x/y coordinates:
