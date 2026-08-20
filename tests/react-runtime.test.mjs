@@ -49,6 +49,36 @@ test('State subscriptions notify on changes, ignore identical values, and unsubs
   assert.equal(notifications, 1)
 })
 
+test('State tracks array and nested plain-object mutations', () => {
+  const todos = State([{ title: 'One', done: false }])
+  let notifications = 0
+  const unsubscribe = subscribeState(todos, () => { notifications += 1 })
+
+  const stable = todos.value
+  assert.equal(todos.value, stable)
+
+  todos.value.push({ title: 'Two', done: false })
+  const afterPush = notifications
+  assert.ok(afterPush > 0)
+  assert.equal(todos.value.length, 2)
+
+  todos.value[0].done = true
+  assert.ok(notifications > afterPush)
+  const afterNestedChange = notifications
+
+  todos.value[0].done = true
+  assert.equal(notifications, afterNestedChange)
+
+  delete todos.value[1].title
+  assert.ok(notifications > afterNestedChange)
+
+  const beforeSameRoot = notifications
+  todos.value = stable
+  assert.equal(notifications, beforeSameRoot)
+
+  unsubscribe()
+})
+
 test('view produces a renderable React component', () => {
   const App = view(() => VStack(Text('Hello Vune')))
   const html = renderToStaticMarkup(createElement(App))
