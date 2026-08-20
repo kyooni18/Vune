@@ -104,6 +104,26 @@ const Counter = view({
 
 The state factory runs once per mounted component instance. Later prop changes are passed to the body without recreating that instance state.
 
+## Mutable State containers
+
+Arrays and plain objects stored in `State()` are mutation-aware, including nested plain objects. You can update them directly without cloning the whole root value:
+
+```ts
+const todos = State([
+  { title: 'Ship Vune', done: false },
+])
+
+Button('Add', Action(
+  todos.value.push({ title: 'Next item', done: false })
+))
+
+Button('Complete', Action(
+  todos.value[0].done = true
+))
+```
+
+Direct assignment still works normally. React elements, frozen values, class instances, `Map`, `Set`, and other special objects are not proxied as mutable containers; replace the `State.value` root when those values change.
+
 ## Coordinate-free layout
 
 Vune prefers relationships over x/y coordinates:
