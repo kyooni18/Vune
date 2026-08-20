@@ -1,94 +1,152 @@
 import {
-  h,
-  isRef,
-  isVNode,
-  mergeProps,
-  toValue,
-  type Ref,
-  type VNodeChild,
-} from 'vue'
-import { HStack, Text, VStack, Button } from './elements.js'
+  createElement,
+  isValidElement,
+  type AnchorHTMLAttributes,
+  type ImgHTMLAttributes,
+  type InputHTMLAttributes,
+  type ProgressHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+} from 'react'
+import { Button, HStack, Text, VStack } from './elements.js'
 import { styled } from './modifiers.js'
-import type { Length, NativeProps, StyledVNode, Value } from './types.js'
-
-type MergeableProps = Record<string, any>
+import { isStateRef, resolveValue } from './state.js'
+import type { Length, StateRef, StyledElement, Value } from './types.js'
 
 export type ImageFit = 'contain' | 'cover' | 'fill' | 'none' | 'scale-down'
 
-export type ImageOptions = NativeProps & {
-  alt?: string
+export type ImageOptions = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
   fit?: ImageFit
-  loading?: 'eager' | 'lazy'
 }
 
-export function Image(source: Value<string>, options: ImageOptions = {}): StyledVNode {
-  const { fit, ...props } = options
-  return styled(h('img', mergeProps(props as MergeableProps, {
-    src: String(toValue(source)),
-    ...(fit === undefined ? {} : { style: { objectFit: fit } }),
-  })))
+export function Image(source: Value<string>, options: ImageOptions = {}): StyledElement {
+  const { fit, style, ...props } = options
+  return styled(createElement('img', {
+    ...props,
+    src: String(resolveValue(source)),
+    style: {
+      ...style,
+      ...(fit === undefined ? {} : { objectFit: fit }),
+    },
+  }))
 }
 
-function content(value: VNodeChild | Value<string | number>): VNodeChild {
-  if (isVNode(value) || Array.isArray(value)) return value as VNodeChild
-  if (isRef(value)) return String(value.value)
-  return String(toValue(value as Value<string | number>))
+function content(value: ReactNode | Value<string | number>): ReactNode {
+  if (isValidElement(value) || Array.isArray(value)) return value as ReactNode
+  if (isStateRef(value) || typeof value === 'function') {
+    return String(resolveValue(value as Value<string | number>))
+  }
+  return value as ReactNode
 }
 
 export interface LabelOptions { spacing?: Length }
 
-export function Label(title: VNodeChild | Value<string | number>, icon: VNodeChild, options: LabelOptions = {}): StyledVNode {
+export function Label(
+  title: ReactNode | Value<string | number>,
+  icon: ReactNode,
+  options: LabelOptions = {},
+): StyledElement {
   return HStack({ spacing: options.spacing ?? 6 }, icon, content(title))
 }
 
-export function Link(label: VNodeChild | Value<string | number>, href: Value<string>, props: NativeProps = {}): StyledVNode {
-  return styled(h('a', mergeProps(props as MergeableProps, { href: String(toValue(href)) }), [content(label)]))
+export type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>
+
+export function Link(
+  label: ReactNode | Value<string | number>,
+  href: Value<string>,
+  props: LinkProps = {},
+): StyledElement {
+  return styled(createElement('a', { ...props, href: String(resolveValue(href)) }, content(label)))
 }
 
-export type ProgressViewOptions = NativeProps & { max?: number; label?: VNodeChild | Value<string | number> }
+export type ProgressViewOptions = ProgressHTMLAttributes<HTMLProgressElement> & {
+  label?: ReactNode | Value<string | number>
+}
 
-export function ProgressView(value?: Value<number> | null, options: ProgressViewOptions = {}): StyledVNode {
+export function ProgressView(
+  value?: Value<number> | null,
+  options: ProgressViewOptions = {},
+): StyledElement {
   const { max = 1, label, ...props } = options
-  const progress = styled(h('progress', mergeProps(props as MergeableProps, {
+  const progress = styled(createElement('progress', {
+    ...props,
     max,
-    ...(value == null ? {} : { value: Number(toValue(value)) }),
-  })))
+    ...(value == null ? {} : { value: Number(resolveValue(value)) }),
+  }))
   if (label === undefined) return progress
   return VStack({ alignment: 'leading', spacing: 6 }, content(label), progress)
 }
 
-export interface PickerOption<T extends string | number> { label: string; value: T; disabled?: boolean }
-export type PickerProps = NativeProps
-
-export function Picker<T extends string | number>(selection: Ref<T>, options: readonly PickerOption<T>[], props: PickerProps = {}): StyledVNode {
-  function update(event: Event) {
-    const target = event.target as HTMLSelectElement | null
-    if (!target) return
-    const selected = options.find(option => String(option.value) === target.value)
-    if (selected) selection.value = selected.value
-  }
-  return styled(h('select', mergeProps({ onChange: update }, props as MergeableProps, { value: String(selection.value) }), options.map(option =>
-    h('option', { value: String(option.value), disabled: option.disabled }, option.label),
-  )))
+export interface PickerOption<T extends string | number> {
+  label: string
+  value: T
+  disabled?: boolean
 }
 
-export type SliderOptions = NativeProps & { min?: number; max?: number; step?: number }
+export type PickerProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, 'value' | 'defaultValue'>
 
-export function Slider(value: Ref<number>, options: SliderOptions = {}): StyledVNode {
-  const { min = 0, max = 1, step = 0.01, ...props } = options
-  function update(event: Event) {
-    const target = event.target as HTMLInputElement | null
-    if (target) value.value = Number(target.value)
-  }
-  return styled(h('input', mergeProps({ onInput: update }, props as MergeableProps, { type: 'range', min, max, step, value: value.value })))
+export function Picker<T extends string | number>(
+  selection: StateRef<T>,
+  options: readonly PickerOption<T>[],
+  props: PickerProps = {},
+): StyledElement {
+  const { onChange, ...rest } = props
+  return styled(createElement(
+    'select',
+    {
+      ...rest,
+      value: String(selection.value),
+      onChange(event) {
+        const selected = options.find(option => String(option.value) === event.currentTarget.value)
+        if (selected) selection.value = selected.value
+        onChange?.(event)
+      },
+    },
+    ...options.map(option => createElement(
+      'option',
+      { key: String(option.value), value: String(option.value), disabled: option.disabled },
+      option.label,
+    )),
+  ))
 }
 
-export interface StepperOptions { min?: number; max?: number; step?: number; label?: Value<string | number>; spacing?: Length }
+export type SliderOptions = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'defaultValue'> & {
+  min?: number
+  max?: number
+  step?: number
+}
 
-export function Stepper(value: Ref<number>, options: StepperOptions = {}): StyledVNode {
+export function Slider(value: StateRef<number>, options: SliderOptions = {}): StyledElement {
+  const { min = 0, max = 1, step = 0.01, onChange, ...props } = options
+  return styled(createElement('input', {
+    ...props,
+    type: 'range',
+    min,
+    max,
+    step,
+    value: value.value,
+    onChange(event) {
+      value.value = Number(event.currentTarget.value)
+      onChange?.(event)
+    },
+  }))
+}
+
+export interface StepperOptions {
+  min?: number
+  max?: number
+  step?: number
+  label?: Value<string | number>
+  spacing?: Length
+}
+
+export function Stepper(value: StateRef<number>, options: StepperOptions = {}): StyledElement {
   const { min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY, step = 1 } = options
-  function decrement() { value.value = Math.max(min, value.value - step) }
-  function increment() { value.value = Math.min(max, value.value + step) }
   const label = options.label === undefined ? Text(() => value.value) : Text(options.label)
-  return HStack({ spacing: options.spacing ?? 8 }, Button('−', decrement), label, Button('+', increment))
+  return HStack(
+    { spacing: options.spacing ?? 8 },
+    Button('−', () => { value.value = Math.max(min, value.value - step) }),
+    label,
+    Button('+', () => { value.value = Math.min(max, value.value + step) }),
+  )
 }

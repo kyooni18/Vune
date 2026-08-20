@@ -1,11 +1,10 @@
 import {
   Fragment,
-  h,
-  isVNode,
+  createElement,
+  isValidElement,
   type CSSProperties,
-  type VNode,
-  type VNodeChild,
-} from 'vue'
+  type ReactNode,
+} from 'react'
 import { Grid, HStack, Text, VStack } from './elements.js'
 import { layoutChild, layoutChildren } from './layout.js'
 import { styled } from './modifiers.js'
@@ -13,24 +12,21 @@ import type {
   GridOptions,
   HStackOptions,
   Length,
-  StyledVNode,
+  StyledElement,
   VStackOptions,
 } from './types.js'
 
-function flatten(children: VNodeChild[]): VNodeChild[] {
-  const result: VNodeChild[] = []
+function flatten(children: ReactNode[]): ReactNode[] {
+  const result: ReactNode[] = []
   for (const child of children) {
-    if (Array.isArray(child)) result.push(...flatten(child as VNodeChild[]))
+    if (Array.isArray(child)) result.push(...flatten(child))
     else result.push(child)
   }
   return result
 }
 
 function isOptions(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object'
-    && value !== null
-    && !Array.isArray(value)
-    && !isVNode(value)
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && !isValidElement(value)
 }
 
 function cssLength(value: Length): string {
@@ -43,63 +39,56 @@ export interface ListOptions {
   separators?: boolean
 }
 
-export function List(...children: VNodeChild[]): StyledVNode
-export function List(options: ListOptions, ...children: VNodeChild[]): StyledVNode
-export function List(...args: any[]): StyledVNode {
+export function List(...children: ReactNode[]): StyledElement
+export function List(options: ListOptions, ...children: ReactNode[]): StyledElement
+export function List(...args: any[]): StyledElement {
   const options: ListOptions = isOptions(args[0]) ? args[0] as ListOptions : {}
   const children = isOptions(args[0]) ? args.slice(1) : args
-  const rows = flatten(children).map((child, index) =>
-    h(
-      'div',
-      {
-        role: 'listitem',
-        key: isVNode(child) ? child.key ?? index : index,
-        style: {
-          minWidth: 0,
-          ...(options.inset === undefined ? {} : { padding: cssLength(options.inset) }),
-          ...(options.separators === false || index === 0
-            ? {}
-            : { borderTop: '1px solid rgba(127, 127, 127, 0.22)' }),
-        },
+  const flat = flatten(children)
+  const rows = flat.map((child, index) => createElement(
+    'div',
+    {
+      role: 'listitem',
+      key: isValidElement(child) ? child.key ?? index : index,
+      style: {
+        minWidth: 0,
+        ...(options.inset === undefined ? {} : { padding: cssLength(options.inset) }),
+        ...(options.separators === false || index === 0
+          ? {}
+          : { borderTop: '1px solid rgba(127, 127, 127, 0.22)' }),
       },
-      [layoutChild(child)],
-    ),
-  )
+    },
+    layoutChild(child),
+  ))
 
-  return styled(
-    h(
-      'div',
-      {
-        role: 'list',
-        style: {
-          display: 'flex',
-          flexDirection: 'column',
-          ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
-        },
-      },
-      rows,
-    ),
-  )
+  return styled(createElement('div', {
+    role: 'list',
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
+    },
+  }, ...rows))
 }
 
 export interface SectionOptions {
-  header?: VNodeChild | string
-  footer?: VNodeChild | string
+  header?: ReactNode | string
+  footer?: ReactNode | string
   spacing?: Length
 }
 
-function sectionPart(value: VNodeChild | string | undefined, role: 'heading' | 'note'): VNodeChild | null {
+function sectionPart(value: ReactNode | string | undefined, role: 'heading' | 'note'): ReactNode {
   if (value === undefined) return null
   const child = typeof value === 'string' ? Text(value) : value
-  return h('div', { role }, [child])
+  return createElement('div', { role }, layoutChild(child))
 }
 
-export function Section(...children: VNodeChild[]): StyledVNode
-export function Section(title: string, ...children: VNodeChild[]): StyledVNode
-export function Section(options: SectionOptions, ...children: VNodeChild[]): StyledVNode
-export function Section(...args: any[]): StyledVNode {
+export function Section(...children: ReactNode[]): StyledElement
+export function Section(title: string, ...children: ReactNode[]): StyledElement
+export function Section(options: SectionOptions, ...children: ReactNode[]): StyledElement
+export function Section(...args: any[]): StyledElement {
   let options: SectionOptions = {}
-  let children: VNodeChild[] = args
+  let children: ReactNode[] = args
 
   if (typeof args[0] === 'string') {
     options = { header: args[0] }
@@ -109,23 +98,16 @@ export function Section(...args: any[]): StyledVNode {
     children = args.slice(1)
   }
 
-  return styled(
-    h(
-      'section',
-      { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } },
-      [
-        sectionPart(options.header, 'heading'),
-        h('div', { role: 'group' }, layoutChildren(flatten(children))),
-        sectionPart(options.footer, 'note'),
-      ].filter(Boolean),
-    ),
-  )
+  return styled(createElement(
+    'section',
+    { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } },
+    sectionPart(options.header, 'heading'),
+    createElement('div', { role: 'group' }, ...layoutChildren(flatten(children))),
+    sectionPart(options.footer, 'note'),
+  ))
 }
 
-export interface LazyOptions {
-  estimatedItemSize?: Length
-}
-
+export interface LazyOptions { estimatedItemSize?: Length }
 export type LazyVStackOptions = VStackOptions & LazyOptions
 export type LazyHStackOptions = HStackOptions & LazyOptions
 export type LazyGridOptions = GridOptions & LazyOptions
@@ -134,48 +116,39 @@ function lazyStyle(estimatedItemSize: Length = 44): CSSProperties {
   return {
     contentVisibility: 'auto',
     containIntrinsicSize: `auto ${cssLength(estimatedItemSize)}`,
-  } as CSSProperties
+  }
 }
 
-function lazyChild(child: VNodeChild, estimatedItemSize?: Length): VNodeChild {
-  if (!isVNode(child) || child.type === Fragment) return child
-  return styled(child as VNode).style(lazyStyle(estimatedItemSize))
+function lazyChild(child: ReactNode, estimatedItemSize?: Length): ReactNode {
+  if (!isValidElement(child) || child.type === Fragment) return child
+  return styled(child).style(lazyStyle(estimatedItemSize))
 }
 
-export function LazyVStack(...children: VNodeChild[]): StyledVNode
-export function LazyVStack(options: LazyVStackOptions, ...children: VNodeChild[]): StyledVNode
-export function LazyVStack(...args: any[]): StyledVNode {
+export function LazyVStack(...children: ReactNode[]): StyledElement
+export function LazyVStack(options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
+export function LazyVStack(...args: any[]): StyledElement {
   const options: LazyVStackOptions = isOptions(args[0]) ? args[0] as LazyVStackOptions : {}
   const children = isOptions(args[0]) ? args.slice(1) : args
   const { estimatedItemSize, ...stackOptions } = options
-  return VStack(
-    stackOptions,
-    ...flatten(children).map(child => lazyChild(child, estimatedItemSize)),
-  )
+  return VStack(stackOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }
 
-export function LazyHStack(...children: VNodeChild[]): StyledVNode
-export function LazyHStack(options: LazyHStackOptions, ...children: VNodeChild[]): StyledVNode
-export function LazyHStack(...args: any[]): StyledVNode {
+export function LazyHStack(...children: ReactNode[]): StyledElement
+export function LazyHStack(options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
+export function LazyHStack(...args: any[]): StyledElement {
   const options: LazyHStackOptions = isOptions(args[0]) ? args[0] as LazyHStackOptions : {}
   const children = isOptions(args[0]) ? args.slice(1) : args
   const { estimatedItemSize, ...stackOptions } = options
-  return HStack(
-    stackOptions,
-    ...flatten(children).map(child => lazyChild(child, estimatedItemSize)),
-  )
+  return HStack(stackOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }
 
 export function LazyGrid(
   columnsOrOptions: number | string | LazyGridOptions = 1,
-  ...children: VNodeChild[]
-): StyledVNode {
+  ...children: ReactNode[]
+): StyledElement {
   const options: LazyGridOptions = typeof columnsOrOptions === 'object'
     ? columnsOrOptions
     : { columns: columnsOrOptions }
   const { estimatedItemSize, ...gridOptions } = options
-  return Grid(
-    gridOptions,
-    ...flatten(children).map(child => lazyChild(child, estimatedItemSize)),
-  )
+  return Grid(gridOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }

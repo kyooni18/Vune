@@ -1,6 +1,6 @@
 {
   "name": "vune",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
   "type": "module",
   "sideEffects": false,
@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test": "npm run build && npm run test:types",
+    "test:runtime": "node --test tests/react-runtime.test.mjs tests/macro-react.test.mjs",
+    "test": "npm run build && npm run test:types && npm run test:runtime",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
     "prepack": "npm run build"
@@ -27,11 +28,11 @@
     "react-dom": ">=18 <20"
   },
   "devDependencies": {
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.5",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "typescript": "^5.8.3",
     "vite": "^8.2.1"
   },
