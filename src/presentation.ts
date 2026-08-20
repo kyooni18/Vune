@@ -46,7 +46,7 @@ function NavigationLinkHost({ destination, children, onClick, ...props }: Naviga
   return createElement('a', {
     ...props,
     href: props.href ?? (typeof destination === 'string' ? destination : undefined),
-    onClick(event) {
+    onClick(event: ReactMouseEvent<HTMLAnchorElement>) {
       onClick?.(event)
       if (event.defaultPrevented) return
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
