@@ -2,6 +2,7 @@ import {
   createElement,
   isValidElement,
   type AnchorHTMLAttributes,
+  type ChangeEvent,
   type ImgHTMLAttributes,
   type InputHTMLAttributes,
   type ProgressHTMLAttributes,
@@ -96,7 +97,7 @@ export function Picker<T extends string | number>(
     {
       ...rest,
       value: String(selection.value),
-      onChange(event) {
+      onChange(event: ChangeEvent<HTMLSelectElement>) {
         const selected = options.find(option => String(option.value) === event.currentTarget.value)
         if (selected) selection.value = selected.value
         onChange?.(event)
@@ -125,7 +126,7 @@ export function Slider(value: StateRef<number>, options: SliderOptions = {}): St
     max,
     step,
     value: value.value,
-    onChange(event) {
+    onChange(event: ChangeEvent<HTMLInputElement>) {
       value.value = Number(event.currentTarget.value)
       onChange?.(event)
     },
