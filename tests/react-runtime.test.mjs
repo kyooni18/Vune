@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, forwardRef, memo } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   Component,
   HStack,
+  Raw,
   Spacer,
   State,
   Text,
@@ -17,6 +18,11 @@ function Badge({ label }) {
   return createElement('strong', null, label)
 }
 
+const MemoBadge = memo(Badge)
+const ForwardBadge = forwardRef(function ForwardBadge({ label }, ref) {
+  return createElement('strong', { ref }, label)
+})
+
 test('renders coordinate-free stack layout', () => {
   const html = renderToStaticMarkup(
     HStack(Text('Left'), Spacer(), Text('Right')).frame({ maxWidth: 'infinity' }),
@@ -26,6 +32,13 @@ test('renders coordinate-free stack layout', () => {
   assert.match(html, /flex-grow:1/)
 })
 
+test('Spacer preserves an explicit minimum length', () => {
+  const html = renderToStaticMarkup(HStack(Text('Left'), Spacer(24), Text('Right')))
+  assert.match(html, /flex-grow:1/)
+  assert.match(html, /flex-shrink:0/)
+  assert.match(html, /flex-basis:24px/)
+})
+
 test('hosts ordinary React components without passing layout styles into them', () => {
   const html = renderToStaticMarkup(
     HStack(Component(Badge, { label: 'React' }).padding(12)),
@@ -33,6 +46,22 @@ test('hosts ordinary React components without passing layout styles into them', 
   assert.match(html, /data-vune-layout-host/)
   assert.match(html, /padding:12px/)
   assert.match(html, /<strong>React<\/strong>/)
+})
+
+test('hosts memo, forwardRef, and direct React elements as first-class layout items', () => {
+  const html = renderToStaticMarkup(
+    HStack(
+      createElement(MemoBadge, { label: 'Memo' }),
+      createElement(ForwardBadge, { label: 'Forward' }),
+      Raw(createElement(Badge, { label: 'Raw' })).padding(7),
+    ),
+  )
+
+  assert.equal((html.match(/data-vune-layout-host/g) ?? []).length, 3)
+  assert.match(html, /<strong>Memo<\/strong>/)
+  assert.match(html, /<strong>Forward<\/strong>/)
+  assert.match(html, /padding:7px/)
+  assert.match(html, /<strong>Raw<\/strong>/)
 })
 
 test('State subscriptions notify on changes, ignore identical values, and unsubscribe cleanly', () => {
