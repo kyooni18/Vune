@@ -225,7 +225,7 @@ export function Spacer(minLength?: Length): StyledElement {
     'aria-hidden': true,
     style: {
       flexGrow: 1,
-      flexShrink: 1,
+      flexShrink: minLength === undefined ? 1 : 0,
       flexBasis: minLength === undefined ? '0px' : cssLength(minLength),
       minWidth: 0,
       minHeight: 0,
