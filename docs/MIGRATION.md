@@ -1,136 +1,84 @@
-# Migration guide
+# Migration from Vune 0.x (Vue) to Vune 1.0 (React)
 
-## 0.3 to 0.4
+Vune 1.0 is a renderer rewrite, not a Vue compatibility release. The SwiftUI-like API shape is preserved where practical, but Vue itself is removed from the runtime.
 
-0.4 is additive; no 0.3 API is removed or renamed.
+## Dependencies
 
-New layout helper:
+Remove Vue and the Vue Vite plugin from a Vune-only app and use React instead:
 
-```ts
-ScrollView(VStack(...rows))
-ScrollView(HStack(...cards), 'horizontal')
-ScrollView(content, 'both')
+```bash
+pnpm remove vue @vitejs/plugin-vue
+pnpm add react react-dom
+pnpm add -D @vitejs/plugin-react
 ```
 
-New CSS-box shape helpers:
+For a local Vune checkout:
 
-```ts
-Rectangle()
-RoundedRectangle(12)
-Circle()
-Capsule()
+```bash
+pnpm add ../Vune
 ```
 
-Use equal width and height with `Circle()` when a true circle is required. Complex SVG/path geometry remains ordinary Vue/SVG rather than being wrapped in a new shape runtime.
+## Vite
 
-0.3 tightens layout and modifier semantics rather than expanding the framework surface.
-
-## `Group()` no longer exposes modifiers
-
-`Group()` is a Vue Fragment. Since a Fragment has no CSS box, code such as this was visually misleading in 0.2:
+Before:
 
 ```ts
-Group(Text('A'), Text('B')).padding(12)
+import vue from '@vitejs/plugin-vue'
+import { vuneMacro } from 'vune/vite'
+
+plugins: [vuneMacro(), vue()]
 ```
 
-Use `Box()` when you need a real DOM styling boundary:
+After:
 
 ```ts
-Box(Text('A'), Text('B')).padding(12)
+import react from '@vitejs/plugin-react'
+import { vuneMacro } from 'vune/vite'
+
+plugins: [vuneMacro(), react()]
 ```
 
-If you only need to key the Fragment itself, use the function helper:
+## Application entry
+
+Vue `createApp(...).mount(...)` becomes React `createRoot(...).render(...)`.
 
 ```ts
-Key(groupId, Group(...children))
+import { createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+createRoot(document.getElementById('app')!).render(createElement(App))
 ```
 
-## Native controls now keep their controlled props
+A Vune screen can be `.ts`; `.vue` files are no longer part of Vune itself.
 
-`Button()` always emits `type=button`, `Toggle()` always emits `type=checkbox`, and bound `value` / `checked` props come from the supplied ref. Conflicting values passed through the optional props object are ignored by design. User event listeners still run and are merged through Vue's `mergeProps()`.
+## State and macro syntax
 
-## Native primitive prop types are narrower
-
-`Text`, `Button`, `TextField`, `TextArea`, and `Toggle` now use Vue's corresponding native HTML attribute types. If application-specific attributes no longer type-check, use the modifier escape hatches such as `.attr()` / `.withProps()`, or `Element()` where a deliberately open prop surface is appropriate.
-
----
-
-# Migration from 0.1 to 0.2
-
-0.2 is designed to keep 0.1 code working while improving Vue interoperability and type safety.
-
-## `ComponentNode` → `Component`
-
-Old:
+The intended macro syntax remains close to the 0.x form:
 
 ```ts
-ComponentNode(UserCard, { user })
+const count = State(0)
+
+export default view(
+  VStack(
+    Text(`Count: ${count.value}`),
+    Button('Increase', Action(count.value += 1)),
+  ),
+)
 ```
 
-Preferred in 0.2:
+The React macro now lowers this to per-component-instance `view({ state, body })` state.
 
-```ts
-Component(UserCard, { user })
-```
+## Component interoperability
 
-`ComponentNode` remains as a deprecated alias, so this is not an immediate breaking change.
+`Component()` now accepts React component types instead of Vue component definitions. Vune still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
 
-## New component props and slot inference
+## Removed Vue-specific APIs
 
-`Component()` infers public component props and slots where Vue exposes them through the component type. Code that passed a clearly wrong prop type may now fail TypeScript checks, which is intentional.
+The 1.0 runtime does not carry Vue `Transition`, `TransitionGroup`, `Teleport`, `Suspense`, `KeepAlive`, Vue slots helpers, Vue refs/models, or `defineComponent`-oriented APIs as compatibility shims.
 
-## New `v-model` support
+Use React equivalents directly where appropriate. Vune `Sheet` and `Alert` use React portals internally.
 
-```ts
-Component(Editor).model(content)
-Component(Pager).model(page, 'page')
-```
+## Presentation and navigation
 
-The standalone `Model()` helper is also available.
-
-## New safe identity modifiers
-
-Use:
-
-```ts
-node.keyed(key)
-node.templateRef(inputRef)
-```
-
-or:
-
-```ts
-Key(key, node)
-TemplateRef(inputRef, node)
-```
-
-There are intentionally no `.key()` or `.ref()` methods because those names are real fields on Vue VNodes.
-
-## CSS transition naming
-
-The CSS modifier is named:
-
-```ts
-node.cssTransition('opacity 150ms ease')
-```
-
-not `.transition()`, because `transition` is also an internal VNode field used by Vue.
-
-## New primitives
-
-0.2 adds:
-
-- `Grid`
-- `ZStack`
-- `TextArea`
-- typed `Component`
-- `Slots`
-- `Key`
-- `TemplateRef`
-- Vue built-in wrappers
-
-## New modifiers
-
-0.2 adds typed event helpers, component model binding, VNode identity helpers, more typography, flex, position, overflow, cursor, z-index, transform, CSS transition, and shadow helpers.
-
-The generic `style()`, `withProps()`, `attr()`, and `on()` escape hatches remain available.
+`NavigationStack` remains router-agnostic and only requires a `push(destination)` method. Existing React routers can be adapted by passing a small object that satisfies that interface.
