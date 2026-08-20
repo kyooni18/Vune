@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { transformVuneMacros } from '../dist/vite.js'
+import { transformRuiMacros } from '../dist/vite.js'
 
 test('moves State declarations into per-view state and defers Action expressions', () => {
   const source = `
-import { Action, Button, State, Text, VStack, view } from 'vune'
+import { Action, Button, State, Text, VStack, view } from 'rui'
 const count = State(0)
 export default view(
   VStack(
@@ -13,7 +13,7 @@ export default view(
   )
 )
 `
-  const output = transformVuneMacros(source, '/src/App.ts')
+  const output = transformRuiMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /state: \(\) => \{/)
   assert.match(output, /const count = State\(0\)/)
@@ -25,7 +25,7 @@ export default view(
 
 test('preserves State declaration order inside the per-view factory', () => {
   const source = `
-import { State, Text, VStack, view } from 'vune'
+import { State, Text, VStack, view } from 'rui'
 const count = State(2)
 const doubled = State(count.value * 2)
 export default view(
@@ -35,15 +35,15 @@ export default view(
   )
 )
 `
-  const output = transformVuneMacros(source, '/src/App.ts')
+  const output = transformRuiMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /const count = State\(2\)[\s\S]*const doubled = State\(count\.value \* 2\)/)
   assert.match(output, /return \{ count, doubled \}/)
 })
 
 test('wraps a plain view expression in a render function', () => {
-  const source = `import { Text, view } from 'vune'\nexport default view(Text('Hello'))`
-  const output = transformVuneMacros(source, '/src/App.ts')
+  const source = `import { Text, view } from 'rui'\nexport default view(Text('Hello'))`
+  const output = transformRuiMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /view\(\(\) => \(Text\('Hello'\)\)\)/)
 })

@@ -1,10 +1,10 @@
-# Migration from Vune 0.x (Vue) to Vune 1.0 (React)
+# Migration from the 0.x Vue release to Rui 1.0 (React)
 
-Vune 1.0 is a renderer rewrite, not a Vue compatibility release. The SwiftUI-like API shape is preserved where practical, but Vue itself is removed from the runtime.
+Rui 1.0 is a renderer rewrite, not a Vue compatibility release. The SwiftUI-like API shape is preserved where practical, but Vue itself is removed from the runtime.
 
 ## Dependencies
 
-Remove Vue and the Vue Vite plugin from a Vune-only app and use React instead:
+Remove Vue and the Vue Vite plugin from a Rui-only app and use React instead:
 
 ```bash
 pnpm remove vue @vitejs/plugin-vue
@@ -12,10 +12,10 @@ pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-For a local Vune checkout:
+For a local Rui checkout:
 
 ```bash
-pnpm add ../Vune
+pnpm add ../Rui
 ```
 
 ## Vite
@@ -24,18 +24,18 @@ Before:
 
 ```ts
 import vue from '@vitejs/plugin-vue'
-import { vuneMacro } from 'vune/vite'
+import { ruiMacro } from 'rui/vite'
 
-plugins: [vuneMacro(), vue()]
+plugins: [ruiMacro(), vue()]
 ```
 
 After:
 
 ```ts
 import react from '@vitejs/plugin-react'
-import { vuneMacro } from 'vune/vite'
+import { ruiMacro } from 'rui/vite'
 
-plugins: [vuneMacro(), react()]
+plugins: [ruiMacro(), react()]
 ```
 
 ## Application entry
@@ -50,7 +50,7 @@ import App from './App'
 createRoot(document.getElementById('app')!).render(createElement(App))
 ```
 
-A Vune screen can be `.ts`; `.vue` files are no longer part of Vune itself.
+A Rui screen can be `.ts`; `.vue` files are no longer part of Rui itself.
 
 ## State and macro syntax
 
@@ -71,13 +71,13 @@ The React macro now lowers this to per-component-instance `view({ state, body })
 
 ## Component interoperability
 
-`Component()` now accepts React component types instead of Vue component definitions. Vune still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
+`Component()` now accepts React component types instead of Vue component definitions. Rui still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
 
 ## Removed Vue-specific APIs
 
 The 1.0 runtime does not carry Vue `Transition`, `TransitionGroup`, `Teleport`, `Suspense`, `KeepAlive`, Vue slots helpers, Vue refs/models, or `defineComponent`-oriented APIs as compatibility shims.
 
-Use React equivalents directly where appropriate. Vune `Sheet` and `Alert` use React portals internally.
+Use React equivalents directly where appropriate. Rui `Sheet` and `Alert` use React portals internally.
 
 ## Presentation and navigation
 

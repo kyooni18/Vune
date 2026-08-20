@@ -14,7 +14,7 @@ const count = State(0)
 export default view(
   VStack(
     { spacing: 16, alignment: 'leading' },
-    Text('Hello, Vune').fontSize(28).bold(),
+    Text('Hello, Rui').fontSize(28).bold(),
     Text(`Count: ${count.value}`),
     Button('Increase', Action(count.value += 1)),
     HStack(

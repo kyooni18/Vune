@@ -1,5 +1,5 @@
 {
-  "name": "vune",
+  "name": "rui",
   "version": "1.0.0-alpha.4",
   "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
   "type": "module",
@@ -38,7 +38,7 @@
   },
   "engines": { "node": ">=20.19.0" },
   "keywords": ["react", "typescript", "declarative-ui", "swiftui", "vite", "dsl", "ui"],
-  "repository": { "type": "git", "url": "git+https://github.com/kyooni18/Vune.git" },
-  "bugs": { "url": "https://github.com/kyooni18/Vune/issues" },
-  "homepage": "https://github.com/kyooni18/Vune#readme"
+  "repository": { "type": "git", "url": "git+https://github.com/kyooni18/Rui.git" },
+  "bugs": { "url": "https://github.com/kyooni18/Rui/issues" },
+  "homepage": "https://github.com/kyooni18/Rui#readme"
 }

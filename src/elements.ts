@@ -140,7 +140,7 @@ export function ZStack(...args: any[]): StyledElement {
     const layout = component ? layoutPropsOf(child) : undefined
     return createElement('div', {
       key: isValidElement(child) ? child.key ?? index : index,
-      ...(component ? { 'data-vune-layout-host': '' } : {}),
+      ...(component ? { 'data-rui-layout-host': '' } : {}),
       className: Array.isArray(layout?.className) ? layout.className.join(' ') : layout?.className,
       style: { gridArea: '1 / 1', minWidth: 0, minHeight: 0, ...(component ? layout?.style ?? {} : {}) },
     }, child)

@@ -43,7 +43,7 @@ export function view<
 >(
   input: ViewContent<Props> | ViewDefinition<State, Props>,
 ): ComponentType<Props> {
-  function VuneView(props: Props) {
+  function RuiView(props: Props) {
     const instance = useRef<{ initialized: boolean; state: State | null }>({
       initialized: false,
       state: null,
@@ -66,6 +66,6 @@ export function view<
     return createElement(Fragment, null, layoutChild(node))
   }
 
-  VuneView.displayName = 'VuneView'
-  return VuneView
+  RuiView.displayName = 'RuiView'
+  return RuiView
 }

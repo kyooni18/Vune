@@ -1,4 +1,4 @@
-export interface VuneMacroPlugin {
+export interface RuiMacroPlugin {
   name: string
   enforce: 'pre'
   transform(code: string, id: string): { code: string; map: null } | null
@@ -72,7 +72,7 @@ function findMatching(
     }
     i += 1
   }
-  throw new Error(`Unclosed ${openChar} in Vune macro source`)
+  throw new Error(`Unclosed ${openChar} in Rui macro source`)
 }
 
 function skipWhitespace(source: string, index: number): number {
@@ -160,8 +160,8 @@ function looksLikeFunction(source: string): boolean {
     || /^(?:async\s+)?function\b/.test(value)
 }
 
-export function transformVuneMacros(source: string, id = ''): string | null {
-  if (source.includes('/* @vune-macro-transformed */')) return null
+export function transformRuiMacros(source: string, id = ''): string | null {
+  if (source.includes('/* @rui-macro-transformed */')) return null
   if (!source.includes('view(') && !source.includes('view (')) return null
   if (id) {
     const pathname = id.split('?', 1)[0]
@@ -195,15 +195,15 @@ export function transformVuneMacros(source: string, id = ''): string | null {
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     output = output.slice(0, edit.start) + edit.replacement + output.slice(edit.end)
   }
-  return `/* @vune-macro-transformed */\n${output}`
+  return `/* @rui-macro-transformed */\n${output}`
 }
 
-export function vuneMacro(): VuneMacroPlugin {
+export function ruiMacro(): RuiMacroPlugin {
   return {
-    name: 'vune-macro',
+    name: 'rui-macro',
     enforce: 'pre',
     transform(code, id) {
-      const transformed = transformVuneMacros(code, id)
+      const transformed = transformRuiMacros(code, id)
       return transformed === null ? null : { code: transformed, map: null }
     },
   }

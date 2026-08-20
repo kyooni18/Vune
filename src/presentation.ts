@@ -68,7 +68,7 @@ function NavigationLinkHost({ destination, children, onClick, ...props }: Naviga
 export function NavigationStack(router: RouterLike, ...children: ReactNode[]): StyledElement {
   return styled(createElement(
     'div',
-    { 'data-vune-navigation-stack': '' },
+    { 'data-rui-navigation-stack': '' },
     createElement(
       NavigationContext.Provider,
       { value: router },
@@ -105,7 +105,7 @@ export function Sheet(
 
   const panelRadius = options.placement === 'center' ? '16px' : '16px 16px 0 0'
   const backdrop = createElement('div', {
-    'data-vune-sheet-backdrop': '',
+    'data-rui-sheet-backdrop': '',
     role: 'presentation',
     onClick(event: ReactMouseEvent<HTMLDivElement>) {
       if (options.dismissOnBackdrop === false) return
@@ -120,7 +120,7 @@ export function Sheet(
       background: 'rgba(0, 0, 0, 0.32)',
     },
   }, createElement('div', {
-    'data-vune-sheet': '',
+    'data-rui-sheet': '',
     role: 'dialog',
     'aria-modal': true,
     'aria-label': options.ariaLabel,
@@ -191,7 +191,7 @@ export function Menu(
   label: ReactNode | Value<string | number>,
   ...items: ReactNode[]
 ): StyledElement {
-  return styled(createElement('details', { 'data-vune-menu': '' },
+  return styled(createElement('details', { 'data-rui-menu': '' },
     createElement('summary', { style: { cursor: 'pointer' } }, content(label)),
     createElement('div', {
       role: 'menu',

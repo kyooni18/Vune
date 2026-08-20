@@ -1,6 +1,6 @@
-# Vune
+# Rui
 
-Vune is a SwiftUI-like declarative UI layer for React. It keeps layout coordinate-free, lets UI be written as plain TypeScript expressions, and uses React as the renderer and component runtime.
+Rui is a SwiftUI-like declarative UI layer for React. It keeps layout coordinate-free, lets UI be written as plain TypeScript expressions, and uses React as the renderer and component runtime.
 
 The default Vite workflow can hide common callback wrappers with `State`, `Action`, and `view` macros, so a stateful screen can stay compact without JSX.
 
@@ -9,26 +9,26 @@ The default Vite workflow can hide common callback wrappers with `State`, `Actio
 For a local sibling checkout:
 
 ```bash
-pnpm add ../Vune
+pnpm add ../Rui
 pnpm add react react-dom
 ```
 
-For Vite, install the React plugin and put the Vune macro before it:
+For Vite, install the React plugin and put the Rui macro before it:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { vuneMacro } from 'vune/vite'
+import { ruiMacro } from 'rui/vite'
 
 export default defineConfig({
   plugins: [
-    vuneMacro(),
+    ruiMacro(),
     react(),
   ],
 })
 ```
 
-A Vune screen can then be a plain `.ts` file:
+A Rui screen can then be a plain `.ts` file:
 
 ```ts
 import {
@@ -40,14 +40,14 @@ import {
   Text,
   VStack,
   view,
-} from 'vune'
+} from 'rui'
 
 const count = State(0)
 
 export default view(
   VStack(
     { alignment: 'leading', spacing: 16 },
-    Text('Hello, Vune').fontSize(28).bold(),
+    Text('Hello, Rui').fontSize(28).bold(),
     Text(`Count: ${count.value}`),
     Button('Increase', Action(count.value += 1)),
     HStack(
@@ -85,7 +85,7 @@ const Greeting = view((props: { name: string }) =>
 )
 ```
 
-State-scoped views can initialize their local Vune state from React props too:
+State-scoped views can initialize their local Rui state from React props too:
 
 ```ts
 type CounterProps = {
@@ -110,7 +110,7 @@ Arrays and plain objects stored in `State()` are mutation-aware, including neste
 
 ```ts
 const todos = State([
-  { title: 'Ship Vune', done: false },
+  { title: 'Ship Rui', done: false },
 ])
 
 Button('Add', Action(
@@ -126,7 +126,7 @@ Direct assignment still works normally. React elements, frozen values, class ins
 
 ## Coordinate-free layout
 
-Vune prefers relationships over x/y coordinates:
+Rui prefers relationships over x/y coordinates:
 
 ```ts
 VStack(
@@ -146,7 +146,7 @@ Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `Scr
 
 ## Modifiers and CSS
 
-Common styling stays attached to the Vune object:
+Common styling stays attached to the Rui object:
 
 ```ts
 Text('Hello')
@@ -171,7 +171,7 @@ Class-based CSS is also available through `.className()`.
 
 ## React components are first-class layout items
 
-Ordinary React components can sit beside Vune primitives and `Spacer()`:
+Ordinary React components can sit beside Rui primitives and `Spacer()`:
 
 ```ts
 function ProfileCard(props: { name: string }) {
@@ -181,13 +181,13 @@ function ProfileCard(props: { name: string }) {
 HStack(
   Text('Profile'),
   Spacer(),
-  Component(ProfileCard, { name: 'Vune' })
+  Component(ProfileCard, { name: 'Rui' })
     .padding(12)
     .frame({ minWidth: 240 }),
 )
 ```
 
-Inside a Vune layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
+Inside a Rui layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
 
 `Raw(element)` accepts an already-created React element when modifier chaining is needed.
 

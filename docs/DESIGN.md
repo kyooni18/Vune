@@ -1,6 +1,6 @@
-# Vune React design
+# Rui React design
 
-Vune is a declarative TypeScript UI layer that uses React as its renderer rather than introducing a second rendering engine.
+Rui is a declarative TypeScript UI layer that uses React as its renderer rather than introducing a second rendering engine.
 
 ## Layout
 
@@ -8,21 +8,21 @@ The normal API expresses relationships rather than coordinates. `VStack`, `HStac
 
 ## React ownership boundary
 
-Vune owns the external layout slot of a child. React owns the child component itself.
+Rui owns the external layout slot of a child. React owns the child component itself.
 
-For ordinary React components, Vune stores layout metadata outside the React element and inserts one neutral layout host when the component is placed inside a Vune layout container. This avoids relying on prop forwarding or assuming a single DOM root inside the component.
+For ordinary React components, Rui stores layout metadata outside the React element and inserts one neutral layout host when the component is placed inside a Rui layout container. This avoids relying on prop forwarding or assuming a single DOM root inside the component.
 
 Component props, hooks, refs, context, children, and rendering remain React-owned.
 
 ## Modifier model
 
-React elements are treated as immutable. Vune modifiers use `cloneElement()` and a proxy facade for method chaining. Component layout metadata is kept separately rather than mutating React element objects.
+React elements are treated as immutable. Rui modifiers use `cloneElement()` and a proxy facade for method chaining. Component layout metadata is kept separately rather than mutating React element objects.
 
 ## State model
 
-`State()` is a small observable value with a `.value` API. A Vune `view()` tracks State reads during render and subscribes the React component to those values.
+`State()` is a small observable value with a `.value` API. A Rui `view()` tracks State reads during render and subscribes the React component to those values.
 
-With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Vune component instance, so two instances of the same View do not share local state.
+With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Rui component instance, so two instances of the same View do not share local state.
 
 ## Macros
 
@@ -36,4 +36,4 @@ The explicit runtime APIs remain available when macros are undesirable.
 
 ## Interoperability
 
-`Component()` creates normal React component elements. `Raw()` accepts existing React elements. Because Vune ultimately returns React elements and components, existing React libraries can be mixed in rather than wrapped behind a separate renderer.
+`Component()` creates normal React component elements. `Raw()` accepts existing React elements. Because Rui ultimately returns React elements and components, existing React libraries can be mixed in rather than wrapped behind a separate renderer.

@@ -39,7 +39,7 @@ export const GreetingView = view((props: { name: string }) =>
   Text(`Hello, ${props.name}`),
 )
 
-createElement(GreetingView, { name: 'Vune' })
+createElement(GreetingView, { name: 'Rui' })
 // @ts-expect-error name is required
 createElement(GreetingView, {})
 
