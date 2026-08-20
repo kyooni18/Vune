@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 
-export interface RuiSourceMap {
+export interface MuseSourceMap {
   version: 3
   file?: string
   sources: string[]
@@ -9,13 +9,13 @@ export interface RuiSourceMap {
   mappings: string
 }
 
-export interface RuiMacroPlugin {
+export interface MuseMacroPlugin {
   name: string
   enforce: 'pre'
-  transform(this: RuiTransformContext, code: string, id: string): { code: string; map: RuiSourceMap | null } | null
+  transform(this: MuseTransformContext, code: string, id: string): { code: string; map: MuseSourceMap | null } | null
 }
 
-export interface RuiTransformContext {
+export interface MuseTransformContext {
   warn(message: string): void
 }
 
@@ -123,12 +123,12 @@ function collectMacroDiagnostics(sourceFile: ts.SourceFile, before: number): Mac
       } else if (!isConst) {
         diagnostics.push({
           start: declaration.getStart(sourceFile),
-          message: 'Top-level State declarations used by view() must use const so the Rui macro can make them instance-local.',
+          message: 'Top-level State declarations used by view() must use const so the Muse macro can make them instance-local.',
         })
       } else if (!ts.isIdentifier(declaration.name)) {
         diagnostics.push({
           start: declaration.getStart(sourceFile),
-          message: 'The Rui macro only hoists identifier State declarations; destructuring remains module-scoped.',
+          message: 'The Muse macro only hoists identifier State declarations; destructuring remains module-scoped.',
         })
       }
     }
@@ -242,7 +242,7 @@ interface SourceMapAnchor {
   originalOffset: number
 }
 
-function buildSourceMap(source: string, anchors: SourceMapAnchor[], id: string): RuiSourceMap {
+function buildSourceMap(source: string, anchors: SourceMapAnchor[], id: string): MuseSourceMap {
   let previousOriginalLine = 0
   let previousOriginalColumn = 0
   let previousGeneratedLine = 0
@@ -267,14 +267,14 @@ function buildSourceMap(source: string, anchors: SourceMapAnchor[], id: string):
   return {
     version: 3,
     file: id.split('?', 1)[0] || undefined,
-    sources: [id.split('?', 1)[0] || 'rui-macro.ts'],
+    sources: [id.split('?', 1)[0] || 'muse-macro.ts'],
     sourcesContent: [source],
     names: [],
     mappings: lines.join(';'),
   }
 }
 
-function applyEditsWithMap(source: string, edits: Edit[], id: string): { code: string; map: RuiSourceMap } {
+function applyEditsWithMap(source: string, edits: Edit[], id: string): { code: string; map: MuseSourceMap } {
   const sorted = [...edits].sort((left, right) => left.start - right.start)
   let cursor = 0
   let code = ''
@@ -307,7 +307,7 @@ function applyEditsWithMap(source: string, edits: Edit[], id: string): { code: s
     }
   }
 
-  append('/* @rui-macro-transformed */\n', () => 0)
+  append('/* @muse-macro-transformed */\n', () => 0)
   for (const edit of sorted) {
     if (edit.start < cursor) continue
     append(source.slice(cursor, edit.start), index => cursor + index)
@@ -378,19 +378,19 @@ function replacementOrigins(
 
 interface MacroTransformResult {
   code: string
-  map: RuiSourceMap
+  map: MuseSourceMap
   diagnostics: MacroDiagnostic[]
 }
 
-function transformRuiMacrosWithMap(source: string, id = ''): MacroTransformResult | null {
-  if (source.includes('/* @rui-macro-transformed */')) return null
+function transformMuseMacrosWithMap(source: string, id = ''): MacroTransformResult | null {
+  if (source.includes('/* @muse-macro-transformed */')) return null
   if (id) {
     const pathname = id.split('?', 1)[0]
     if (!/\.[cm]?[jt]sx?$/.test(pathname)) return null
   }
 
   const sourceFile = ts.createSourceFile(
-    id.split('?', 1)[0] || 'rui-macro.ts',
+    id.split('?', 1)[0] || 'muse-macro.ts',
     source,
     ts.ScriptTarget.Latest,
     true,
@@ -431,16 +431,16 @@ function transformRuiMacrosWithMap(source: string, id = ''): MacroTransformResul
   return { ...applyEditsWithMap(source, edits, id), diagnostics }
 }
 
-export function ruiMacro(): RuiMacroPlugin {
+export function museMacro(): MuseMacroPlugin {
   return {
-    name: 'rui-macro',
+    name: 'muse-macro',
     enforce: 'pre',
     transform(code, id) {
-      const result = transformRuiMacrosWithMap(code, id)
+      const result = transformMuseMacrosWithMap(code, id)
       if (result) {
         for (const diagnostic of result.diagnostics) {
           const location = sourceLocation(code, diagnostic.start)
-          this?.warn(`[rui-macro] ${id}:${location.line + 1}:${location.column + 1}: ${diagnostic.message}`)
+          this?.warn(`[muse-macro] ${id}:${location.line + 1}:${location.column + 1}: ${diagnostic.message}`)
         }
         return { code: result.code, map: result.map }
       }
@@ -453,6 +453,6 @@ export function ruiMacro(): RuiMacroPlugin {
  * Transform helper kept as a string API for callers that do not need Vite's
  * source-map object. The Vite plugin uses the richer internal result above.
  */
-export function transformRuiMacros(source: string, id = ''): string | null {
-  return transformRuiMacrosWithMap(source, id)?.code ?? null
+export function transformMuseMacros(source: string, id = ''): string | null {
+  return transformMuseMacrosWithMap(source, id)?.code ?? null
 }

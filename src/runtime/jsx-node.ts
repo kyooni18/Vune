@@ -1,19 +1,19 @@
 import type { ReactElement } from 'react'
 
-export const ruiNode = Symbol.for('rui.node')
+export const museNode = Symbol.for('muse.node')
 
-export interface RuiNodeMetadata {
+export interface MuseNodeMetadata {
   modifiers: unknown[]
   layout?: unknown
 }
 
-const metadata = new WeakMap<object, RuiNodeMetadata>()
+const metadata = new WeakMap<object, MuseNodeMetadata>()
 
-export function markRuiNode(element: ReactElement, data: RuiNodeMetadata): ReactElement {
+export function markMuseNode(element: ReactElement, data: MuseNodeMetadata): ReactElement {
   metadata.set(element, data)
   return element
 }
 
-export function getRuiNodeMetadata(element: ReactElement): RuiNodeMetadata | undefined {
+export function getMuseNodeMetadata(element: ReactElement): MuseNodeMetadata | undefined {
   return metadata.get(element)
 }

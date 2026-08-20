@@ -1,6 +1,6 @@
-# Rui styling
+# Muse styling
 
-Rui provides two styling levels:
+Muse provides two styling levels:
 
 - **Simple styling** uses readable modifiers for common layout and visual rules.
 - **Advanced styling** uses inline CSS values and external CSS classes when the design needs full CSS control.
@@ -12,7 +12,7 @@ Both styles return a new React element, so modifiers can be chained without muta
 Use modifiers for styles that describe the intent of a view:
 
 ```ts
-import { Text, VStack } from 'rui'
+import { Text, VStack } from 'muse'
 
 VStack(
   { spacing: 12, alignment: 'leading' },
@@ -66,8 +66,8 @@ CSS custom properties are supported as well:
 ```ts
 Text('Themed')
   .style({
-    '--rui-accent': '#7c3aed',
-    color: 'var(--rui-accent)',
+    '--muse-accent': '#7c3aed',
+    color: 'var(--muse-accent)',
   })
 ```
 
@@ -87,7 +87,7 @@ Use `.className()` for selectors, responsive rules, pseudo-classes, keyframes, a
 
 ```ts
 import './styles.css'
-import { Text } from 'rui'
+import { Text } from 'muse'
 
 Text('Interactive card')
   .className('card')
@@ -98,7 +98,7 @@ Text('Interactive card')
 .card {
   display: block;
   padding: 1rem;
-  border: 1px solid var(--rui-border, #cbd5e1);
+  border: 1px solid var(--muse-border, #cbd5e1);
   transition: transform 160ms ease, box-shadow 160ms ease;
 }
 
@@ -130,7 +130,7 @@ The automatic runtime accepts the same common modifier values as JSX
 attributes on intrinsic elements:
 
 ```tsx
-/** @jsxImportSource rui */
+/** @jsxImportSource muse */
 
 <div
   padding={12}
@@ -138,23 +138,23 @@ attributes on intrinsic elements:
   frame={{ maxWidth: 'infinity', alignment: 'center' }}
   background="Canvas"
 >
-  <span fontSize={18} bold>Rui</span>
+  <span fontSize={18} bold>Muse</span>
 </div>
 ```
 
-Set `jsxImportSource: "rui"` in `tsconfig.json` for project-wide support.
-Rui's declarations type-check these attributes, while native `style`,
+Set `jsxImportSource: "muse"` in `tsconfig.json` for project-wide support.
+Muse's declarations type-check these attributes, while native `style`,
 `className`, event handlers, and element-specific attributes keep React's
 normal types. The modifier attributes are applied through the same pipeline as
 function-DSL modifiers.
 
 ## Styling React components
 
-Rui applies layout and class modifiers to a neutral layout host when the child is a normal React component. The component's own props and internal DOM remain React-owned:
+Muse applies layout and class modifiers to a neutral layout host when the child is a normal React component. The component's own props and internal DOM remain React-owned:
 
 ```ts
 HStack(
-  Component(ProfileCard, { name: 'Rui' })
+  Component(ProfileCard, { name: 'Muse' })
     .className('profile-card')
     .padding(12),
 )

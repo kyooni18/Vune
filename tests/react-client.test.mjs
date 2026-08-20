@@ -62,11 +62,11 @@ test('State-driven views rerender and controlled inputs update in JSDOM', async 
     assert.match(document.body.textContent, /Count: 1/)
 
     const input = document.querySelector('input')
-    input.value = 'Rui'
+    input.value = 'Muse'
     await act(async () => {
       input.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    assert.equal(input.value, 'Rui')
+    assert.equal(input.value, 'Muse')
 
     await act(async () => { root.unmount() })
     assert.equal(document.getElementById('root').textContent, '')
@@ -96,8 +96,8 @@ test('SSR markup hydrates without layout, State, or useId mismatches', async () 
     await act(async () => {})
     assert.equal(recoverableErrors.length, 0)
     assert.match(container.textContent, /Count: 1/)
-    assert.ok(container.querySelector('[data-rui-menu]'))
-    assert.ok(container.querySelector('[data-rui-layout-host]'))
+    assert.ok(container.querySelector('[data-muse-menu]'))
+    assert.ok(container.querySelector('[data-muse-layout-host]'))
     assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 1)
     await act(async () => { root.unmount() })
   } finally {
@@ -129,7 +129,7 @@ test('Sheet closes on Escape, traps focus, and restores the opener', async () =>
     await act(async () => {
       opener.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
-    const panel = document.querySelector('[data-rui-sheet]')
+    const panel = document.querySelector('[data-muse-sheet]')
     assert.ok(panel)
     assert.equal(panel.getAttribute('role'), 'dialog')
     assert.equal(document.activeElement?.textContent, 'First')
@@ -143,7 +143,7 @@ test('Sheet closes on Escape, traps focus, and restores the opener', async () =>
     await act(async () => {
       panel.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    assert.equal(document.querySelector('[data-rui-sheet]'), null)
+    assert.equal(document.querySelector('[data-muse-sheet]'), null)
     assert.equal(document.activeElement, opener)
 
     await act(async () => { root.unmount() })
@@ -171,22 +171,22 @@ test('stacked presentations keep the newest portal on top and close it first', a
     })
     const root = createRoot(document.getElementById('root'))
     await act(async () => { root.render(createElement(App)) })
-    const outerPanel = document.querySelector('[data-rui-sheet]')
+    const outerPanel = document.querySelector('[data-muse-sheet]')
     assert.ok(outerPanel)
     const openNested = [...outerPanel.querySelectorAll('button')].find(button => button.textContent === 'Open nested')
     await act(async () => {
       openNested.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
-    const panels = document.querySelectorAll('[data-rui-sheet]')
+    const panels = document.querySelectorAll('[data-muse-sheet]')
     assert.equal(panels.length, 2)
-    const backdrops = document.querySelectorAll('[data-rui-sheet-backdrop]')
+    const backdrops = document.querySelectorAll('[data-muse-sheet-backdrop]')
     assert.equal(backdrops[0].style.zIndex, '1000')
     assert.equal(backdrops[1].style.zIndex, '1001')
 
     await act(async () => {
       panels[1].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    assert.equal(document.querySelectorAll('[data-rui-sheet]').length, 1)
+    assert.equal(document.querySelectorAll('[data-muse-sheet]').length, 1)
     assert.equal(stateRefs.outer.value, true)
 
     await act(async () => { stateRefs.alert.value = true })
@@ -195,7 +195,7 @@ test('stacked presentations keep the newest portal on top and close it first', a
       document.querySelector('[role="alertdialog"] button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
     assert.equal(stateRefs.alert.value, false)
-    assert.equal(document.querySelectorAll('[data-rui-sheet]').length, 1)
+    assert.equal(document.querySelectorAll('[data-muse-sheet]').length, 1)
 
     await act(async () => { root.unmount() })
   } finally {

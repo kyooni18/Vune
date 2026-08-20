@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from 'react'
 import { Grid, HStack, Text, VStack } from './elements.js'
-import { collectChildren, type RuiBuilder } from './builder.js'
+import { collectChildren, type MuseBuilder } from './builder.js'
 import { layoutChild, layoutChildren } from './layout.js'
 import { finalize, styled } from './modifiers.js'
 import type {
@@ -127,8 +127,8 @@ function lazyChild(child: ReactNode, estimatedItemSize?: Length): ReactNode {
 
 export function LazyVStack(...children: ReactNode[]): StyledElement
 export function LazyVStack(options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
-export function LazyVStack(builder: RuiBuilder): StyledElement
-export function LazyVStack(options: LazyVStackOptions, builder: RuiBuilder): StyledElement
+export function LazyVStack(builder: MuseBuilder): StyledElement
+export function LazyVStack(options: LazyVStackOptions, builder: MuseBuilder): StyledElement
 export function LazyVStack(...args: any[]): StyledElement {
   const options: LazyVStackOptions = isOptions(args[0]) ? args[0] as LazyVStackOptions : {}
   const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
@@ -138,8 +138,8 @@ export function LazyVStack(...args: any[]): StyledElement {
 
 export function LazyHStack(...children: ReactNode[]): StyledElement
 export function LazyHStack(options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
-export function LazyHStack(builder: RuiBuilder): StyledElement
-export function LazyHStack(options: LazyHStackOptions, builder: RuiBuilder): StyledElement
+export function LazyHStack(builder: MuseBuilder): StyledElement
+export function LazyHStack(options: LazyHStackOptions, builder: MuseBuilder): StyledElement
 export function LazyHStack(...args: any[]): StyledElement {
   const options: LazyHStackOptions = isOptions(args[0]) ? args[0] as LazyHStackOptions : {}
   const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
@@ -147,11 +147,11 @@ export function LazyHStack(...args: any[]): StyledElement {
   return HStack(stackOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }
 
-export function LazyGrid(builder: RuiBuilder): StyledElement
-export function LazyGrid(columnsOrOptions: number | string | LazyGridOptions, builder: RuiBuilder): StyledElement
+export function LazyGrid(builder: MuseBuilder): StyledElement
+export function LazyGrid(columnsOrOptions: number | string | LazyGridOptions, builder: MuseBuilder): StyledElement
 export function LazyGrid(
   columnsOrOptions: number | string | LazyGridOptions | (() => ReactNode | ReactNode[]) = 1,
-  ...children: Array<ReactNode | RuiBuilder>
+  ...children: Array<ReactNode | MuseBuilder>
 ): StyledElement {
   const builder = typeof columnsOrOptions === 'function'
   const options: LazyGridOptions = builder ? {} : typeof columnsOrOptions === 'object'

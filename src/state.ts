@@ -223,7 +223,7 @@ export function resolveValue<T>(value: Value<T>): T {
 }
 
 /**
- * With the Rui Vite macro, Action(expression) is rewritten to a lazy callback.
+ * With the Muse Vite macro, Action(expression) is rewritten to a lazy callback.
  * Action(() => expression) also works without the macro.
  */
 export function Action<T>(expression: T | (() => T)): () => T {

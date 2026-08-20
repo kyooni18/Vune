@@ -75,7 +75,7 @@ function NavigationLinkHost({ destination, children, onClick, ...props }: Naviga
 export function NavigationStack(router: RouterLike, ...children: ReactNode[]): StyledElement {
   return finalize(createElement(
     'div',
-    { 'data-rui-navigation-stack': '' },
+    { 'data-muse-navigation-stack': '' },
     createElement(
       NavigationContext.Provider,
       { value: router },
@@ -129,7 +129,7 @@ function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
     if (!mounted || !panel || !isPresented.value) return undefined
     const backdrop = panel.parentElement
     if (backdrop) {
-      const backdrops = [...document.querySelectorAll<HTMLElement>('[data-rui-sheet-backdrop]')]
+      const backdrops = [...document.querySelectorAll<HTMLElement>('[data-muse-sheet-backdrop]')]
       backdrop.style.zIndex = String(1000 + Math.max(0, backdrops.indexOf(backdrop)))
     }
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -176,7 +176,7 @@ function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
 
   const panelRadius = options.placement === 'center' ? '16px' : '16px 16px 0 0'
   const backdrop = createElement('div', {
-    'data-rui-sheet-backdrop': '',
+    'data-muse-sheet-backdrop': '',
     role: 'presentation',
     onClick(event: ReactMouseEvent<HTMLDivElement>) {
       if (options.dismissOnBackdrop === false) return
@@ -192,7 +192,7 @@ function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
     },
   }, createElement('div', {
     ref: panelRef,
-    'data-rui-sheet': '',
+    'data-muse-sheet': '',
     role: options.role ?? 'dialog',
     'aria-modal': true,
     'aria-label': options.ariaLabel,
@@ -244,8 +244,8 @@ interface AlertHostProps {
 function AlertHost({ isPresented, options }: AlertHostProps): ReactNode {
   const actions = options.actions?.length ? options.actions : [{ label: 'OK', role: 'cancel' as const }]
   const identifier = useId().replace(/[^a-zA-Z0-9_-]/g, '-')
-  const titleId = `rui-alert-title-${identifier}`
-  const messageId = `rui-alert-message-${identifier}`
+  const titleId = `muse-alert-title-${identifier}`
+  const messageId = `muse-alert-message-${identifier}`
   const dialog = createElement('div', {
     style: {
       width: 'min(420px, calc(100vw - 32px))',
@@ -383,7 +383,7 @@ function MenuHost({ label, items }: MenuHostProps) {
     }
   }
 
-  return createElement('details', { ref: detailsRef, 'data-rui-menu': '', onKeyDown, onToggle },
+  return createElement('details', { ref: detailsRef, 'data-muse-menu': '', onKeyDown, onToggle },
     createElement('summary', {
       id: `${menuIdentifier}-trigger`,
       'aria-haspopup': 'menu',

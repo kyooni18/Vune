@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import ts from 'typescript'
-import { ruiMacro, transformRuiMacros } from '../dist/vite.js'
+import { museMacro, transformMuseMacros } from '../dist/vite.js'
 
 test('moves State declarations into per-view state and defers Action expressions', () => {
   const source = `
-import { Action, Button, State, Text, VStack, view } from 'rui'
+import { Action, Button, State, Text, VStack, view } from 'muse'
 const count = State(0)
 export default view(
   VStack(
@@ -15,7 +15,7 @@ export default view(
   )
 )
 `
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /state: \(\) => \{/)
   assert.match(output, /const count = State\(0\)/)
@@ -27,7 +27,7 @@ export default view(
 
 test('preserves State declaration order inside the per-view factory', () => {
   const source = `
-import { State, Text, VStack, view } from 'rui'
+import { State, Text, VStack, view } from 'muse'
 const count = State(2)
 const doubled = State(count.value * 2)
 export default view(
@@ -37,7 +37,7 @@ export default view(
   )
 )
 `
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /const count = State\(2\)[\s\S]*const doubled = State\(count\.value \* 2\)/)
   assert.match(output, /return \{ count, doubled \}/)
@@ -50,7 +50,7 @@ export default view(
   VStack(Text(label), Text(String(count.value + other.value))),
 )
 `
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /label = 'Count';/)
   assert.match(output, /preserve the sibling/)
@@ -63,22 +63,20 @@ export default view(
 })
 
 test('wraps a plain view expression in a render function', () => {
-  const source = `import { Text, view } from 'rui'\nexport default view(Text('Hello'))`
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const source = `import { Text, view } from 'muse'\nexport default view(Text('Hello'))`
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /view\(\(\) => \(Text\('Hello'\)\)\)/)
 })
 
-test('transforms the complete example, including generic State declarations', () => {
+test('transforms the complete example, including top-level State declarations', () => {
   const source = readFileSync(new URL('../examples/App.ts', import.meta.url), 'utf8')
-  const output = transformRuiMacros(source, '/src/examples/App.ts')
+  const output = transformMuseMacros(source, '/src/examples/App.ts')
   assert.ok(output)
-  for (const name of ['todos', 'draft', 'filter', 'showSettings', 'showClearAlert', 'compactMode']) {
+  for (const name of ['text', 'value', 'checked']) {
     assert.match(output, new RegExp(`const ${name} = State`))
     assert.doesNotMatch(output, new RegExp(`^const ${name} = State`, 'm'))
   }
-  assert.match(output, /State<Todo\[\]>\(/)
-  assert.doesNotMatch(output, /state: \(\) => \{[\s\S]*State<Todo\[\]>\(\[[\s\S]*\n\}\n\nexport default/)
 
   const parsed = ts.createSourceFile('App.ts', output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   assert.equal(parsed.parseDiagnostics.length, 0)
@@ -100,7 +98,7 @@ export default view(
   ),
 )
 `
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /const count = State<number>\(0\)/)
   assert.match(output, /const nested = State\(1\)/)
@@ -120,7 +118,7 @@ export default view(
   },
 )
 `
-  const output = transformRuiMacros(source, '/src/App.ts')
+  const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /const model = State<\{ value: number \}>\(\{ value: 1 \}\)/)
   assert.match(output, /body: \(\{ model \}, props\) =>/)
@@ -132,7 +130,7 @@ export default view(
 
 test('Vite macro returns a source map while keeping the helper string-compatible', () => {
   const source = 'const value = State(0)\nconst prefix = "x"\nexport default view(Text(prefix + value.value))\n'
-  const plugin = ruiMacro()
+  const plugin = museMacro()
   const result = plugin.transform(source, '/src/App.ts')
   assert.ok(result)
   assert.equal(typeof result.code, 'string')
@@ -169,7 +167,7 @@ let mutable = State(1)
 export default view(Text(String(exported.value + mutable.value)))
 `
   const warnings = []
-  const plugin = ruiMacro()
+  const plugin = museMacro()
   const result = plugin.transform.call({ warn(message) { warnings.push(message) } }, source, '/src/App.ts')
   assert.ok(result)
   assert.equal(warnings.length, 2)
@@ -203,7 +201,7 @@ export default view(
   },
 )
 `
-  const output = transformRuiMacros(source, '/src/Corpus.ts')
+  const output = transformMuseMacros(source, '/src/Corpus.ts')
   assert.ok(output)
   assert.match(output, /State<Array<\{ item: Item; tags: readonly string\[\] \}>>/)
   assert.match(output, /tags: \['a'\] as const/)

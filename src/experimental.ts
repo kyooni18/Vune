@@ -1,5 +1,5 @@
 /**
- * Rui's exploratory runtime surface. These APIs are intentionally separate
+ * Muse's exploratory runtime surface. These APIs are intentionally separate
  * from the stable function DSL until their geometry and plugin contracts are
  * consolidated.
  */
@@ -15,5 +15,5 @@ export * from './runtime/jsx-node.js'
 export * from './runtime/coordinate-runtime.js'
 
 export { collectChildren, resolveBuilder } from './builder.js'
-export type { RuiBuilder } from './builder.js'
-export { transformRuiBuilderSyntax } from './compiler/builder-transform.js'
+export type { MuseBuilder } from './builder.js'
+export { transformMuseBuilderSyntax } from './compiler/builder-transform.js'

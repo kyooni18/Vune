@@ -53,7 +53,7 @@ test('hosts ordinary React components without passing layout styles into them', 
   const html = renderToStaticMarkup(
     HStack(Component(Badge, { label: 'React' }).padding(12)),
   )
-  assert.match(html, /data-rui-layout-host/)
+  assert.match(html, /data-muse-layout-host/)
   assert.match(html, /padding:12px/)
   assert.match(html, /<strong>React<\/strong>/)
 })
@@ -67,7 +67,7 @@ test('hosts memo, forwardRef, and direct React elements as first-class layout it
     ),
   )
 
-  assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 3)
+  assert.equal((html.match(/data-muse-layout-host/g) ?? []).length, 3)
   assert.match(html, /<strong>Memo<\/strong>/)
   assert.match(html, /<strong>Forward<\/strong>/)
   assert.match(html, /padding:7px/)
@@ -82,7 +82,7 @@ test('normalizes transparent Group fragments before assigning layout hosts', () 
       ),
     ),
   )
-  assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 1)
+  assert.equal((html.match(/data-muse-layout-host/g) ?? []).length, 1)
   assert.match(html, /padding:9px/)
   assert.match(html, /<strong>Grouped<\/strong>/)
 })
@@ -102,7 +102,7 @@ test('normalizes nested keyed fragments, arrays, conditionals, and null children
       ),
     ),
   )
-  assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 2)
+  assert.equal((html.match(/data-muse-layout-host/g) ?? []).length, 2)
   assert.match(html, /prefix/)
   assert.match(html, /<strong>First<\/strong>/)
   assert.match(html, /<strong>Second<\/strong>/)
@@ -118,9 +118,9 @@ test('composes simple class modifiers and conditional class values', () => {
 
 test('supports CSS custom properties for advanced inline styling', () => {
   const html = renderToStaticMarkup(
-    Text('Themed').style({ '--rui-accent': '#7c3aed', letterSpacing: '0.05em' }),
+    Text('Themed').style({ '--muse-accent': '#7c3aed', letterSpacing: '0.05em' }),
   )
-  assert.match(html, /--rui-accent:#7c3aed/)
+  assert.match(html, /--muse-accent:#7c3aed/)
   assert.match(html, /letter-spacing:0\.05em/)
 })
 
@@ -281,15 +281,15 @@ test('reconciles circular raw object graphs without recursive overflow', () => {
 })
 
 test('view produces a renderable React component', () => {
-  const App = view(() => VStack(Text('Hello Rui')))
+  const App = view(() => VStack(Text('Hello Muse')))
   const html = renderToStaticMarkup(createElement(App))
-  assert.match(html, /Hello Rui/)
+  assert.match(html, /Hello Muse/)
 })
 
 test('view passes React props into its body', () => {
   const Greeting = view(({ name }) => Text(`Hello, ${name}`))
-  const html = renderToStaticMarkup(createElement(Greeting, { name: 'Rui' }))
-  assert.match(html, /Hello, Rui/)
+  const html = renderToStaticMarkup(createElement(Greeting, { name: 'Muse' }))
+  assert.match(html, /Hello, Muse/)
 })
 
 test('view state factories are scoped to a component instance', () => {

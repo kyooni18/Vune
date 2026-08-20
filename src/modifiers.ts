@@ -12,7 +12,7 @@ import {
   setLayoutClass,
   setLayoutStyle,
 } from './layout.js'
-import { applyRuiPlugins } from './runtime/modifier-pipeline.js'
+import { applyMusePlugins } from './runtime/modifier-pipeline.js'
 import type {
   Alignment,
   Axis,
@@ -223,6 +223,6 @@ export function styled(element: ReactElement): StyledElement {
 /** Apply registered experimental plugins once to a newly-created DSL node. */
 export function finalize(element: ReactElement): StyledElement {
   const styledElement = styled(element)
-  const pluginElement = applyRuiPlugins(styledElement)
+  const pluginElement = applyMusePlugins(styledElement)
   return styled(pluginElement)
 }

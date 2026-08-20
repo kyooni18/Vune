@@ -3,11 +3,11 @@ import { jsxDEV as reactJsxDEV } from 'react/jsx-dev-runtime'
 import type * as React from 'react'
 import type { CSSProperties, JSXElementConstructor, ReactElement } from 'react'
 import { finalize, styled } from './modifiers.js'
-import { markRuiNode } from './runtime/jsx-node.js'
+import { markMuseNode } from './runtime/jsx-node.js'
 import type { Alignment, BorderOptions, FrameOptions, Length } from './types.js'
 
-/** JSX-only values accepted by Rui's custom intrinsic-element runtime. */
-export interface RuiJSXProps {
+/** JSX-only values accepted by Muse's custom intrinsic-element runtime. */
+export interface MuseJSXProps {
   padding?: Length
   margin?: Length
   gap?: Length
@@ -46,8 +46,8 @@ export interface RuiJSXProps {
   cssTransition?: CSSProperties['transition']
 }
 
-type RuiIntrinsicElements = {
-  [K in keyof React.JSX.IntrinsicElements]: React.JSX.IntrinsicElements[K] & RuiJSXProps
+type MuseIntrinsicElements = {
+  [K in keyof React.JSX.IntrinsicElements]: React.JSX.IntrinsicElements[K] & MuseJSXProps
 }
 
 export namespace JSX {
@@ -55,10 +55,10 @@ export namespace JSX {
   export interface ElementClass extends React.JSX.ElementClass {}
   export interface ElementAttributesProperty extends React.JSX.ElementAttributesProperty {}
   export interface IntrinsicAttributes extends React.JSX.IntrinsicAttributes {}
-  export type IntrinsicElements = RuiIntrinsicElements
+  export type IntrinsicElements = MuseIntrinsicElements
 }
 
-const RUI_PROPS = new Set([
+const MUSE_PROPS = new Set([
   'padding', 'margin', 'gap', 'width', 'height', 'minWidth', 'maxWidth',
   'minHeight', 'maxHeight', 'frame', 'background', 'foreground', 'opacity',
   'radius', 'border', 'shadow', 'fontSize', 'fontWeight', 'fontFamily',
@@ -73,7 +73,7 @@ function splitProps(props: Record<string, unknown> | null | undefined) {
   const modifierNames: string[] = []
 
   for (const [key, value] of Object.entries(props ?? {})) {
-    if (RUI_PROPS.has(key)) {
+    if (MUSE_PROPS.has(key)) {
       modifierNames.push(key)
       modifiers.push((element) => {
         const fn = (element as any)[key]
@@ -99,7 +99,7 @@ function wrap(factory: (type: any, props: any, key?: any) => ReactElement, type:
   const element = factory(type as JSXElementConstructor<any>, native, key)
   const styledElement = applyModifiers(element, modifiers)
   const finalElement = finalize(styledElement)
-  return markRuiNode(finalElement, { modifiers: modifierNames, layout: native.style })
+  return markMuseNode(finalElement, { modifiers: modifierNames, layout: native.style })
 }
 
 export const jsx = (type: any, props: any, key?: any) => wrap(reactJsx, type, props, key)
@@ -109,7 +109,7 @@ export const jsxDEV = (type: any, props: any, key?: any, isStaticChildren?: bool
   const element = reactJsxDEV(type, native, key, isStaticChildren ?? false, source, self)
   const styledElement = applyModifiers(element, modifiers)
   const finalElement = finalize(styledElement)
-  return markRuiNode(finalElement, { modifiers: modifierNames, layout: native.style })
+  return markMuseNode(finalElement, { modifiers: modifierNames, layout: native.style })
 }
 
 export { Fragment }

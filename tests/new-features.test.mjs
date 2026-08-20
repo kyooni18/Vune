@@ -13,23 +13,23 @@ import {
 } from '../dist/index.js'
 import {
   DEFAULT_BUILDER_COMPONENTS,
-  createRuiSwcVisitor,
-  createRuiVitePlugin,
-  transformRuiBuilderSyntax,
+  createMuseSwcVisitor,
+  createMuseVitePlugin,
+  transformMuseBuilderSyntax,
 } from '../dist/compiler/index.js'
 import {
-  applyRuiPlugins,
+  applyMusePlugins,
   coordinateSpace,
   coordinateSpaceOf,
   createLayoutNode,
   emptyLayoutNode,
-  getRuiNodeMetadata,
+  getMuseNodeMetadata,
   globalCoordinates,
   layoutPass,
-  markRuiNode,
+  markMuseNode,
   observeLayout,
-  registerRuiPlugin,
-  unregisterRuiPlugin,
+  registerMusePlugin,
+  unregisterMusePlugin,
 } from '../dist/experimental.js'
 
 test('transforms nested builder blocks without touching source text', () => {
@@ -45,26 +45,26 @@ VStack({ spacing: 8 }) {
 }
 `
 
-  const output = transformRuiBuilderSyntax(source)
+  const output = transformMuseBuilderSyntax(source)
   assert.match(output, /VStack\(\{ spacing: 8 \}, \(\) => \[/)
   assert.match(output, /HStack\(\(\) => \[Text\('B'\), Text\('C'\)\]\)/)
   assert.match(output, /'VStack\(\) \{ not syntax \}'/)
   assert.match(output, /\/\/ VStack\(\) \{ also not syntax \}/)
 
   assert.equal(
-    transformRuiBuilderSyntax("VStack() { Text('A') // keep this\n Text('B') }"),
+    transformMuseBuilderSyntax("VStack() { Text('A') // keep this\n Text('B') }"),
     "VStack(() => [Text('A') /* keep this*/, Text('B')])",
   )
 })
 
 test('builder transformer supports custom components and reports malformed blocks', () => {
   assert.equal(
-    transformRuiBuilderSyntax('Card() { Text(\'Card\') }', ['Card']),
+    transformMuseBuilderSyntax('Card() { Text(\'Card\') }', ['Card']),
     "Card(() => [Text('Card')])",
   )
   assert.deepEqual(DEFAULT_BUILDER_COMPONENTS, ['VStack', 'HStack', 'ZStack', 'Group', 'Grid'])
   assert.throws(
-    () => transformRuiBuilderSyntax('VStack() { Text(\'missing\')'),
+    () => transformMuseBuilderSyntax('VStack() { Text(\'missing\')'),
     /Unclosed \{ block/,
   )
 })
@@ -79,24 +79,24 @@ test('builder runtime supports plain, optioned, nested, Group, and Grid builders
 
 test('Vite and SWC adapters use the same builder transform and support query IDs', () => {
   const source = "VStack() { Text('A') }"
-  const vite = createRuiVitePlugin()
+  const vite = createMuseVitePlugin()
   assert.deepEqual(vite.transform(source, '/src/App.tsx?direct'), {
     code: "VStack(() => [Text('A')])",
     map: null,
   })
   assert.equal(vite.transform(source, '/src/App.css'), null)
 
-  const swc = createRuiSwcVisitor()
+  const swc = createMuseSwcVisitor()
   assert.equal(swc.transform(source), "VStack(() => [Text('A')])")
 })
 
-test('Rui JSX runtimes preserve native props and apply all style modifiers', () => {
+test('Muse JSX runtimes preserve native props and apply all style modifiers', () => {
   const production = jsxs('div', {
     id: 'root',
     padding: 4,
     minWidth: 10,
     fontWeight: 700,
-    children: ['Hello', jsx('span', { children: ' Rui' })],
+    children: ['Hello', jsx('span', { children: ' Muse' })],
   })
   const development = jsxDEV('div', {
     opacity: 0.5,
@@ -113,7 +113,7 @@ test('Rui JSX runtimes preserve native props and apply all style modifiers', () 
 })
 
 test('JSX nodes pass through registered plugins and retain metadata', () => {
-  registerRuiPlugin({
+  registerMusePlugin({
     name: 'test-plugin',
     apply: element => styled(element).attr('data-plugin', 'yes'),
   })
@@ -122,10 +122,10 @@ test('JSX nodes pass through registered plugins and retain metadata', () => {
     const html = renderToStaticMarkup(element)
     assert.match(html, /data-plugin="yes"/)
     assert.match(renderToStaticMarkup(Text('DSL plugin')), /data-plugin="yes"/)
-    assert.deepEqual(getRuiNodeMetadata(element), { modifiers: ['padding'], layout: undefined })
-    assert.equal(applyRuiPlugins(element).props['data-plugin'], 'yes')
+    assert.deepEqual(getMuseNodeMetadata(element), { modifiers: ['padding'], layout: undefined })
+    assert.equal(applyMusePlugins(element).props['data-plugin'], 'yes')
   } finally {
-    assert.equal(unregisterRuiPlugin('test-plugin'), true)
+    assert.equal(unregisterMusePlugin('test-plugin'), true)
   }
 })
 
@@ -153,7 +153,7 @@ test('coordinate, layout, and node metadata APIs retain their contracts', () => 
 
   const element = jsx('div', { children: 'node' })
   const metadata = { modifiers: ['padding'], layout: { width: 10 } }
-  assert.equal(getRuiNodeMetadata(markRuiNode(element, metadata)), metadata)
+  assert.equal(getMuseNodeMetadata(markMuseNode(element, metadata)), metadata)
 })
 
 test('layout observation records named coordinate spaces', () => {

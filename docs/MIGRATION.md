@@ -1,10 +1,10 @@
-# Migration from the 0.x Vue release to Rui 1.0 (React)
+# Migration from the 0.x Vue release to Muse 1.0 (React)
 
-Rui 1.0 is a renderer rewrite, not a Vue compatibility release. The SwiftUI-like API shape is preserved where practical, but Vue itself is removed from the runtime.
+Muse 1.0 is a renderer rewrite, not a Vue compatibility release. The SwiftUI-like API shape is preserved where practical, but Vue itself is removed from the runtime.
 
 ## Dependencies
 
-Remove Vue and the Vue Vite plugin from a Rui-only app and use React instead:
+Remove Vue and the Vue Vite plugin from a Muse-only app and use React instead:
 
 ```bash
 pnpm remove vue @vitejs/plugin-vue
@@ -12,10 +12,10 @@ pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-For a local Rui checkout:
+For a local Muse checkout:
 
 ```bash
-pnpm add ../Rui
+pnpm add ../Muse
 ```
 
 ## Vite
@@ -24,18 +24,18 @@ Before:
 
 ```ts
 import vue from '@vitejs/plugin-vue'
-import { ruiMacro } from 'rui/vite'
+import { museMacro } from 'muse/vite'
 
-plugins: [ruiMacro(), vue()]
+plugins: [museMacro(), vue()]
 ```
 
 After:
 
 ```ts
 import react from '@vitejs/plugin-react'
-import { ruiMacro } from 'rui/vite'
+import { museMacro } from 'muse/vite'
 
-plugins: [ruiMacro(), react()]
+plugins: [museMacro(), react()]
 ```
 
 ## Application entry
@@ -50,7 +50,7 @@ import App from './App'
 createRoot(document.getElementById('app')!).render(createElement(App))
 ```
 
-A Rui screen can be `.ts`; `.vue` files are no longer part of Rui itself.
+A Muse screen can be `.ts`; `.vue` files are no longer part of Muse itself.
 
 ## State and macro syntax
 
@@ -77,7 +77,7 @@ hoisted.
 
 ## Component interoperability
 
-`Component()` now accepts React component types instead of Vue component definitions. Rui still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
+`Component()` now accepts React component types instead of Vue component definitions. Muse still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
 
 Required React props are required by TypeScript when calling `Component()`;
 props are optional only for components whose prop type has no required keys.
@@ -86,7 +86,7 @@ props are optional only for components whose prop type has no required keys.
 
 The 1.0 runtime does not carry Vue `Transition`, `TransitionGroup`, `Teleport`, `Suspense`, `KeepAlive`, Vue slots helpers, Vue refs/models, or `defineComponent`-oriented APIs as compatibility shims.
 
-Use React equivalents directly where appropriate. Rui `Sheet` and `Alert` use React portals internally.
+Use React equivalents directly where appropriate. Muse `Sheet` and `Alert` use React portals internally.
 
 ## Presentation and navigation
 

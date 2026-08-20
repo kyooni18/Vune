@@ -1,5 +1,5 @@
 /**
- * Transforms Rui's optional block-builder syntax into ordinary JavaScript.
+ * Transforms Muse's optional block-builder syntax into ordinary JavaScript.
  *
  *     VStack() {
  *       Text('A')
@@ -43,7 +43,7 @@ function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
     if (source[i] === quote) return i + 1
     i += 1
   }
-  throw new SyntaxError(`Unclosed ${quote} string in Rui builder source`)
+  throw new SyntaxError(`Unclosed ${quote} string in Muse builder source`)
 }
 
 function skipLineComment(source: string, index: number): number {
@@ -53,7 +53,7 @@ function skipLineComment(source: string, index: number): number {
 
 function skipBlockComment(source: string, index: number): number {
   const close = source.indexOf('*/', index + 2)
-  if (close === -1) throw new SyntaxError('Unclosed block comment in Rui builder source')
+  if (close === -1) throw new SyntaxError('Unclosed block comment in Muse builder source')
   return close + 2
 }
 
@@ -71,7 +71,7 @@ function skipTemplate(source: string, index: number): number {
     }
     i += 1
   }
-  throw new SyntaxError('Unclosed template literal in Rui builder source')
+  throw new SyntaxError('Unclosed template literal in Muse builder source')
 }
 
 function skipRegex(source: string, index: number): number {
@@ -154,7 +154,7 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
     }
   }
 
-  throw new SyntaxError(`Unclosed ${open} block in Rui builder source`)
+  throw new SyntaxError(`Unclosed ${open} block in Muse builder source`)
 }
 
 function isLineBreakDelimiter(source: string, index: number): boolean {
@@ -340,7 +340,7 @@ function transformRange(source: string, components: Set<string>): string {
   return output
 }
 
-export function transformRuiBuilderSyntax(
+export function transformMuseBuilderSyntax(
   source: string,
   componentNames: readonly string[] = DEFAULT_BUILDER_COMPONENTS,
 ): string {
