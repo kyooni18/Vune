@@ -61,7 +61,7 @@ export default view(
 )
 ```
 
-The macro moves top-level `State()` declarations into per-component-instance state, re-evaluates the `view(...)` body reactively, and turns `Action(expression)` into a deferred event callback.
+The macro is a TypeScript AST transform. It moves only top-level `State()` declarations into per-component-instance state (including generic calls such as `State<Todo[]>(...)`), re-evaluates the `view(...)` body reactively, and turns `Action(expression)` into a deferred event callback. Function-valued actions such as `Action(() => save())` are preserved unchanged. The Vite plugin returns source maps for transformed modules.
 
 ## React entry point
 
@@ -124,6 +124,29 @@ Button('Complete', Action(
 
 Direct assignment still works normally. React elements, frozen values, class instances, `Map`, `Set`, and other special objects are not proxied as mutable containers; replace the `State.value` root when those values change.
 
+If two `State()` containers are created from the same raw array or plain object,
+they share mutation ownership: a mutation through either container notifies both
+containers' subscribers. The containers keep their own state references, so
+application code should treat `State()` as the ownership boundary rather than
+comparing proxy identity. Sharing raw mutable containers is supported and is
+observable behavior, not an accidental implementation detail.
+
+## Stable and experimental APIs
+
+The stable root API is the function DSL: views, state, elements, controls,
+collections, presentation primitives, modifiers, and the React component
+interop helpers. The layout-engine, coordinate runtime, layout observer,
+metadata/plugin registry, and block-builder transform are experimental while
+their integration contract is being consolidated:
+
+```ts
+import { layoutPass, registerRuiPlugin } from 'rui/experimental'
+```
+
+The automatic JSX runtime remains available through `rui/jsx-runtime` and
+`rui/jsx-dev-runtime`. The block-builder compiler adapter remains available
+through `rui/compiler`; it is not part of the stable root DSL contract.
+
 ## Coordinate-free layout
 
 Rui prefers relationships over x/y coordinates:
@@ -184,6 +207,15 @@ Text('Hello')
 
 This gives simple styles a concise modifier syntax while preserving the full
 CSS escape hatch through `.style()` and `.className()`.
+
+## JSX typing
+
+When using automatic JSX, set `jsxImportSource` to `rui` (or configure the
+equivalent TypeScript setting). Rui's `rui/jsx-runtime` declarations add the
+Rui modifier attributes to intrinsic elements, so runtime features such as
+`<div padding={12} frame={{ maxWidth: 'infinity' }} />` are type-checked by the
+editor as well as handled at runtime. Function-DSL nodes and JSX nodes both
+pass through registered experimental plugins.
 
 ## React components are first-class layout items
 
@@ -265,6 +297,10 @@ Menu('Actions', editButton, deleteButton)
 ```
 
 `Sheet()` and `Alert()` use `createPortal()`. `Menu()` uses native `details` / `summary`.
+Sheets handle Escape dismissal, initial focus, keyboard focus wrapping, and
+focus restoration. Alerts expose a single `alertdialog` host rather than
+nested dialog roles. Menus expose `menuitem` children and support Escape and
+arrow/Home/End navigation.
 
 ## Explicit no-macro form
 
@@ -283,11 +319,16 @@ export default view({
 ## Tests
 
 ```bash
-npm test
-npm run demo:build
+pnpm test
+pnpm run demo:build
+pnpm run test:browser
 ```
 
-CI currently checks TypeScript build output, public type usage, runtime rendering, macro transforms, and the React Vite demo.
+`test:browser` is opt-in and uses `RUI_BROWSER_URL` so it can target a running
+demo server, for example
+`RUI_BROWSER_URL=http://localhost:5173 pnpm run test:browser`. CI uses the
+committed `pnpm-lock.yaml` with frozen-lockfile mode
+and runs the suite against React 18 and React 19.
 
 ## End-to-end example
 
@@ -299,7 +340,7 @@ Rui layout, a portal-based `Sheet`, and an `Alert` confirmation flow.
 Run it locally with:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Then open the local URL printed by Vite and try adding a task, completing it,
@@ -309,8 +350,11 @@ changing filters, opening Settings, and clearing completed tasks.
 
 The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
-See [Getting started](docs/GETTING_STARTED.md), [Design](docs/DESIGN.md),
-[Styling](docs/STYLING.md), [Migration](docs/MIGRATION.md), and
-[Changelog](docs/CHANGELOG.md).
+Rui's layout API is SwiftUI-inspired rather than a promise of SwiftUI's
+proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and infinity
+sizing translate the relationship into web-native CSS layout semantics; they
+do not guarantee pixel-for-pixel SwiftUI behavior.
 
-For the complete styling guide, see [Styling](docs/STYLING.md).
+See [Getting started](docs/GETTING_STARTED.md), [Design](docs/DESIGN.md),
+[Styling](docs/STYLING.md), [Migration](docs/MIGRATION.md), [API](docs/API.md),
+[Roadmap](docs/ROADMAP.md), and [Changelog](docs/CHANGELOG.md).

@@ -1,5 +1,13 @@
 # Changelog
 
+## Next alpha
+
+- Replaced the State/Action Vite macro scanner with a TypeScript AST transform and source maps; generic State calls, lexical scopes, and function-valued actions are preserved.
+- Added regression coverage for `examples/App.ts`, transparent Group fragments, shared mutable State ownership, required Component props, JSX modifier typing, JSDOM interaction, and presentation accessibility.
+- Added Escape/focus handling for Sheet, a single alertdialog host for Alert, and keyboard/menuitem semantics for Menu.
+- Moved layout experiments, coordinate/observer infrastructure, plugin metadata, and the block-builder transform behind `rui/experimental`.
+- Standardized repository commands on pnpm and added React 18/19 CI coverage plus an opt-in Playwright browser suite.
+
 ## 1.0.0-alpha.4
 
 - Made arrays and plain objects stored in `State()` mutation-aware, including nested plain-object updates such as `items.value.push(...)` and `items.value[0].done = true`.

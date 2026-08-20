@@ -20,6 +20,8 @@ function Badge(props: { label: string }) {
 
 const count = State(0)
 const custom: StyledElement = Component(Badge, { label: 'React' }).padding(8)
+// @ts-expect-error required React props must be supplied to Component()
+Component(Badge)
 Text('Theme').style({ '--rui-accent': '#7c3aed' })
 Text('Conditional').className(['card', false && 'featured'])
 

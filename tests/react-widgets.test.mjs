@@ -89,6 +89,7 @@ test('renders menu with native details and menu roles', () => {
   assert.match(html, /<details/)
   assert.match(html, /<summary/)
   assert.match(html, /role="menu"/)
+  assert.equal((html.match(/role="menuitem"/g) ?? []).length, 2)
 })
 
 test('portal presentation primitives are SSR-safe', () => {

@@ -1,6 +1,7 @@
 {
   "name": "rui",
   "version": "1.0.0-alpha.4",
+  "packageManager": "pnpm@11.22.0",
   "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
   "type": "module",
   "sideEffects": false,
@@ -30,6 +31,10 @@
       "types": "./dist/jsx-dev-runtime.d.ts",
       "import": "./dist/jsx-dev-runtime.js"
     },
+    "./experimental": {
+      "types": "./dist/experimental.d.ts",
+      "import": "./dist/experimental.js"
+    },
     "./compiler": {
       "types": "./dist/compiler/index.d.ts",
       "import": "./dist/compiler/index.js"
@@ -39,11 +44,13 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/macro-react.test.mjs tests/new-features.test.mjs",
-    "test": "npm run build && npm run test:types && npm run test:runtime",
+    "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/react-client.test.mjs tests/macro-react.test.mjs tests/new-features.test.mjs",
+    "test:browser": "node --test tests/browser.test.mjs",
+    "benchmark:modifiers": "pnpm run build && node benchmarks/modifiers.mjs",
+    "test": "pnpm run build && pnpm run test:types && pnpm run test:runtime",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
-    "prepack": "npm run build"
+    "prepack": "pnpm run build"
   },
   "peerDependencies": {
     "react": ">=18 <20",
@@ -52,10 +59,11 @@
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@playwright/test": "^1.52.0",
     "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^26.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "typescript": "^5.8.3",
     "vite": "^8.2.1"
   },
   "engines": {
@@ -77,5 +85,8 @@
   "bugs": {
     "url": "https://github.com/kyooni18/Rui/issues"
   },
-  "homepage": "https://github.com/kyooni18/Rui#readme"
+  "homepage": "https://github.com/kyooni18/Rui#readme",
+  "dependencies": {
+    "typescript": "^5.8.3"
+  }
 }

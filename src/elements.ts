@@ -11,8 +11,8 @@ import {
   type Ref,
   type TextareaHTMLAttributes,
 } from 'react'
-import { isComponentElement, layoutChild, layoutChildren, layoutPropsOf } from './layout.js'
-import { styled } from './modifiers.js'
+import { flattenTransparentFragments, isComponentElement, layoutChild, layoutChildren, layoutPropsOf } from './layout.js'
+import { finalize } from './modifiers.js'
 import { collectChildren, type RuiBuilder } from './builder.js'
 import { resolveValue } from './state.js'
 import type {
@@ -72,33 +72,39 @@ function cssTrack(value: number | string): string {
 }
 
 export function Element(tag: string, props: NativeProps | null = null, ...children: ReactNode[]): StyledElement {
-  return styled(createElement(tag, props as any, ...flatten(children)))
+  return finalize(createElement(tag, props as any, ...flatten(children)))
 }
 
-export function Component<C extends ElementType>(
-  component: C,
-  props: ComponentProps<C> | null = null,
-  ...children: ReactNode[]
-): StyledElement {
-  return styled(createElement(component as any, props as any, ...children))
+type RequiredPropKeys<T> = {
+  [K in keyof T]-?: {} extends Pick<T, K> ? never : K
+}[keyof T]
+
+type ComponentArguments<C extends ElementType> = [RequiredPropKeys<ComponentProps<C>>] extends [never]
+  ? [props?: ComponentProps<C> | null, ...children: ReactNode[]]
+  : [props: ComponentProps<C>, ...children: ReactNode[]]
+
+export function Component<C extends ElementType>(component: C, ...args: ComponentArguments<C>): StyledElement
+export function Component(component: ElementType, ...args: Array<unknown>): StyledElement {
+  const [props, ...children] = args
+  return finalize(createElement(component as any, props as any, ...children as ReactNode[]))
 }
 
-export function Raw(element: ReactElement): StyledElement { return styled(element) }
-export function Key(key: string | number, child: ReactElement): StyledElement { return styled(child).keyed(key) }
-export function ElementRef(reference: Ref<unknown>, child: ReactElement): StyledElement { return styled(child).elementRef(reference) }
+export function Raw(element: ReactElement): StyledElement { return finalize(element) }
+export function Key(key: string | number, child: ReactElement): StyledElement { return finalize(child).keyed(key) }
+export function ElementRef(reference: Ref<unknown>, child: ReactElement): StyledElement { return finalize(child).elementRef(reference) }
 export function Group(builder: RuiBuilder): ReactElement
 export function Group(...children: ReactNode[]): ReactElement
 export function Group(...children: Array<ReactNode | RuiBuilder>): ReactElement {
-  return createElement(Fragment, null, ...flatten(collectChildren(children)))
+  return finalize(createElement(Fragment, null, ...flatten(collectChildren(children))))
 }
 export function Box(...children: ReactNode[]): StyledElement {
-  return styled(createElement('div', { style: { outline: 'none' } }, ...layoutChildren(flatten(children))))
+  return finalize(createElement('div', { style: { outline: 'none' } }, ...layoutChildren(flatten(children))))
 }
 
 export function ScrollView(child: ReactNode, axis: ScrollAxis = 'vertical'): StyledElement {
   const overflowX = axis === 'horizontal' || axis === 'both' ? 'auto' : 'hidden'
   const overflowY = axis === 'vertical' || axis === 'both' ? 'auto' : 'hidden'
-  return styled(createElement('div', { style: { outline: 'none', overflowX, overflowY } }, layoutChild(child)))
+  return finalize(createElement('div', { style: { outline: 'none', overflowX, overflowY } }, layoutChild(child)))
 }
 
 export function Rectangle(): StyledElement { return Box() }
@@ -113,7 +119,7 @@ export function VStack(options: VStackOptions, builder: RuiBuilder): StyledEleme
 export function VStack(...args: any[]): StyledElement {
   const options: VStackOptions = isOptions(args[0]) ? args[0] as VStackOptions : {}
   const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -133,7 +139,7 @@ export function HStack(options: HStackOptions, builder: RuiBuilder): StyledEleme
 export function HStack(...args: any[]): StyledElement {
   const options: HStackOptions = isOptions(args[0]) ? args[0] as HStackOptions : {}
   const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     style: {
       display: 'flex',
       flexDirection: 'row',
@@ -153,7 +159,7 @@ export function ZStack(options: ZStackOptions, builder: RuiBuilder): StyledEleme
 export function ZStack(...args: any[]): StyledElement {
   const options: ZStackOptions = isOptions(args[0]) ? args[0] as ZStackOptions : {}
   const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
-  const layers = flatten(children).map((child, index) => {
+  const layers = flattenTransparentFragments(children).map((child, index) => {
     const component = isValidElement(child) && isComponentElement(child)
     const layout = component ? layoutPropsOf(child) : undefined
     return createElement('div', {
@@ -163,7 +169,7 @@ export function ZStack(...args: any[]): StyledElement {
       style: { gridArea: '1 / 1', minWidth: 0, minHeight: 0, ...(component ? layout?.style ?? {} : {}) },
     }, child)
   })
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     style: { display: 'grid', boxSizing: 'border-box', outline: 'none', ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)) },
   }, ...layers))
 }
@@ -182,7 +188,7 @@ export function Grid(columnsOrOptions: ReactNode | GridOptions | RuiBuilder = 1,
     : {}
   const childArgs = builder ? [columnsOrOptions] : hasOptions ? children : [columnsOrOptions, ...children]
   const resolvedChildren = collectChildren(childArgs)
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     style: {
       display: 'grid',
       boxSizing: 'border-box',
@@ -196,13 +202,13 @@ export function Grid(columnsOrOptions: ReactNode | GridOptions | RuiBuilder = 1,
 
 export type TextProps = HTMLAttributes<HTMLSpanElement>
 export function Text(value: Value<string | number>, props: TextProps | null = null): StyledElement {
-  return styled(createElement('span', props, String(resolveValue(value))))
+  return finalize(createElement('span', props, String(resolveValue(value))))
 }
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement>
 export function Button(label: Value<string | number>, action: (event: any) => unknown, props: ButtonProps | null = null): StyledElement {
   const { onClick, ...rest } = props ?? {}
-  return styled(createElement('button', {
+  return finalize(createElement('button', {
     ...rest,
     type: rest.type ?? 'button',
     onClick(event: any) {
@@ -215,7 +221,7 @@ export function Button(label: Value<string | number>, action: (event: any) => un
 export type TextFieldOptions = InputHTMLAttributes<HTMLInputElement>
 export function TextField(value: import('./types.js').StateRef<string>, options: TextFieldOptions = {}): StyledElement {
   const { onChange, ...rest } = options
-  return styled(createElement('input', {
+  return finalize(createElement('input', {
     ...rest,
     value: value.value,
     onChange(event: any) {
@@ -228,7 +234,7 @@ export function TextField(value: import('./types.js').StateRef<string>, options:
 export type TextAreaOptions = TextareaHTMLAttributes<HTMLTextAreaElement>
 export function TextArea(value: import('./types.js').StateRef<string>, options: TextAreaOptions = {}): StyledElement {
   const { onChange, ...rest } = options
-  return styled(createElement('textarea', {
+  return finalize(createElement('textarea', {
     ...rest,
     value: value.value,
     onChange(event: any) {
@@ -241,7 +247,7 @@ export function TextArea(value: import('./types.js').StateRef<string>, options: 
 export type ToggleProps = InputHTMLAttributes<HTMLInputElement>
 export function Toggle(value: import('./types.js').StateRef<boolean>, props: ToggleProps | null = null): StyledElement {
   const { onChange, ...rest } = props ?? {}
-  return styled(createElement('input', {
+  return finalize(createElement('input', {
     ...rest,
     type: 'checkbox',
     checked: value.value,
@@ -253,7 +259,7 @@ export function Toggle(value: import('./types.js').StateRef<boolean>, props: Tog
 }
 
 export function Spacer(minLength?: Length): StyledElement {
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     'aria-hidden': true,
     style: {
       flexGrow: 1,
@@ -265,4 +271,4 @@ export function Spacer(minLength?: Length): StyledElement {
   }))
 }
 
-export function Divider(): StyledElement { return styled(createElement('hr')) }
+export function Divider(): StyledElement { return finalize(createElement('hr')) }

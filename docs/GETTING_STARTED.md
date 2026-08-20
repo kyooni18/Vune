@@ -51,6 +51,21 @@ export default defineConfig({
 The macro is a build-time transform. It does not replace React or introduce a
 second renderer.
 
+If you use automatic JSX, configure Rui's runtime and modifier attribute types
+in `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "rui"
+  }
+}
+```
+
+This enables intrinsic JSX such as `<div padding={12} />`. Function DSL and
+JSX-created Rui nodes use the same modifier/plugin pipeline.
+
 ## Create the React entry point
 
 Rui views are React components, so mount them with the normal React DOM API:
@@ -105,6 +120,11 @@ export default view({
   ),
 })
 ```
+
+The macro uses the TypeScript AST, so generic calls such as `State<Todo[]>([])`
+and nested functions are handled according to lexical scope. It also returns
+source maps through the Vite plugin. `Action(() => save())` is already a
+callback and is left unchanged.
 
 ## Use mutable collections
 
@@ -167,6 +187,16 @@ Stepper(quantity, { min: 0, max: 10 })
 `TextField`, `TextArea`, `Toggle`, `Picker`, `Slider`, and `Stepper` update the
 provided `StateRef` directly and re-render views that read that state.
 
+When two State containers wrap the same raw array or plain object, they share
+mutation ownership and both containers' subscribers are notified. Proxy
+identity is not a public contract; replace the State root for frozen values,
+class instances, `Map`, `Set`, or React elements.
+
+The root `rui` import is the stable function-DSL surface. The experimental
+layout engine, coordinate observer, metadata/plugin registry, and block-builder
+transform are available explicitly from `rui/experimental` while their
+integration contract evolves.
+
 ## Styling
 
 Use modifiers for common layout and appearance rules:
@@ -201,6 +231,10 @@ Sheet(showingDetails, detailsView)
 Alert(showingAlert, { title: 'Delete item?' })
 ```
 
+On the client, `Sheet` handles Escape, initial focus, focus wrapping, and focus
+restoration. `Alert` exposes one `alertdialog` host, and `Menu` provides
+keyboard navigation with `menuitem` children.
+
 ## Run the Rui example
 
 The repository includes an end-to-end task app in `examples/App.ts`. It covers
@@ -211,7 +245,7 @@ From the repository root:
 
 ```bash
 pnpm install
-pnpm dev
+pnpm run dev
 ```
 
 Open the local URL printed by Vite and try adding a task, completing it,
@@ -224,6 +258,7 @@ For the Rui repository itself:
 ```bash
 pnpm test
 pnpm run demo:build
+pnpm run test:browser
 ```
 
 `pnpm test` checks the TypeScript build, public type usage, runtime rendering,
@@ -232,6 +267,8 @@ macro transforms, controls, presentation, and State behavior.
 ## Further reading
 
 - [Design](./DESIGN.md) — ownership boundaries and runtime architecture
+- [API](./API.md) — stable, integration, and experimental entry points
+- [Roadmap](./ROADMAP.md) — correctness priorities and deferred experiments
 - [Styling](./STYLING.md) — modifiers, inline CSS, and external stylesheets
 - [Migration](./MIGRATION.md) — moving from the 0.x Vue runtime
 - [Changelog](./CHANGELOG.md) — release history

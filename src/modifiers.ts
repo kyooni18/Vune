@@ -12,6 +12,7 @@ import {
   setLayoutClass,
   setLayoutStyle,
 } from './layout.js'
+import { applyRuiPlugins } from './runtime/modifier-pipeline.js'
 import type {
   Alignment,
   Axis,
@@ -217,4 +218,11 @@ export function styled(element: ReactElement): StyledElement {
   proxyTargets.set(proxy as object, target)
   registerStyledProxy(proxy as object, target)
   return proxy
+}
+
+/** Apply registered experimental plugins once to a newly-created DSL node. */
+export function finalize(element: ReactElement): StyledElement {
+  const styledElement = styled(element)
+  const pluginElement = applyRuiPlugins(styledElement)
+  return styled(pluginElement)
 }

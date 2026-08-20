@@ -1,9 +1,62 @@
 import { Fragment, jsx as reactJsx, jsxs as reactJsxs } from 'react/jsx-runtime'
 import { jsxDEV as reactJsxDEV } from 'react/jsx-dev-runtime'
-import type { JSXElementConstructor, ReactElement } from 'react'
-import { styled } from './modifiers.js'
-import { applyRuiPlugins } from './runtime/modifier-pipeline.js'
+import type * as React from 'react'
+import type { CSSProperties, JSXElementConstructor, ReactElement } from 'react'
+import { finalize, styled } from './modifiers.js'
 import { markRuiNode } from './runtime/jsx-node.js'
+import type { Alignment, BorderOptions, FrameOptions, Length } from './types.js'
+
+/** JSX-only values accepted by Rui's custom intrinsic-element runtime. */
+export interface RuiJSXProps {
+  padding?: Length
+  margin?: Length
+  gap?: Length
+  width?: Length
+  height?: Length
+  minWidth?: Length
+  maxWidth?: Length
+  minHeight?: Length
+  maxHeight?: Length
+  frame?: FrameOptions
+  background?: CSSProperties['background']
+  foreground?: CSSProperties['color']
+  opacity?: number
+  radius?: Length
+  border?: BorderOptions
+  shadow?: CSSProperties['boxShadow']
+  fontSize?: Length
+  fontWeight?: CSSProperties['fontWeight']
+  fontFamily?: CSSProperties['fontFamily']
+  lineHeight?: CSSProperties['lineHeight']
+  textAlign?: CSSProperties['textAlign']
+  bold?: boolean
+  grow?: number
+  shrink?: number
+  flex?: CSSProperties['flex']
+  wrap?: CSSProperties['flexWrap']
+  order?: number
+  align?: CSSProperties['alignItems']
+  justify?: CSSProperties['justifyContent']
+  alignment?: Alignment
+  position?: CSSProperties['position']
+  overflow?: CSSProperties['overflow']
+  cursor?: CSSProperties['cursor']
+  zIndex?: CSSProperties['zIndex']
+  transform?: CSSProperties['transform']
+  cssTransition?: CSSProperties['transition']
+}
+
+type RuiIntrinsicElements = {
+  [K in keyof React.JSX.IntrinsicElements]: React.JSX.IntrinsicElements[K] & RuiJSXProps
+}
+
+export namespace JSX {
+  export type Element = React.JSX.Element
+  export interface ElementClass extends React.JSX.ElementClass {}
+  export interface ElementAttributesProperty extends React.JSX.ElementAttributesProperty {}
+  export interface IntrinsicAttributes extends React.JSX.IntrinsicAttributes {}
+  export type IntrinsicElements = RuiIntrinsicElements
+}
 
 const RUI_PROPS = new Set([
   'padding', 'margin', 'gap', 'width', 'height', 'minWidth', 'maxWidth',
@@ -45,8 +98,8 @@ function wrap(factory: (type: any, props: any, key?: any) => ReactElement, type:
   const { native, modifiers, modifierNames } = splitProps(props)
   const element = factory(type as JSXElementConstructor<any>, native, key)
   const styledElement = applyModifiers(element, modifiers)
-  const pluginElement = applyRuiPlugins(styledElement)
-  return markRuiNode(pluginElement, { modifiers: modifierNames, layout: native.style })
+  const finalElement = finalize(styledElement)
+  return markRuiNode(finalElement, { modifiers: modifierNames, layout: native.style })
 }
 
 export const jsx = (type: any, props: any, key?: any) => wrap(reactJsx, type, props, key)
@@ -55,8 +108,8 @@ export const jsxDEV = (type: any, props: any, key?: any, isStaticChildren?: bool
   const { native, modifiers, modifierNames } = splitProps(props)
   const element = reactJsxDEV(type, native, key, isStaticChildren ?? false, source, self)
   const styledElement = applyModifiers(element, modifiers)
-  const pluginElement = applyRuiPlugins(styledElement)
-  return markRuiNode(pluginElement, { modifiers: modifierNames, layout: native.style })
+  const finalElement = finalize(styledElement)
+  return markRuiNode(finalElement, { modifiers: modifierNames, layout: native.style })
 }
 
 export { Fragment }

@@ -7,11 +7,17 @@ interface StateRecord<T> {
   current: T
   listeners: Set<Listener>
   version: number
-  proxies: WeakMap<object, object>
-  raws: WeakMap<object, object>
+}
+
+interface ReactiveOwner {
+  raw: object
+  records: Set<StateRecord<unknown>>
+  proxies: WeakMap<StateRecord<unknown>, object>
 }
 
 const records = new WeakMap<object, StateRecord<any>>()
+const owners = new WeakMap<object, ReactiveOwner>()
+const proxyRaws = new WeakMap<object, object>()
 let activeCollector: ((state: StateRef<unknown>) => void) | null = null
 
 export function isStateRef(value: unknown): value is StateRef<unknown> {
@@ -32,40 +38,60 @@ function notify(record: StateRecord<unknown>): void {
   for (const listener of [...record.listeners]) listener()
 }
 
-function unwrapStateValue<T>(value: T, record: StateRecord<unknown>): T {
-  if (typeof value !== 'object' || value === null) return value
-  return (record.raws.get(value as object) ?? value) as T
+function notifyOwner(owner: ReactiveOwner): void {
+  for (const record of [...owner.records]) notify(record)
 }
 
-function wrapStateValue<T>(value: T, record: StateRecord<unknown>): T {
-  const unwrapped = unwrapStateValue(value, record)
+function unwrapStateValue<T>(value: T): T {
+  if (typeof value !== 'object' || value === null) return value
+  return (proxyRaws.get(value as object) ?? value) as T
+}
+
+function ownerFor(raw: object): ReactiveOwner {
+  const existing = owners.get(raw)
+  if (existing) return existing
+
+  const owner = {} as ReactiveOwner
+  owner.raw = raw
+  owner.records = new Set()
+  owner.proxies = new WeakMap()
+  owners.set(raw, owner)
+  return owner
+}
+
+function wrapStateValue<T>(value: T, record: StateRecord<unknown>, parentOwner?: ReactiveOwner): T {
+  const unwrapped = unwrapStateValue(value)
   if (!isReactiveContainer(unwrapped)) return unwrapped
 
-  const existing = record.proxies.get(unwrapped)
+  const owner = ownerFor(unwrapped)
+  owner.records.add(record)
+  for (const parentRecord of parentOwner?.records ?? []) {
+    owner.records.add(parentRecord)
+  }
+  const existing = owner.proxies.get(record)
   if (existing) return existing as T
 
   const proxy = new Proxy(unwrapped, {
     get(target, property, receiver) {
-      return wrapStateValue(Reflect.get(target, property, receiver), record)
+      return wrapStateValue(Reflect.get(target, property, receiver), record, owner)
     },
     set(target, property, next) {
       const previous = Reflect.get(target, property, target)
-      const rawNext = unwrapStateValue(next, record)
-      const changed = !Object.is(unwrapStateValue(previous, record), rawNext)
+      const rawNext = unwrapStateValue(next)
+      const changed = !Object.is(unwrapStateValue(previous), rawNext)
       const updated = Reflect.set(target, property, rawNext, target)
-      if (updated && changed) notify(record)
+      if (updated && changed) notifyOwner(owner)
       return updated
     },
     deleteProperty(target, property) {
       const existed = Reflect.has(target, property)
       const deleted = Reflect.deleteProperty(target, property)
-      if (deleted && existed) notify(record)
+      if (deleted && existed) notifyOwner(owner)
       return deleted
     },
   })
-
-  record.proxies.set(unwrapped, proxy)
-  record.raws.set(proxy, unwrapped)
+  owner.proxies.set(record, proxy)
+  proxyRaws.set(proxy, unwrapped)
   return proxy as T
 }
 
@@ -75,8 +101,6 @@ export function State<T>(initial: T): StateRef<T> {
     current: initial,
     listeners: new Set(),
     version: 0,
-    proxies: new WeakMap(),
-    raws: new WeakMap(),
   }
   record.current = wrapStateValue(initial, record as StateRecord<unknown>)
   records.set(state as object, record)

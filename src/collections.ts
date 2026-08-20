@@ -8,7 +8,7 @@ import {
 import { Grid, HStack, Text, VStack } from './elements.js'
 import { collectChildren, type RuiBuilder } from './builder.js'
 import { layoutChild, layoutChildren } from './layout.js'
-import { styled } from './modifiers.js'
+import { finalize, styled } from './modifiers.js'
 import type {
   GridOptions,
   HStackOptions,
@@ -62,7 +62,7 @@ export function List(...args: any[]): StyledElement {
     layoutChild(child),
   ))
 
-  return styled(createElement('div', {
+  return finalize(createElement('div', {
     role: 'list',
     style: {
       display: 'flex',
@@ -99,7 +99,7 @@ export function Section(...args: any[]): StyledElement {
     children = args.slice(1)
   }
 
-  return styled(createElement(
+  return finalize(createElement(
     'section',
     { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } },
     sectionPart(options.header, 'heading'),

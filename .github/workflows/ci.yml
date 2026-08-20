@@ -6,12 +6,55 @@ on:
 
 jobs:
   test:
+    name: React ${{ matrix.react }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        react: [18.3.1, 19.2.8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Select React compatibility version
+        run: >-
+          pnpm add --save-dev --ignore-scripts
+          react@${{ matrix.react }}
+          react-dom@${{ matrix.react }}
+          ${{ matrix.react == '18.3.1' && '@types/react@18.3.23 @types/react-dom@18.3.7' || '@types/react@19.2.18 @types/react-dom@19.2.4' }}
+      - run: pnpm test
+      - run: pnpm run demo:build
+
+  browser:
+    name: Browser interaction
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: npm install
-      - run: npm test
-      - run: npm run demo:build
+          node-version: 20.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start demo server
+        run: pnpm exec vite --config examples/vite.config.ts --host 127.0.0.1 > rui-vite.log 2>&1 &
+      - name: Wait for demo server
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5173/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat rui-vite.log
+          exit 1
+      - run: RUI_BROWSER_URL=http://127.0.0.1:5173 pnpm run test:browser

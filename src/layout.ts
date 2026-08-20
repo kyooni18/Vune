@@ -78,6 +78,9 @@ export function classNameOf(...values: ClassValue[]): string | undefined {
 }
 
 export function layoutChild(child: ReactNode): ReactNode {
+  if (isValidElement(child) && child.type === Fragment) {
+    return createElement(Fragment, null, ...layoutChildren(fragmentChildren(child)))
+  }
   if (!isValidElement(child) || !isComponentElement(child)) return child
   const layout = layoutPropsOf(child)
   return createElement(
@@ -96,6 +99,25 @@ export function layoutChild(child: ReactNode): ReactNode {
   )
 }
 
+function fragmentChildren(fragment: ReactElement): ReactNode[] {
+  const children = (fragment.props as { children?: ReactNode }).children
+  return Array.isArray(children) ? children : [children]
+}
+
+export function flattenTransparentFragments(children: ReactNode[]): ReactNode[] {
+  const result: ReactNode[] = []
+  for (const child of children) {
+    if (Array.isArray(child)) {
+      result.push(...flattenTransparentFragments(child))
+    } else if (isValidElement(child) && child.type === Fragment) {
+      result.push(...flattenTransparentFragments(fragmentChildren(child)))
+    } else {
+      result.push(child)
+    }
+  }
+  return result
+}
+
 export function layoutChildren(children: ReactNode[]): ReactNode[] {
-  return children.map(layoutChild)
+  return flattenTransparentFragments(children).map(layoutChild)
 }

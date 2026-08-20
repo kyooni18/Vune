@@ -17,12 +17,20 @@ import {
   createRuiVitePlugin,
   transformRuiBuilderSyntax,
 } from '../dist/compiler/index.js'
-import { coordinateSpace, coordinateSpaceOf, emptyLayoutNode } from '../dist/coordinate.js'
-import { createLayoutNode, layoutPass } from '../dist/layout-engine.js'
-import { getRuiNodeMetadata, markRuiNode } from '../dist/runtime/jsx-node.js'
-import { applyRuiPlugins, registerRuiPlugin, unregisterRuiPlugin } from '../dist/runtime/modifier-pipeline.js'
-import { globalCoordinates } from '../dist/runtime/coordinate-runtime.js'
-import { observeLayout } from '../dist/runtime/layout-observer.js'
+import {
+  applyRuiPlugins,
+  coordinateSpace,
+  coordinateSpaceOf,
+  createLayoutNode,
+  emptyLayoutNode,
+  getRuiNodeMetadata,
+  globalCoordinates,
+  layoutPass,
+  markRuiNode,
+  observeLayout,
+  registerRuiPlugin,
+  unregisterRuiPlugin,
+} from '../dist/experimental.js'
 
 test('transforms nested builder blocks without touching source text', () => {
   const source = `
@@ -113,6 +121,7 @@ test('JSX nodes pass through registered plugins and retain metadata', () => {
     const element = jsx('div', { padding: 4, children: 'Plugin' })
     const html = renderToStaticMarkup(element)
     assert.match(html, /data-plugin="yes"/)
+    assert.match(renderToStaticMarkup(Text('DSL plugin')), /data-plugin="yes"/)
     assert.deepEqual(getRuiNodeMetadata(element), { modifiers: ['padding'], layout: undefined })
     assert.equal(applyRuiPlugins(element).props['data-plugin'], 'yes')
   } finally {

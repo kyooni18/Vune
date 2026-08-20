@@ -124,6 +124,30 @@ Text('Composed')
 
 This produces `card card--featured u-shadow` when `isFeatured` is true, and `card u-shadow` otherwise.
 
+## JSX modifier attributes
+
+The automatic runtime accepts the same common modifier values as JSX
+attributes on intrinsic elements:
+
+```tsx
+/** @jsxImportSource rui */
+
+<div
+  padding={12}
+  gap={8}
+  frame={{ maxWidth: 'infinity', alignment: 'center' }}
+  background="Canvas"
+>
+  <span fontSize={18} bold>Rui</span>
+</div>
+```
+
+Set `jsxImportSource: "rui"` in `tsconfig.json` for project-wide support.
+Rui's declarations type-check these attributes, while native `style`,
+`className`, event handlers, and element-specific attributes keep React's
+normal types. The modifier attributes are applied through the same pipeline as
+function-DSL modifiers.
+
 ## Styling React components
 
 Rui applies layout and class modifiers to a neutral layout host when the child is a normal React component. The component's own props and internal DOM remain React-owned:

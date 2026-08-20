@@ -6,6 +6,10 @@ Rui is a declarative TypeScript UI layer that uses React as its renderer rather 
 
 The normal API expresses relationships rather than coordinates. `VStack`, `HStack`, `ZStack`, `Grid`, `Spacer`, alignment, spacing, and `frame` are the primary layout vocabulary. Low-level CSS remains available through modifiers when needed.
 
+Rui's layout is SwiftUI-inspired, not a promise to reproduce SwiftUI's
+proposal-based geometry algorithm. `frame`, infinity sizing, and stacks map
+the relationship into web-native CSS semantics.
+
 ## React ownership boundary
 
 Rui owns the external layout slot of a child. React owns the child component itself.
@@ -22,18 +26,38 @@ React elements are treated as immutable. Rui modifiers use `cloneElement()` and 
 
 `State()` is a small observable value with a `.value` API. A Rui `view()` tracks State reads during render and subscribes the React component to those values.
 
+Arrays and plain objects are mutation-aware. If multiple `State()` values wrap
+the same raw mutable container, they share mutation ownership and all of their
+subscribers are notified. Proxy identity is intentionally not an application
+level contract.
+
 With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Rui component instance, so two instances of the same View do not share local state.
 
 ## Macros
 
-The macro is build-time sugar only. It does not replace React at runtime.
+The macro is build-time sugar only. It does not replace React at runtime. The
+Vite macro is parsed with the TypeScript AST and returns source maps.
 
 - `State(initial)` becomes per-view state by moving the declaration into the View state factory.
 - `view(expression)` becomes a reactive render body.
 - `Action(expression)` becomes a deferred callback.
+
+The stable package entry point is the function DSL. The layout engine,
+coordinate runtime, layout observer, metadata/plugin registry, and block-builder
+transform are exported from `rui/experimental` until their integration story
+is consolidated.
 
 The explicit runtime APIs remain available when macros are undesirable.
 
 ## Interoperability
 
 `Component()` creates normal React component elements. `Raw()` accepts existing React elements. Because Rui ultimately returns React elements and components, existing React libraries can be mixed in rather than wrapped behind a separate renderer.
+
+## Public surface
+
+The root `rui` entry point intentionally contains the stable function DSL. The
+automatic JSX runtimes and `rui/vite` are supported integration entry points.
+Coordinate spaces, the layout engine, observers, node metadata, plugins, and
+the block-builder transform live behind `rui/experimental` or `rui/compiler`
+until their contracts are consolidated. See [API.md](./API.md) for the current
+surface inventory.

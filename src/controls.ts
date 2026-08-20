@@ -10,7 +10,7 @@ import {
   type SelectHTMLAttributes,
 } from 'react'
 import { Button, HStack, Text, VStack } from './elements.js'
-import { styled } from './modifiers.js'
+import { finalize } from './modifiers.js'
 import { isStateRef, resolveValue } from './state.js'
 import type { Length, StateRef, StyledElement, Value } from './types.js'
 
@@ -22,7 +22,7 @@ export type ImageOptions = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
 
 export function Image(source: Value<string>, options: ImageOptions = {}): StyledElement {
   const { fit, style, ...props } = options
-  return styled(createElement('img', {
+  return finalize(createElement('img', {
     ...props,
     src: String(resolveValue(source)),
     style: {
@@ -57,7 +57,7 @@ export function Link(
   href: Value<string>,
   props: LinkProps = {},
 ): StyledElement {
-  return styled(createElement('a', { ...props, href: String(resolveValue(href)) }, content(label)))
+  return finalize(createElement('a', { ...props, href: String(resolveValue(href)) }, content(label)))
 }
 
 export type ProgressViewOptions = ProgressHTMLAttributes<HTMLProgressElement> & {
@@ -69,7 +69,7 @@ export function ProgressView(
   options: ProgressViewOptions = {},
 ): StyledElement {
   const { max = 1, label, ...props } = options
-  const progress = styled(createElement('progress', {
+  const progress = finalize(createElement('progress', {
     ...props,
     max,
     ...(value == null ? {} : { value: Number(resolveValue(value)) }),
@@ -92,7 +92,7 @@ export function Picker<T extends string | number>(
   props: PickerProps = {},
 ): StyledElement {
   const { onChange, ...rest } = props
-  return styled(createElement(
+  return finalize(createElement(
     'select',
     {
       ...rest,
@@ -119,7 +119,7 @@ export type SliderOptions = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' |
 
 export function Slider(value: StateRef<number>, options: SliderOptions = {}): StyledElement {
   const { min = 0, max = 1, step = 0.01, onChange, ...props } = options
-  return styled(createElement('input', {
+  return finalize(createElement('input', {
     ...props,
     type: 'range',
     min,

@@ -4,6 +4,7 @@ import { createElement, forwardRef, memo } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   Component,
+  Group,
   HStack,
   Raw,
   Spacer,
@@ -71,6 +72,19 @@ test('hosts memo, forwardRef, and direct React elements as first-class layout it
   assert.match(html, /<strong>Forward<\/strong>/)
   assert.match(html, /padding:7px/)
   assert.match(html, /<strong>Raw<\/strong>/)
+})
+
+test('normalizes transparent Group fragments before assigning layout hosts', () => {
+  const html = renderToStaticMarkup(
+    HStack(
+      Group(
+        Group(Component(Badge, { label: 'Grouped' }).padding(9)),
+      ),
+    ),
+  )
+  assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 1)
+  assert.match(html, /padding:9px/)
+  assert.match(html, /<strong>Grouped<\/strong>/)
 })
 
 test('composes simple class modifiers and conditional class values', () => {
@@ -152,6 +166,30 @@ test('State observes array splice without coupling separate State containers', (
 
   unsubscribeItems()
   unsubscribeOther()
+})
+
+test('shared raw mutable objects notify every owning State container', () => {
+  const raw = { count: 0, nested: { label: 'initial' } }
+  const first = State(raw)
+  const second = State(raw)
+  let firstNotifications = 0
+  let secondNotifications = 0
+  const unsubscribeFirst = subscribeState(first, () => { firstNotifications += 1 })
+  const unsubscribeSecond = subscribeState(second, () => { secondNotifications += 1 })
+
+  first.value.count += 1
+  assert.equal(first.value.count, 1)
+  assert.equal(second.value.count, 1)
+  assert.equal(firstNotifications, 1)
+  assert.equal(secondNotifications, 1)
+
+  second.value.nested.label = 'changed'
+  assert.equal(first.value.nested.label, 'changed')
+  assert.equal(firstNotifications, 2)
+  assert.equal(secondNotifications, 2)
+
+  unsubscribeFirst()
+  unsubscribeSecond()
 })
 
 test('view produces a renderable React component', () => {

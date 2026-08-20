@@ -69,9 +69,18 @@ export default view(
 
 The React macro now lowers this to per-component-instance `view({ state, body })` state.
 
+The current macro is parsed with the TypeScript AST. It recognizes generic
+calls such as `State<Todo[]>([])`, respects lexical scope, preserves
+`Action(() => callback)` functions, and emits source maps through the Vite
+plugin. Only top-level State declarations before the default `view(...)` are
+hoisted.
+
 ## Component interoperability
 
 `Component()` now accepts React component types instead of Vue component definitions. Rui still applies layout modifiers to a neutral outer host so component internals remain framework-owned.
+
+Required React props are required by TypeScript when calling `Component()`;
+props are optional only for components whose prop type has no required keys.
 
 ## Removed Vue-specific APIs
 
