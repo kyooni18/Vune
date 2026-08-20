@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-alpha.3
+
+- Switched Vune state subscriptions to React `useSyncExternalStore` semantics.
+- Preserved top-level `State()` declaration order inside macro-generated per-view state factories so later state initializers can reference earlier state values.
+- Added typed React props support to `view()` and allowed scoped state factories to initialize from props.
+- Expanded runtime coverage for controls, collections, navigation, presentation, SSR portal safety, and state subscription behavior.
+- Revalidated TypeScript build, runtime tests, macro transforms, and the React/Vite demo in CI.
+
 ## 1.0.0-alpha.2
 
 - Replaced the Vue runtime with React and React DOM.
