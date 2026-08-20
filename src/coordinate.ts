@@ -7,11 +7,11 @@ export interface LayoutFrame {
   height: number
 }
 
-export interface LayoutNode {
+export interface CoordinateNode {
   id: string
   frame: LayoutFrame
   coordinateSpace: CoordinateSpace
-  children: LayoutNode[]
+  children: CoordinateNode[]
 }
 
 const spaces = new WeakMap<object, CoordinateSpace>()
@@ -25,7 +25,7 @@ export function coordinateSpaceOf(target: object): CoordinateSpace {
   return spaces.get(target) ?? 'local'
 }
 
-export function emptyLayoutNode(id: string): LayoutNode {
+export function emptyLayoutNode(id: string): CoordinateNode {
   return {
     id,
     frame: { x: 0, y: 0, width: 0, height: 0 },

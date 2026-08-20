@@ -259,10 +259,14 @@ For the Rui repository itself:
 pnpm test
 pnpm run demo:build
 pnpm run test:browser
+pnpm run benchmark:modifiers
 ```
 
 `pnpm test` checks the TypeScript build, public type usage, runtime rendering,
 macro transforms, controls, presentation, and State behavior.
+`benchmark:modifiers` compares raw React styles with Rui modifier chains across
+element counts and chain depths; it is a measurement tool, not a virtualization
+benchmark.
 
 ## Further reading
 

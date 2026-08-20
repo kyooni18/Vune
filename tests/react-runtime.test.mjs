@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createElement, forwardRef, memo } from 'react'
+import { Fragment, createElement, forwardRef, memo } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   Component,
@@ -85,6 +85,28 @@ test('normalizes transparent Group fragments before assigning layout hosts', () 
   assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 1)
   assert.match(html, /padding:9px/)
   assert.match(html, /<strong>Grouped<\/strong>/)
+})
+
+test('normalizes nested keyed fragments, arrays, conditionals, and null children', () => {
+  const html = renderToStaticMarkup(
+    HStack(
+      createElement(Fragment, { key: 'outer' },
+        null,
+        false,
+        'prefix',
+        createElement(Fragment, null,
+          Component(Badge, { label: 'First' }),
+          [null, Component(Badge, { label: 'Second' })],
+        ),
+        'suffix',
+      ),
+    ),
+  )
+  assert.equal((html.match(/data-rui-layout-host/g) ?? []).length, 2)
+  assert.match(html, /prefix/)
+  assert.match(html, /<strong>First<\/strong>/)
+  assert.match(html, /<strong>Second<\/strong>/)
+  assert.match(html, /suffix/)
 })
 
 test('composes simple class modifiers and conditional class values', () => {
@@ -190,6 +212,72 @@ test('shared raw mutable objects notify every owning State container', () => {
 
   unsubscribeFirst()
   unsubscribeSecond()
+})
+
+test('detaches stale nested owners when a State root is replaced', () => {
+  const oldRaw = { nested: { count: 0 } }
+  const state = State(oldRaw)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const oldNested = state.value.nested
+
+  state.value = { nested: { count: 10 } }
+  const afterReplacement = notifications
+  oldNested.count += 1
+  oldRaw.nested.count += 1
+  assert.equal(notifications, afterReplacement)
+
+  state.value.nested.count += 1
+  assert.equal(notifications, afterReplacement + 1)
+  unsubscribe()
+})
+
+test('tracks shared nested objects across arrays and replacement cycles', () => {
+  const shared = { label: 'initial' }
+  const first = State({ shared })
+  const second = State([shared])
+  let firstNotifications = 0
+  let secondNotifications = 0
+  const unsubscribeFirst = subscribeState(first, () => { firstNotifications += 1 })
+  const unsubscribeSecond = subscribeState(second, () => { secondNotifications += 1 })
+
+  first.value.shared.label = 'changed'
+  assert.equal(firstNotifications, 1)
+  assert.equal(secondNotifications, 1)
+
+  const oldObject = first.value.shared
+  first.value = 0
+  const afterPrimitive = firstNotifications
+  oldObject.label = 'stale'
+  assert.equal(firstNotifications, afterPrimitive)
+
+  const replacement = { label: 'replacement' }
+  first.value = replacement
+  first.value.label = 'updated'
+  assert.equal(firstNotifications, afterPrimitive + 2)
+
+  first.value = { child: replacement }
+  delete first.value.child
+  replacement.label = 'detached'
+  assert.equal(firstNotifications, afterPrimitive + 4)
+  first.value = { child: replacement }
+  first.value.child.label = 'reattached'
+  assert.equal(firstNotifications, afterPrimitive + 6)
+
+  unsubscribeFirst()
+  unsubscribeSecond()
+})
+
+test('reconciles circular raw object graphs without recursive overflow', () => {
+  const circular = { count: 0, self: null }
+  circular.self = circular
+  const state = State(circular)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+
+  state.value.self.count = 1
+  assert.equal(notifications, 1)
+  unsubscribe()
 })
 
 test('view produces a renderable React component', () => {

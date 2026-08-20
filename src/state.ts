@@ -7,6 +7,7 @@ interface StateRecord<T> {
   current: T
   listeners: Set<Listener>
   version: number
+  owners: Set<ReactiveOwner>
 }
 
 interface ReactiveOwner {
@@ -39,7 +40,22 @@ function notify(record: StateRecord<unknown>): void {
 }
 
 function notifyOwner(owner: ReactiveOwner): void {
-  for (const record of [...owner.records]) notify(record)
+  const affected = [...owner.records]
+  for (const record of affected) notify(record)
+  for (const record of affected) {
+    if (record.listeners.size > 0) reconcileRecordOwners(record)
+  }
+}
+
+function attachRecord(owner: ReactiveOwner, record: StateRecord<unknown>): void {
+  if (owner.records.has(record)) return
+  owner.records.add(record)
+  record.owners.add(owner)
+}
+
+function detachRecord(record: StateRecord<unknown>): void {
+  for (const owner of record.owners) owner.records.delete(record)
+  record.owners.clear()
 }
 
 function unwrapStateValue<T>(value: T): T {
@@ -59,21 +75,17 @@ function ownerFor(raw: object): ReactiveOwner {
   return owner
 }
 
-function wrapStateValue<T>(value: T, record: StateRecord<unknown>, parentOwner?: ReactiveOwner): T {
+function wrapStateValue<T>(value: T, record: StateRecord<unknown>): T {
   const unwrapped = unwrapStateValue(value)
   if (!isReactiveContainer(unwrapped)) return unwrapped
 
   const owner = ownerFor(unwrapped)
-  owner.records.add(record)
-  for (const parentRecord of parentOwner?.records ?? []) {
-    owner.records.add(parentRecord)
-  }
   const existing = owner.proxies.get(record)
   if (existing) return existing as T
 
   const proxy = new Proxy(unwrapped, {
     get(target, property, receiver) {
-      return wrapStateValue(Reflect.get(target, property, receiver), record, owner)
+      return wrapStateValue(Reflect.get(target, property, receiver), record)
     },
     set(target, property, next) {
       const previous = Reflect.get(target, property, target)
@@ -95,12 +107,35 @@ function wrapStateValue<T>(value: T, record: StateRecord<unknown>, parentOwner?:
   return proxy as T
 }
 
+function reconcileRecordOwners(record: StateRecord<unknown>): void {
+  detachRecord(record)
+
+  const visited = new Set<object>()
+  const visit = (value: unknown): void => {
+    const raw = unwrapStateValue(value)
+    if (!isReactiveContainer(raw) || visited.has(raw)) return
+    visited.add(raw)
+
+    const owner = ownerFor(raw)
+    attachRecord(owner, record)
+
+    for (const property of Reflect.ownKeys(raw)) {
+      const descriptor = Object.getOwnPropertyDescriptor(raw, property)
+      if (!descriptor || !('value' in descriptor)) continue
+      visit(descriptor.value)
+    }
+  }
+
+  visit(record.current)
+}
+
 export function State<T>(initial: T): StateRef<T> {
   const state = {} as StateRef<T>
   const record: StateRecord<T> = {
     current: initial,
     listeners: new Set(),
     version: 0,
+    owners: new Set(),
   }
   record.current = wrapStateValue(initial, record as StateRecord<unknown>)
   records.set(state as object, record)
@@ -113,9 +148,14 @@ export function State<T>(initial: T): StateRef<T> {
       return record.current
     },
     set(next: T) {
+      detachRecord(record as StateRecord<unknown>)
       const wrapped = wrapStateValue(next, record as StateRecord<unknown>)
-      if (Object.is(record.current, wrapped)) return
+      if (Object.is(record.current, wrapped)) {
+        if (record.listeners.size > 0) reconcileRecordOwners(record as StateRecord<unknown>)
+        return
+      }
       record.current = wrapped
+      if (record.listeners.size > 0) reconcileRecordOwners(record as StateRecord<unknown>)
       notify(record as StateRecord<unknown>)
     },
   })
@@ -127,7 +167,14 @@ export function subscribeState(state: StateRef<unknown>, listener: Listener): ()
   const record = records.get(state as object)
   if (!record) return () => undefined
   record.listeners.add(listener)
-  return () => record.listeners.delete(listener)
+  reconcileRecordOwners(record)
+  let active = true
+  return () => {
+    if (!active) return
+    active = false
+    record.listeners.delete(listener)
+    if (record.listeners.size === 0) detachRecord(record)
+  }
 }
 
 export function collectStateReads<T>(

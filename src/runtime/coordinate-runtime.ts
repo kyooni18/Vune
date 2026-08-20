@@ -1,11 +1,7 @@
-export type CoordinateSpace = 'local' | 'global' | string
+import type { CoordinateSpace, LayoutFrame } from '../coordinate.js'
 
-export interface Geometry {
-  x:number
-  y:number
-  width:number
-  height:number
-}
+export type { CoordinateSpace } from '../coordinate.js'
+export type Geometry = LayoutFrame
 
 export class CoordinateRegistry {
   private spaces = new Map<string, Geometry>()

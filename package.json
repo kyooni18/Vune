@@ -47,6 +47,7 @@
     "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/react-client.test.mjs tests/macro-react.test.mjs tests/new-features.test.mjs",
     "test:browser": "node --test tests/browser.test.mjs",
     "benchmark:modifiers": "pnpm run build && node benchmarks/modifiers.mjs",
+    "benchmark:modifiers:ci": "RUI_BENCH_CI=1 RUI_BENCH_MAX_RATIO=50 pnpm run benchmark:modifiers",
     "test": "pnpm run build && pnpm run test:types && pnpm run test:runtime",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",

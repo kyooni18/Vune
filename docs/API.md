@@ -36,7 +36,8 @@ layout host.
 Import exploratory infrastructure explicitly from `rui/experimental`:
 
 - coordinate spaces and the layout observer;
-- `createLayoutNode` and `layoutPass`;
+- observed `CoordinateNode` values;
+- measured `LayoutNode` values through `createLayoutNode` and `layoutPass`;
 - JSX metadata and the plugin registry;
 - coordinate runtime helpers;
 - builder collection helpers and the block-builder transform.
@@ -61,6 +62,16 @@ Rui layout is SwiftUI-inspired and web-native. `frame`, `Spacer`, stacks, and
 infinity sizing express relationships through CSS; they do not promise
 pixel-equivalent behavior to SwiftUI's proposal-based layout algorithm.
 
-`Sheet` provides Escape dismissal, initial focus, focus wrapping, and focus
-restoration. `Alert` exposes one `alertdialog` host. `Menu` uses native
-`details`/`summary` plus `menuitem` children and keyboard navigation.
+`Sheet` provides Escape dismissal, initial focus, focus wrapping, focus
+restoration, and deterministic stacking for nested portals. Presentation hosts
+render empty during SSR and mount their portals after hydration so server
+markup remains hydration-safe. `Alert` uses instance-specific `useId()` labels
+and exposes one `alertdialog` host. `Menu` uses native `details`/`summary`
+plus `menuitem` children with first-item focus, Arrow/Home/End navigation,
+disabled-item skipping, typeahead, Escape, and Tab-close behavior. Closing by
+keyboard or item action restores the trigger focus; Tab is allowed to continue
+normal document navigation.
+
+Experimental plugins run for both function-DSL-created and JSX-created Rui
+elements. JSX additionally records its modifier metadata because JSX receives
+the modifier attributes as a single creation-time pass.

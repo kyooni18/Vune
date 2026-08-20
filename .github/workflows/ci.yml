@@ -58,3 +58,18 @@ jobs:
           cat rui-vite.log
           exit 1
       - run: RUI_BROWSER_URL=http://127.0.0.1:5173 pnpm run test:browser
+
+  benchmark:
+    name: Modifier benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run benchmark:modifiers:ci

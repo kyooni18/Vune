@@ -25,6 +25,13 @@ behavior silently:
   owners reached through nested state values.
 - `Component(...)` preserves required React props in TypeScript. Required props
   remain required when the wrapped component is used from Rui.
+- Shared State ownership is reconciled against the current raw object graph;
+  root replacement, nested deletion, unsubscribe, re-subscription, arrays,
+  shared objects, and circular graphs have regression coverage.
+- Macro diagnostics warn when an exported or mutable top-level State declaration
+  cannot become instance-local. Mixed declarations are split at the AST
+  declaration level, and source maps carry column-level anchors for transformed
+  call and argument spans.
 
 ## Browser and accessibility release
 
@@ -34,8 +41,10 @@ events, mounting and unmounting, subscriptions, refs, context, portals, and
 modifiers. A small Playwright suite covers behavior that needs a real browser.
 
 Presentation primitives follow the same direction: `Sheet` handles Escape,
-initial focus, focus wrapping, and restoration; `Alert` exposes one dialog
-host; and `Menu` provides keyboard navigation with `menuitem` semantics.
+initial focus, focus wrapping, restoration, and portal stacking; `Alert` uses
+instance-specific IDs and hydration-safe portals; and `Menu` provides first
+item focus, Home/End, disabled skipping, typeahead, Tab close, and
+`menuitem` semantics.
 
 ## Deliberately deferred work
 
@@ -45,18 +54,21 @@ is settled:
 - `LazyVStack` and related APIs use `content-visibility: auto`. This is a
   browser-assisted rendering optimization, not virtualization or windowing.
 - Layout-engine, coordinate-runtime, observer, builder, and plugin facilities
-  are available from `rui/experimental`; they are not part of the stable root
-  API yet.
+  are available from `rui/experimental`; their geometry types now distinguish
+  observed `CoordinateNode` values from measured `LayoutNode` values, but they
+  are not part of the stable root API yet.
 - JSX runtime support is available, but its modifier typing and plugin behavior
   must stay aligned with the function DSL before it is treated as the primary
   authoring path.
-- Modifier performance is benchmarked before any redesign. Large lists and
-  deeply modified trees should establish a measurable need before Rui changes
-  its element materialization strategy.
+- Modifier performance is benchmarked against raw React styles at 100, 1,000,
+  and 10,000 elements with chain depths of 1, 5, 10, and 20. CI runs a smaller
+  matrix with a generous regression guard; large lists and deeply modified
+  trees still establish a measurable need before Rui changes its materialization
+  strategy.
 
 ## Semantic contract
 
-Rui is a SwiftUI-inspired API with web-native semantics. Stacks, `Spacer`,
+Rui is a SwiftUI-inspired, CSS-native API with web-native semantics. Stacks, `Spacer`,
 `frame`, and infinity sizing express familiar relationships through CSS; they
 do not promise SwiftUI's proposal-based layout algorithm or pixel-for-pixel
 behavior. That distinction is part of the public contract and will remain

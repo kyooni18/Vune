@@ -31,6 +31,12 @@ the same raw mutable container, they share mutation ownership and all of their
 subscribers are notified. Proxy identity is intentionally not an application
 level contract.
 
+Ownership is lifecycle-aware: each State record is attached only to the raw
+containers reachable from its current value while it has subscribers. Root
+replacement, nested insertion/deletion, unsubscribe, and re-subscription
+reconcile that graph, so old objects do not retain stale records indefinitely.
+Circular graphs are traversed with identity tracking.
+
 With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Rui component instance, so two instances of the same View do not share local state.
 
 ## Macros
@@ -45,7 +51,8 @@ Vite macro is parsed with the TypeScript AST and returns source maps.
 The stable package entry point is the function DSL. The layout engine,
 coordinate runtime, layout observer, metadata/plugin registry, and block-builder
 transform are exported from `rui/experimental` until their integration story
-is consolidated.
+is consolidated. Experimental plugins run for both DSL and JSX-created nodes;
+JSX additionally records its creation-time modifier metadata.
 
 The explicit runtime APIs remain available when macros are undesirable.
 
@@ -57,7 +64,9 @@ The explicit runtime APIs remain available when macros are undesirable.
 
 The root `rui` entry point intentionally contains the stable function DSL. The
 automatic JSX runtimes and `rui/vite` are supported integration entry points.
-Coordinate spaces, the layout engine, observers, node metadata, plugins, and
-the block-builder transform live behind `rui/experimental` or `rui/compiler`
-until their contracts are consolidated. See [API.md](./API.md) for the current
+Coordinate spaces expose `CoordinateNode` values, while the proposal-based
+measurement experiment exposes `LayoutNode` values; keeping those concepts
+distinct avoids silently treating observed DOM geometry as a layout proposal.
+The block-builder transform lives behind `rui/experimental` or `rui/compiler`
+until these contracts are consolidated. See [API.md](./API.md) for the current
 surface inventory.

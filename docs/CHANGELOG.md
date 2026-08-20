@@ -5,6 +5,9 @@
 - Replaced the State/Action Vite macro scanner with a TypeScript AST transform and source maps; generic State calls, lexical scopes, and function-valued actions are preserved.
 - Added regression coverage for `examples/App.ts`, transparent Group fragments, shared mutable State ownership, required Component props, JSX modifier typing, JSDOM interaction, and presentation accessibility.
 - Added Escape/focus handling for Sheet, a single alertdialog host for Alert, and keyboard/menuitem semantics for Menu.
+- Added State owner reconciliation and cleanup for replacement, nested, shared, circular, and unsubscribed object graphs; split mixed macro declarations and added column-level source-map anchors plus diagnostics.
+- Added unique Alert IDs, stacked-presentation hydration tests, expanded Menu keyboard behavior, repeated dynamic-dependency tests, fragment stress cases, and SSR hydration coverage.
+- Unified experimental geometry naming around `CoordinateNode` and measured `LayoutNode`; expanded the modifier benchmark matrix and added a CI benchmark guard.
 - Moved layout experiments, coordinate/observer infrastructure, plugin metadata, and the block-builder transform behind `rui/experimental`.
 - Standardized repository commands on pnpm and added React 18/19 CI coverage plus an opt-in Playwright browser suite.
 

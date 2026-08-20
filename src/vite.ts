@@ -12,15 +12,27 @@ export interface RuiSourceMap {
 export interface RuiMacroPlugin {
   name: string
   enforce: 'pre'
-  transform(code: string, id: string): { code: string; map: RuiSourceMap | null } | null
+  transform(this: RuiTransformContext, code: string, id: string): { code: string; map: RuiSourceMap | null } | null
 }
 
-type Edit = { start: number; end: number; replacement: string }
+export interface RuiTransformContext {
+  warn(message: string): void
+}
+
+type EditOrigin = { generatedOffset: number; originalOffset: number }
+type Edit = { start: number; end: number; replacement: string; origins?: EditOrigin[] }
 
 interface StateDeclaration {
   name: string
   call: ts.CallExpression
+  initializer: ts.Expression
   statement: ts.VariableStatement
+  declaration: ts.VariableDeclaration
+}
+
+interface MacroDiagnostic {
+  message: string
+  start: number
 }
 
 function scriptKindFor(id: string): ts.ScriptKind {
@@ -45,6 +57,19 @@ function unwrapParentheses<T extends ts.Expression>(node: T): ts.Expression {
   return current
 }
 
+function unwrapExpression(node: ts.Expression): ts.Expression {
+  let current = unwrapParentheses(node)
+  while (
+    ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isSatisfiesExpression(current)
+  ) {
+    current = unwrapParentheses(current.expression)
+  }
+  return current
+}
+
 function isFunctionArgument(node: ts.Expression): boolean {
   const unwrapped = unwrapParentheses(node)
   return ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)
@@ -62,18 +87,54 @@ function collectTopLevelStates(sourceFile: ts.SourceFile, before: number): State
     const candidates = statement.declarationList.declarations.filter(declaration =>
       ts.isIdentifier(declaration.name)
       && declaration.initializer
-      && isNamedCall(declaration.initializer, 'State'),
+      && isNamedCall(unwrapExpression(declaration.initializer), 'State'),
     ) as Array<ts.VariableDeclaration & { name: ts.Identifier; initializer: ts.CallExpression }>
 
-    // Do not partially remove a mixed declaration such as
-    // `const count = State(0), label = 'Count'`.
-    if (candidates.length !== statement.declarationList.declarations.length) continue
     for (const declaration of candidates) {
-      states.push({ name: declaration.name.text, call: declaration.initializer, statement })
+      states.push({
+        name: declaration.name.text,
+        call: unwrapExpression(declaration.initializer) as ts.CallExpression,
+        initializer: declaration.initializer,
+        statement,
+        declaration,
+      })
     }
   }
 
   return states
+}
+
+function collectMacroDiagnostics(sourceFile: ts.SourceFile, before: number): MacroDiagnostic[] {
+  const diagnostics: MacroDiagnostic[] = []
+
+  for (const statement of sourceFile.statements) {
+    if (statement.getStart(sourceFile) >= before) break
+    if (!ts.isVariableStatement(statement)) continue
+
+    const exported = statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false
+    const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    for (const declaration of statement.declarationList.declarations) {
+      if (!declaration.initializer || !isNamedCall(unwrapExpression(declaration.initializer), 'State')) continue
+      if (exported) {
+        diagnostics.push({
+          start: declaration.getStart(sourceFile),
+          message: 'Top-level State declarations used by view() must not be exported; the declaration remains module-scoped.',
+        })
+      } else if (!isConst) {
+        diagnostics.push({
+          start: declaration.getStart(sourceFile),
+          message: 'Top-level State declarations used by view() must use const so the Rui macro can make them instance-local.',
+        })
+      } else if (!ts.isIdentifier(declaration.name)) {
+        diagnostics.push({
+          start: declaration.getStart(sourceFile),
+          message: 'The Rui macro only hoists identifier State declarations; destructuring remains module-scoped.',
+        })
+      }
+    }
+  }
+
+  return diagnostics
 }
 
 function findDefaultView(sourceFile: ts.SourceFile): ts.CallExpression | null {
@@ -102,6 +163,34 @@ function collectActionEdits(sourceFile: ts.SourceFile, root: ts.Node): Edit[] {
   }
 
   visit(root)
+  return edits
+}
+
+function removeTopLevelStateDeclarations(sourceFile: ts.SourceFile, states: StateDeclaration[]): Edit[] {
+  const statesByStatement = new Map<ts.VariableStatement, Set<ts.VariableDeclaration>>()
+  for (const state of states) {
+    const declarations = statesByStatement.get(state.statement) ?? new Set<ts.VariableDeclaration>()
+    declarations.add(state.declaration)
+    statesByStatement.set(state.statement, declarations)
+  }
+
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
+  const edits: Edit[] = []
+  for (const [statement, stateDeclarations] of statesByStatement) {
+    const kept = statement.declarationList.declarations.filter(declaration => !stateDeclarations.has(declaration))
+    if (kept.length === 0) {
+      edits.push({ start: statement.getStart(sourceFile), end: statement.end, replacement: '' })
+      continue
+    }
+
+    const declarationList = ts.factory.updateVariableDeclarationList(statement.declarationList, kept)
+    const updated = ts.factory.updateVariableStatement(statement, statement.modifiers, declarationList)
+    edits.push({
+      start: statement.getStart(sourceFile),
+      end: statement.end,
+      replacement: printer.printNode(ts.EmitHint.Unspecified, updated, sourceFile),
+    })
+  }
   return edits
 }
 
@@ -147,16 +236,33 @@ function encodeVLQ(value: number): string {
   return result
 }
 
-function buildSourceMap(source: string, anchors: number[], id: string): RuiSourceMap {
+interface SourceMapAnchor {
+  generatedLine: number
+  generatedColumn: number
+  originalOffset: number
+}
+
+function buildSourceMap(source: string, anchors: SourceMapAnchor[], id: string): RuiSourceMap {
   let previousOriginalLine = 0
   let previousOriginalColumn = 0
-  const mappings = anchors.map(anchor => {
-    const location = sourceLocation(source, anchor)
-    const segment = `${encodeVLQ(0)}${encodeVLQ(0)}${encodeVLQ(location.line - previousOriginalLine)}${encodeVLQ(location.column - previousOriginalColumn)}`
+  let previousGeneratedLine = 0
+  let previousGeneratedColumn = 0
+  const lines: string[] = []
+
+  for (const anchor of anchors) {
+    const location = sourceLocation(source, anchor.originalOffset)
+    while (lines.length <= anchor.generatedLine) lines.push('')
+    const generatedLineDelta = anchor.generatedLine - previousGeneratedLine
+    const generatedColumnDelta = generatedLineDelta === 0
+      ? anchor.generatedColumn - previousGeneratedColumn
+      : anchor.generatedColumn
+    const segment = `${encodeVLQ(generatedColumnDelta)}${encodeVLQ(0)}${encodeVLQ(location.line - previousOriginalLine)}${encodeVLQ(location.column - previousOriginalColumn)}`
+    lines[anchor.generatedLine] += `${lines[anchor.generatedLine] ? ',' : ''}${segment}`
+    previousGeneratedLine = anchor.generatedLine
+    previousGeneratedColumn = anchor.generatedColumn
     previousOriginalLine = location.line
     previousOriginalColumn = location.column
-    return segment
-  }).join(';')
+  }
 
   return {
     version: 3,
@@ -164,7 +270,7 @@ function buildSourceMap(source: string, anchors: number[], id: string): RuiSourc
     sources: [id.split('?', 1)[0] || 'rui-macro.ts'],
     sourcesContent: [source],
     names: [],
-    mappings,
+    mappings: lines.join(';'),
   }
 }
 
@@ -172,12 +278,32 @@ function applyEditsWithMap(source: string, edits: Edit[], id: string): { code: s
   const sorted = [...edits].sort((left, right) => left.start - right.start)
   let cursor = 0
   let code = ''
-  const anchors: number[] = []
+  let generatedLine = 0
+  let generatedColumn = 0
+  const anchors: SourceMapAnchor[] = []
 
-  const append = (value: string, anchor: (index: number) => number) => {
+  const append = (value: string, anchor: (index: number) => number, explicitOrigins: EditOrigin[] = []) => {
+    if (value.length === 0) return
+    const explicit = new Map(explicitOrigins.map(origin => [origin.generatedOffset, origin.originalOffset]))
+    const addAnchor = (index: number, originalOffset = anchor(index)) => {
+      anchors.push({ generatedLine, generatedColumn, originalOffset })
+    }
+    addAnchor(0)
     for (let index = 0; index < value.length; index += 1) {
-      if (code.length === 0 || code.endsWith('\n')) anchors.push(anchor(index))
-      code += value[index]
+      if (index > 0 && value[index - 1] === '\n') {
+        addAnchor(index)
+      }
+      if (index > 0 && explicit.has(index)) {
+        addAnchor(index, explicit.get(index))
+      }
+      const character = value[index]
+      code += character
+      if (character === '\n') {
+        generatedLine += 1
+        generatedColumn = 0
+      } else {
+        generatedColumn += 1
+      }
     }
   }
 
@@ -185,7 +311,15 @@ function applyEditsWithMap(source: string, edits: Edit[], id: string): { code: s
   for (const edit of sorted) {
     if (edit.start < cursor) continue
     append(source.slice(cursor, edit.start), index => cursor + index)
-    append(edit.replacement, () => edit.start)
+    const origins = [...(edit.origins ?? [])].sort((left, right) => left.generatedOffset - right.generatedOffset)
+    append(edit.replacement, index => {
+      let originalOffset = edit.start
+      for (const origin of origins) {
+        if (origin.generatedOffset > index) break
+        originalOffset = origin.originalOffset
+      }
+      return originalOffset
+    }, origins)
     cursor = edit.end
   }
   append(source.slice(cursor), index => cursor + index)
@@ -214,7 +348,41 @@ function viewArgumentHasParameters(view: ts.CallExpression): boolean {
   return (ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)) && unwrapped.parameters.length > 0
 }
 
-function transformRuiMacrosWithMap(source: string, id = ''): { code: string; map: RuiSourceMap } | null {
+function replacementOrigins(
+  sourceFile: ts.SourceFile,
+  view: ts.CallExpression,
+  states: StateDeclaration[],
+  replacement: string,
+  body: string,
+): EditOrigin[] {
+  const origins: EditOrigin[] = []
+  let searchStart = 0
+  for (const state of states) {
+    const callText = sourceFile.text.slice(state.call.getStart(sourceFile), state.call.end)
+    const generatedOffset = replacement.indexOf(callText, searchStart)
+    if (generatedOffset >= 0) {
+      origins.push({ generatedOffset, originalOffset: state.call.getStart(sourceFile) })
+      searchStart = generatedOffset + callText.length
+    }
+  }
+
+  const argument = view.arguments[0]
+  if (argument) {
+    const generatedOffset = replacement.indexOf(body, searchStart)
+    if (generatedOffset >= 0) {
+      origins.push({ generatedOffset, originalOffset: argument.getStart(sourceFile) })
+    }
+  }
+  return origins
+}
+
+interface MacroTransformResult {
+  code: string
+  map: RuiSourceMap
+  diagnostics: MacroDiagnostic[]
+}
+
+function transformRuiMacrosWithMap(source: string, id = ''): MacroTransformResult | null {
   if (source.includes('/* @rui-macro-transformed */')) return null
   if (id) {
     const pathname = id.split('?', 1)[0]
@@ -232,13 +400,14 @@ function transformRuiMacrosWithMap(source: string, id = ''): { code: string; map
   if (!view) return null
 
   const states = collectTopLevelStates(sourceFile, view.getStart(sourceFile))
+  const diagnostics = collectMacroDiagnostics(sourceFile, view.getStart(sourceFile))
   const body = viewArgumentText(sourceFile, view)
   const functionBody = viewArgumentIsFunction(view)
 
   let replacement: string
   if (states.length > 0) {
     const declarations = states
-      .map(state => `    const ${state.name} = ${sourceFile.text.slice(state.call.getStart(sourceFile), state.call.end)}`)
+      .map(state => `    const ${state.name} = ${sourceFile.text.slice(state.initializer.getStart(sourceFile), state.initializer.end)}`)
       .join('\n')
     const names = states.map(state => state.name).join(', ')
     const hasProps = viewArgumentHasParameters(view)
@@ -251,14 +420,15 @@ function transformRuiMacrosWithMap(source: string, id = ''): { code: string; map
     replacement = functionBody ? `view(${body})` : `view(() => (${body}))`
   }
 
-  const edits: Edit[] = []
-  const statements = new Set(states.map(state => state.statement))
-  for (const statement of statements) {
-    edits.push({ start: statement.getStart(sourceFile), end: statement.end, replacement: '' })
-  }
-  edits.push({ start: view.getStart(sourceFile), end: view.end, replacement })
+  const edits: Edit[] = removeTopLevelStateDeclarations(sourceFile, states)
+  edits.push({
+    start: view.getStart(sourceFile),
+    end: view.end,
+    replacement,
+    origins: replacementOrigins(sourceFile, view, states, replacement, body),
+  })
 
-  return applyEditsWithMap(source, edits, id)
+  return { ...applyEditsWithMap(source, edits, id), diagnostics }
 }
 
 export function ruiMacro(): RuiMacroPlugin {
@@ -266,7 +436,15 @@ export function ruiMacro(): RuiMacroPlugin {
     name: 'rui-macro',
     enforce: 'pre',
     transform(code, id) {
-      return transformRuiMacrosWithMap(code, id)
+      const result = transformRuiMacrosWithMap(code, id)
+      if (result) {
+        for (const diagnostic of result.diagnostics) {
+          const location = sourceLocation(code, diagnostic.start)
+          this?.warn(`[rui-macro] ${id}:${location.line + 1}:${location.column + 1}: ${diagnostic.message}`)
+        }
+        return { code: result.code, map: result.map }
+      }
+      return null
     },
   }
 }

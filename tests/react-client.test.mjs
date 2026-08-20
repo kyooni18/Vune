@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JSDOM } from 'jsdom'
 import { act, createContext, createElement, createRef, useContext } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, hydrateRoot } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
 import {
   Alert,
   Button,
@@ -74,6 +75,36 @@ test('State-driven views rerender and controlled inputs update in JSDOM', async 
   }
 })
 
+test('SSR markup hydrates without layout, State, or useId mismatches', async () => {
+  const restore = installDOM()
+  try {
+    const App = view({
+      state: () => ({ count: State(1), alert: State(true) }),
+      body: ({ count, alert }) => VStack(
+        Text(() => `Count: ${count.value}`).padding(4),
+        Menu('Actions', Button('Refresh', () => undefined)),
+        Alert(alert, { title: 'Hydrated alert', message: 'Portal content' }),
+      ),
+    })
+    const container = document.getElementById('root')
+    const markup = renderToString(createElement(App))
+    container.innerHTML = markup
+    const recoverableErrors = []
+    const root = hydrateRoot(container, createElement(App), {
+      onRecoverableError(error) { recoverableErrors.push(error) },
+    })
+    await act(async () => {})
+    assert.equal(recoverableErrors.length, 0)
+    assert.match(container.textContent, /Count: 1/)
+    assert.ok(container.querySelector('[data-rui-menu]'))
+    assert.ok(container.querySelector('[data-rui-layout-host]'))
+    assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 1)
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
 test('Sheet closes on Escape, traps focus, and restores the opener', async () => {
   const restore = installDOM()
   try {
@@ -121,22 +152,79 @@ test('Sheet closes on Escape, traps focus, and restores the opener', async () =>
   }
 })
 
-test('Alert exposes one alertdialog host with labelled content', async () => {
+test('stacked presentations keep the newest portal on top and close it first', async () => {
   const restore = installDOM()
   try {
-    const presented = State(true)
-    const App = view(() => Alert(presented, {
-      title: 'Delete item?',
-      message: 'This cannot be undone.',
-      actions: [{ label: 'Cancel', role: 'cancel' }],
-    }))
+    let stateRefs
+    const App = view({
+      state: () => {
+        stateRefs = { outer: State(true), inner: State(false), alert: State(false) }
+        return stateRefs
+      },
+      body: ({ outer, inner, alert }) => VStack(
+        Sheet(outer, VStack(
+          Button('Open nested', () => { inner.value = true }),
+          Sheet(inner, Button('Nested close', () => { inner.value = false }), { placement: 'center' }),
+        ), { placement: 'center', ariaLabel: 'Outer sheet' }),
+        Alert(alert, { title: 'Alert', message: 'Top-level alert' }),
+      ),
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+    const outerPanel = document.querySelector('[data-rui-sheet]')
+    assert.ok(outerPanel)
+    const openNested = [...outerPanel.querySelectorAll('button')].find(button => button.textContent === 'Open nested')
+    await act(async () => {
+      openNested.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    })
+    const panels = document.querySelectorAll('[data-rui-sheet]')
+    assert.equal(panels.length, 2)
+    const backdrops = document.querySelectorAll('[data-rui-sheet-backdrop]')
+    assert.equal(backdrops[0].style.zIndex, '1000')
+    assert.equal(backdrops[1].style.zIndex, '1001')
+
+    await act(async () => {
+      panels[1].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    assert.equal(document.querySelectorAll('[data-rui-sheet]').length, 1)
+    assert.equal(stateRefs.outer.value, true)
+
+    await act(async () => { stateRefs.alert.value = true })
+    assert.equal(document.querySelectorAll('[role="alertdialog"]').length, 1)
+    await act(async () => {
+      document.querySelector('[role="alertdialog"] button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(stateRefs.alert.value, false)
+    assert.equal(document.querySelectorAll('[data-rui-sheet]').length, 1)
+
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
+test('Alert uses unique labelled IDs for simultaneously mounted dialogs', async () => {
+  const restore = installDOM()
+  try {
+    const first = State(true)
+    const second = State(true)
+    const App = view(() => VStack(
+      Alert(first, { title: 'First', message: 'First message' }),
+      Alert(second, { title: 'Second', message: 'Second message' }),
+    ))
     const root = createRoot(document.getElementById('root'))
     await act(async () => { root.render(createElement(App)) })
     const dialogs = document.querySelectorAll('[role="alertdialog"]')
-    assert.equal(dialogs.length, 1)
-    assert.equal(dialogs[0].querySelectorAll('[role="dialog"]').length, 0)
-    assert.ok(dialogs[0].getAttribute('aria-labelledby'))
-    assert.ok(dialogs[0].getAttribute('aria-describedby'))
+    assert.equal(dialogs.length, 2)
+    const labelledBy = [...dialogs].map(dialog => dialog.getAttribute('aria-labelledby'))
+    const describedBy = [...dialogs].map(dialog => dialog.getAttribute('aria-describedby'))
+    assert.equal(new Set(labelledBy).size, 2)
+    assert.equal(new Set(describedBy).size, 2)
+    for (const [index, dialog] of [...dialogs].entries()) {
+      assert.equal(dialog.querySelectorAll('[role="dialog"]').length, 0)
+      assert.ok(dialog.querySelector(`#${labelledBy[index]}`))
+      assert.ok(dialog.querySelector(`#${describedBy[index]}`))
+    }
     await act(async () => { root.unmount() })
   } finally {
     restore()
@@ -194,11 +282,55 @@ test('client views switch State dependencies and preserve refs, context, and mod
   }
 })
 
+test('dynamic State dependencies clean up across repeated branch switches', async () => {
+  const restore = installDOM()
+  try {
+    let stateRefs
+    let renders = 0
+    const App = view({
+      state: () => {
+        stateRefs = { condition: State(false), first: State('first'), second: State('second') }
+        return stateRefs
+      },
+      body: ({ condition, first, second }) => {
+        renders += 1
+        return VStack(
+          Text(() => condition.value ? first.value : second.value),
+          Button('Switch', () => { condition.value = !condition.value }),
+        )
+      },
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+
+    for (let index = 0; index < 6; index += 1) {
+      const inactive = stateRefs.condition.value ? stateRefs.second : stateRefs.first
+      const beforeInactiveMutation = renders
+      inactive.value = `${inactive.value}-stale-${index}`
+      assert.equal(renders, beforeInactiveMutation)
+
+      await act(async () => {
+        document.querySelector('button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      })
+      assert.ok(renders > beforeInactiveMutation)
+    }
+
+    const rendersBeforeUnmount = renders
+    await act(async () => { root.unmount() })
+    stateRefs.first.value = 'after-unmount'
+    stateRefs.second.value = 'after-unmount'
+    assert.equal(renders, rendersBeforeUnmount)
+  } finally {
+    restore()
+  }
+})
+
 test('Menu exposes keyboard-navigable menuitems', async () => {
   const restore = installDOM()
   try {
     const App = view(() => Menu(
       'Actions',
+      Button('Disabled', () => undefined, { disabled: true }),
       Button('Edit', () => undefined),
       Button('Delete', () => undefined),
     ))
@@ -206,12 +338,50 @@ test('Menu exposes keyboard-navigable menuitems', async () => {
     await act(async () => { root.render(createElement(App)) })
     const details = document.querySelector('details')
     details.setAttribute('open', '')
+    details.dispatchEvent(new window.Event('toggle', { bubbles: false }))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     const summary = details.querySelector('summary')
+    assert.equal(document.activeElement?.textContent, 'Edit')
     await act(async () => {
       summary.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     })
+    assert.equal(document.activeElement?.textContent, 'Delete')
+    assert.equal(details.querySelectorAll('[role="menuitem"]').length, 3)
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    })
+    assert.equal(document.activeElement?.textContent, 'Delete')
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    })
     assert.equal(document.activeElement?.textContent, 'Edit')
-    assert.equal(details.querySelectorAll('[role="menuitem"]').length, 2)
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'e', bubbles: true }))
+    })
+    assert.equal(document.activeElement?.textContent, 'Edit')
+
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(details.open, false)
+    assert.equal(document.activeElement, summary)
+
+    await act(async () => {
+      details.setAttribute('open', '')
+      details.dispatchEvent(new window.Event('toggle', { bubbles: false }))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    assert.equal(document.activeElement?.textContent, 'Edit')
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+    assert.equal(details.open, false)
+
+    await act(async () => {
+      details.setAttribute('open', '')
+      details.dispatchEvent(new window.Event('toggle', { bubbles: false }))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     await act(async () => {
       document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })

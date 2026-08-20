@@ -1,4 +1,4 @@
-import { coordinateSpaceOf, type LayoutFrame, type LayoutNode } from '../coordinate.js'
+import { coordinateSpaceOf, type CoordinateNode, type LayoutFrame } from '../coordinate.js'
 import { globalCoordinates } from './coordinate-runtime.js'
 
 export function measureElement(element: Element): LayoutFrame {
@@ -6,7 +6,7 @@ export function measureElement(element: Element): LayoutFrame {
   return { x: r.x, y: r.y, width: r.width, height: r.height }
 }
 
-export function observeLayout(element: Element, node: LayoutNode, update?: (node: LayoutNode) => void) {
+export function observeLayout(element: Element, node: CoordinateNode, update?: (node: CoordinateNode) => void) {
   const apply = () => {
     node.frame = measureElement(element)
     const space = coordinateSpaceOf(element)

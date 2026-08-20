@@ -4,7 +4,7 @@
  * consolidated.
  */
 export { coordinateSpace, coordinateSpaceOf, emptyLayoutNode } from './coordinate.js'
-export type { CoordinateSpace, LayoutFrame, LayoutNode as CoordinateLayoutNode } from './coordinate.js'
+export type { CoordinateNode, CoordinateSpace, LayoutFrame } from './coordinate.js'
 
 export { createLayoutNode, layoutPass } from './layout-engine.js'
 export type { LayoutNode, LayoutResult, ProposedSize } from './layout-engine.js'

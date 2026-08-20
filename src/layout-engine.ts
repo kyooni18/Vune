@@ -1,14 +1,11 @@
+import type { LayoutFrame } from './coordinate.js'
+
 export interface ProposedSize {
   width?: number
   height?: number
 }
 
-export interface LayoutResult {
-  x: number
-  y: number
-  width: number
-  height: number
-}
+export type LayoutResult = LayoutFrame
 
 export interface LayoutNode {
   id: string

@@ -144,8 +144,10 @@ import { layoutPass, registerRuiPlugin } from 'rui/experimental'
 ```
 
 The automatic JSX runtime remains available through `rui/jsx-runtime` and
-`rui/jsx-dev-runtime`. The block-builder compiler adapter remains available
-through `rui/compiler`; it is not part of the stable root DSL contract.
+`rui/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
+registered experimental plugins. The block-builder compiler adapter remains
+available through `rui/compiler`; it is not part of the stable root DSL
+contract.
 
 ## Coordinate-free layout
 
@@ -296,11 +298,11 @@ Alert(showingAlert, { title: 'Delete item?' })
 Menu('Actions', editButton, deleteButton)
 ```
 
-`Sheet()` and `Alert()` use `createPortal()`. `Menu()` uses native `details` / `summary`.
-Sheets handle Escape dismissal, initial focus, keyboard focus wrapping, and
-focus restoration. Alerts expose a single `alertdialog` host rather than
-nested dialog roles. Menus expose `menuitem` children and support Escape and
-arrow/Home/End navigation.
+`Sheet()` and `Alert()` use `createPortal()`. They render no portal markup in
+the server or hydration render and mount after the client effect, avoiding
+hydration mismatches. Nested presentations receive increasing z-index values.
+`Menu()` uses native `details` / `summary`, first-item focus, keyboard
+navigation, disabled-item skipping, typeahead, and trigger restoration.
 
 ## Explicit no-macro form
 
@@ -322,6 +324,7 @@ export default view({
 pnpm test
 pnpm run demo:build
 pnpm run test:browser
+pnpm run benchmark:modifiers
 ```
 
 `test:browser` is opt-in and uses `RUI_BROWSER_URL` so it can target a running
@@ -350,9 +353,9 @@ changing filters, opening Settings, and clearing completed tasks.
 
 The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
-Rui's layout API is SwiftUI-inspired rather than a promise of SwiftUI's
-proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and infinity
-sizing translate the relationship into web-native CSS layout semantics; they
+Rui's layout API is SwiftUI-inspired and CSS-native rather than a promise of
+SwiftUI's proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and
+infinity sizing translate the relationship into CSS-native web layout semantics; they
 do not guarantee pixel-for-pixel SwiftUI behavior.
 
 See [Getting started](docs/GETTING_STARTED.md), [Design](docs/DESIGN.md),

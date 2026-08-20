@@ -94,6 +94,6 @@ test('renders menu with native details and menu roles', () => {
 
 test('portal presentation primitives are SSR-safe', () => {
   const presented = State(true)
-  assert.equal(Sheet(presented, Text('Sheet')), null)
-  assert.equal(Alert(presented, { title: 'Alert' }), null)
+  assert.equal(renderToStaticMarkup(Sheet(presented, Text('Sheet'))), '')
+  assert.equal(renderToStaticMarkup(Alert(presented, { title: 'Alert' })), '')
 })

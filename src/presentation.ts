@@ -5,11 +5,14 @@ import {
   isValidElement,
   useEffect,
   useContext,
+  useId,
   useRef,
+  useState,
   type AnchorHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type SyntheticEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
@@ -115,10 +118,20 @@ interface SheetHostProps {
 
 function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     const panel = panelRef.current
-    if (!panel || !isPresented.value) return undefined
+    if (!mounted || !panel || !isPresented.value) return undefined
+    const backdrop = panel.parentElement
+    if (backdrop) {
+      const backdrops = [...document.querySelectorAll<HTMLElement>('[data-rui-sheet-backdrop]')]
+      backdrop.style.zIndex = String(1000 + Math.max(0, backdrops.indexOf(backdrop)))
+    }
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const focusables = focusableElements(panel)
     ;(focusables[0] ?? panel).focus()
@@ -155,9 +168,9 @@ function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
       panel.removeEventListener('keydown', onKeyDown)
       if (previous?.isConnected) previous.focus()
     }
-  }, [isPresented])
+  }, [isPresented, mounted])
 
-  if (!isPresented.value) return null
+  if (!mounted || !isPresented.value || typeof document === 'undefined') return null
   const target = options.target ? document.querySelector(options.target) : document.body
   if (!target) return null
 
@@ -206,7 +219,7 @@ export function Sheet(
   sheetContent: ReactNode,
   options: SheetOptions = {},
 ): ReactNode {
-  if (!isPresented.value || typeof document === 'undefined') return null
+  if (!isPresented.value) return null
   return createElement(SheetHost, { isPresented, sheetContent, options })
 }
 
@@ -223,10 +236,16 @@ export interface AlertOptions {
   target?: string
 }
 
-export function Alert(isPresented: StateRef<boolean>, options: AlertOptions): ReactNode {
+interface AlertHostProps {
+  isPresented: StateRef<boolean>
+  options: AlertOptions
+}
+
+function AlertHost({ isPresented, options }: AlertHostProps): ReactNode {
   const actions = options.actions?.length ? options.actions : [{ label: 'OK', role: 'cancel' as const }]
-  const titleId = 'rui-alert-title'
-  const messageId = 'rui-alert-message'
+  const identifier = useId().replace(/[^a-zA-Z0-9_-]/g, '-')
+  const titleId = `rui-alert-title-${identifier}`
+  const messageId = `rui-alert-message-${identifier}`
   const dialog = createElement('div', {
     style: {
       width: 'min(420px, calc(100vw - 32px))',
@@ -261,6 +280,13 @@ export function Alert(isPresented: StateRef<boolean>, options: AlertOptions): Re
   })
 }
 
+markIntrinsic(AlertHost)
+
+export function Alert(isPresented: StateRef<boolean>, options: AlertOptions): ReactNode {
+  if (!isPresented.value) return null
+  return createElement(AlertHost, { isPresented, options })
+}
+
 interface MenuHostProps {
   label: ReactNode | Value<string | number>
   items: ReactNode[]
@@ -268,34 +294,60 @@ interface MenuHostProps {
 
 function MenuHost({ label, items }: MenuHostProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null)
+  const menuIdentifier = useId().replace(/[^a-zA-Z0-9_-]/g, '-')
+  const typeaheadRef = useRef('')
+  const typeaheadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressCloseFocusRef = useRef(false)
+
+  useEffect(() => () => {
+    if (typeaheadTimerRef.current !== null) clearTimeout(typeaheadTimerRef.current)
+  }, [])
+
   const menuItems = layoutChildren(items).map((item, index) => {
     if (!isValidElement(item)) return item
-    const originalOnClick = (item.props as { onClick?: (event: unknown) => unknown }).onClick
+    const props = item.props as {
+      disabled?: boolean
+      ['aria-disabled']?: boolean | 'true' | 'false'
+      onClick?: (event: unknown) => unknown
+    }
+    const disabled = props.disabled === true || props['aria-disabled'] === true || props['aria-disabled'] === 'true'
+    const originalOnClick = props.onClick
     return cloneElement(item, {
       role: 'menuitem',
       tabIndex: -1,
+      'aria-disabled': disabled ? true : props['aria-disabled'],
       key: item.key ?? index,
       onClick(event: unknown) {
+        if (disabled) return
         originalOnClick?.(event)
-        detailsRef.current?.removeAttribute('open')
+        const details = detailsRef.current
+        details?.removeAttribute('open')
+        details?.querySelector('summary')?.focus()
       },
     } as any)
   })
 
+  const enabledItems = () => [...(detailsRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    .filter(item => !item.hasAttribute('disabled') && item.getAttribute('aria-disabled') !== 'true')
+
   const focusItem = (index: number) => {
-    const itemsInMenu = [...(detailsRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    const itemsInMenu = enabledItems()
+    if (itemsInMenu.length === 0) return
     itemsInMenu[Math.max(0, Math.min(index, itemsInMenu.length - 1))]?.focus()
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDetailsElement>) => {
     const details = detailsRef.current
     if (!details) return
-    const itemsInMenu = [...details.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    const itemsInMenu = enabledItems()
     const currentIndex = itemsInMenu.indexOf(document.activeElement as HTMLElement)
     if (event.key === 'Escape' && details.open) {
       event.preventDefault()
       details.removeAttribute('open')
       details.querySelector('summary')?.focus()
+    } else if (event.key === 'Tab' && details.open) {
+      suppressCloseFocusRef.current = true
+      details.removeAttribute('open')
     } else if (event.key === 'ArrowDown' && details.open) {
       event.preventDefault()
       focusItem(currentIndex < 0 ? 0 : currentIndex + 1)
@@ -308,13 +360,40 @@ function MenuHost({ label, items }: MenuHostProps) {
     } else if (event.key === 'End' && details.open) {
       event.preventDefault()
       focusItem(itemsInMenu.length - 1)
+    } else if (details.open && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      typeaheadRef.current += event.key.toLowerCase()
+      if (typeaheadTimerRef.current !== null) clearTimeout(typeaheadTimerRef.current)
+      typeaheadTimerRef.current = setTimeout(() => { typeaheadRef.current = '' }, 500)
+      const match = itemsInMenu.find(item => item.textContent?.trim().toLowerCase().startsWith(typeaheadRef.current))
+      if (match) {
+        event.preventDefault()
+        match.focus()
+      }
     }
   }
 
-  return createElement('details', { ref: detailsRef, 'data-rui-menu': '', onKeyDown },
-    createElement('summary', { 'aria-haspopup': 'menu', style: { cursor: 'pointer' } }, content(label)),
+  const onToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
+    const details = event.currentTarget
+    if (details.open) {
+      queueMicrotask(() => focusItem(0))
+    } else if (suppressCloseFocusRef.current) {
+      suppressCloseFocusRef.current = false
+    } else {
+      details.querySelector('summary')?.focus()
+    }
+  }
+
+  return createElement('details', { ref: detailsRef, 'data-rui-menu': '', onKeyDown, onToggle },
+    createElement('summary', {
+      id: `${menuIdentifier}-trigger`,
+      'aria-haspopup': 'menu',
+      'aria-controls': `${menuIdentifier}-items`,
+      style: { cursor: 'pointer' },
+    }, content(label)),
     createElement('div', {
+      id: `${menuIdentifier}-items`,
       role: 'menu',
+      'aria-labelledby': `${menuIdentifier}-trigger`,
       style: { display: 'flex', flexDirection: 'column', minWidth: 'max-content' },
     }, ...menuItems),
   )
