@@ -32,6 +32,15 @@ test('renders coordinate-free stack layout', () => {
   assert.match(html, /flex-grow:1/)
 })
 
+test('VStack uses the available width when its dimensions are measured', () => {
+  const html = renderToStaticMarkup(VStack(Text('Top'), Text('Bottom')))
+  assert.match(html, /display:flex/)
+  assert.match(html, /flex-direction:column/)
+  assert.match(html, /width:100%/)
+  assert.match(html, /box-sizing:border-box/)
+  assert.match(html, /outline:none/)
+})
+
 test('Spacer preserves an explicit minimum length', () => {
   const html = renderToStaticMarkup(HStack(Text('Left'), Spacer(24), Text('Right')))
   assert.match(html, /flex-grow:1/)
@@ -62,6 +71,21 @@ test('hosts memo, forwardRef, and direct React elements as first-class layout it
   assert.match(html, /<strong>Forward<\/strong>/)
   assert.match(html, /padding:7px/)
   assert.match(html, /<strong>Raw<\/strong>/)
+})
+
+test('composes simple class modifiers and conditional class values', () => {
+  const html = renderToStaticMarkup(
+    Text('Styled').className(['card', false && 'hidden']).className('featured'),
+  )
+  assert.match(html, /class="card featured"/)
+})
+
+test('supports CSS custom properties for advanced inline styling', () => {
+  const html = renderToStaticMarkup(
+    Text('Themed').style({ '--rui-accent': '#7c3aed', letterSpacing: '0.05em' }),
+  )
+  assert.match(html, /--rui-accent:#7c3aed/)
+  assert.match(html, /letter-spacing:0\.05em/)
 })
 
 test('State subscriptions notify on changes, ignore identical values, and unsubscribe cleanly', () => {
@@ -108,6 +132,28 @@ test('State tracks array and nested plain-object mutations', () => {
   unsubscribe()
 })
 
+test('State observes array splice without coupling separate State containers', () => {
+  const items = State([{ title: 'One' }, { title: 'Two' }])
+  const other = State('stable')
+  let itemNotifications = 0
+  let otherNotifications = 0
+  const unsubscribeItems = subscribeState(items, () => { itemNotifications += 1 })
+  const unsubscribeOther = subscribeState(other, () => { otherNotifications += 1 })
+
+  items.value.splice(0, 1)
+  assert.equal(items.value.length, 1)
+  assert.equal(items.value[0].title, 'Two')
+  assert.ok(itemNotifications > 0)
+  assert.equal(otherNotifications, 0)
+
+  other.value = 'changed'
+  assert.equal(otherNotifications, 1)
+  assert.ok(itemNotifications > 0)
+
+  unsubscribeItems()
+  unsubscribeOther()
+})
+
 test('view produces a renderable React component', () => {
   const App = view(() => VStack(Text('Hello Rui')))
   const html = renderToStaticMarkup(createElement(App))
@@ -133,6 +179,25 @@ test('view state factories are scoped to a component instance', () => {
   const html = renderToStaticMarkup(createElement(App))
   assert.match(html, /Count: 2/)
   assert.equal(factoryCalls, 1)
+})
+
+test('view state factories run independently for multiple instances', () => {
+  let factoryCalls = 0
+  const Counter = view({
+    state: () => {
+      factoryCalls += 1
+      return { count: State(factoryCalls) }
+    },
+    body: ({ count }) => Text(`Count: ${count.value}`),
+  })
+
+  const html = renderToStaticMarkup(createElement('main', null,
+    createElement(Counter),
+    createElement(Counter),
+  ))
+  assert.equal(factoryCalls, 2)
+  assert.match(html, /Count: 1/)
+  assert.match(html, /Count: 2/)
 })
 
 test('view state factories can initialize from React props', () => {

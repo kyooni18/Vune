@@ -144,9 +144,10 @@ Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `Scr
 
 `Spacer()` consumes available flex space. `Spacer(minLength)` keeps that explicit minimum when flex space becomes tight. `HStack` is full-width by default, and `.frame({ maxWidth: 'infinity' })` is available when a parent or another element should explicitly stretch.
 
-## Modifiers and CSS
+## Simple and advanced CSS styling
 
-Common styling stays attached to the Rui object:
+Use the simple modifiers for the styles that are common to most views. They stay
+readable and can be chained with layout modifiers:
 
 ```ts
 Text('Hello')
@@ -158,16 +159,31 @@ Text('Hello')
   .radius(10)
 ```
 
-Use `.style()` for CSS properties that do not have a dedicated modifier:
+Use `.style()` when you need an arbitrary inline CSS property, including CSS
+custom properties. Custom properties are useful for sharing a value with an
+external stylesheet:
 
 ```ts
-Text('Hello').style({
-  letterSpacing: '0.05em',
-  userSelect: 'none',
-})
+Text('Hello')
+  .style({
+    letterSpacing: '0.05em',
+    userSelect: 'none',
+    '--accent': '#7c3aed',
+  })
 ```
 
-Class-based CSS is also available through `.className()`.
+For advanced selectors, responsive rules, pseudo-classes, and animations, keep
+the CSS in a normal stylesheet and attach one or more classes. Class arrays can
+contain conditional values, and repeated `.className()` calls are composed:
+
+```ts
+Text('Hello')
+  .className(['card', isFeatured && 'card--featured'])
+  .className('u-shadow')
+```
+
+This gives simple styles a concise modifier syntax while preserving the full
+CSS escape hatch through `.style()` and `.className()`.
 
 ## React components are first-class layout items
 
@@ -273,8 +289,28 @@ npm run demo:build
 
 CI currently checks TypeScript build output, public type usage, runtime rendering, macro transforms, and the React Vite demo.
 
+## End-to-end example
+
+The Vite example is a small task app in [`examples/App.ts`](examples/App.ts). It
+exercises the parts of Rui that tend to reveal API problems early: mutable
+arrays and nested objects, text input, filtering, a React component inside a
+Rui layout, a portal-based `Sheet`, and an `Alert` confirmation flow.
+
+Run it locally with:
+
+```bash
+npm run dev
+```
+
+Then open the local URL printed by Vite and try adding a task, completing it,
+changing filters, opening Settings, and clearing completed tasks.
+
 ## Status
 
 The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
-See [Design](docs/DESIGN.md), [Migration](docs/MIGRATION.md), and [Changelog](docs/CHANGELOG.md).
+See [Getting started](docs/GETTING_STARTED.md), [Design](docs/DESIGN.md),
+[Styling](docs/STYLING.md), [Migration](docs/MIGRATION.md), and
+[Changelog](docs/CHANGELOG.md).
+
+For the complete styling guide, see [Styling](docs/STYLING.md).

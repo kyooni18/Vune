@@ -5,6 +5,7 @@ import {
 } from 'react'
 import {
   copyLayoutProps,
+  classNameOf,
   isComponentElement,
   layoutPropsOf,
   registerStyledProxy,
@@ -19,6 +20,7 @@ import type {
   FrameOptions,
   Length,
   Modifiers,
+  StyleValue,
   StyledElement,
 } from './types.js'
 
@@ -33,10 +35,10 @@ function cssLength(value: Length): string {
   return typeof value === 'number' ? `${value}px` : value
 }
 
-function currentStyle(element: ReactElement): CSSProperties {
+function currentStyle(element: ReactElement): StyleValue {
   if (isComponentElement(element)) return layoutPropsOf(element)?.style ?? {}
   const value = (raw(element).props as any)?.style
-  return value && typeof value === 'object' ? value as CSSProperties : {}
+  return value && typeof value === 'object' ? value as StyleValue : {}
 }
 
 function patch(element: ReactElement, extraProps: Record<string, unknown>): StyledElement {
@@ -46,7 +48,7 @@ function patch(element: ReactElement, extraProps: Record<string, unknown>): Styl
   return styled(clone)
 }
 
-function patchStyle(element: ReactElement, style: CSSProperties): StyledElement {
+function patchStyle(element: ReactElement, style: StyleValue): StyledElement {
   if (isComponentElement(element)) {
     const clone = cloneElement(raw(element))
     copyLayoutProps(element, clone)
@@ -122,7 +124,7 @@ const modifiers: Modifiers = {
   minHeight(this: ReactElement, value: Length) { return patchStyle(this, { minHeight: cssLength(value) }) },
   maxHeight(this: ReactElement, value: Length) { return patchStyle(this, { maxHeight: cssLength(value) }) },
   frame(this: ReactElement, options: FrameOptions) {
-    const style: CSSProperties = {}
+    const style: CSSProperties = { boxSizing: 'border-box' }
     if (options.width !== undefined) style.width = cssLength(options.width)
     if (options.height !== undefined) style.height = cssLength(options.height)
     if (options.minWidth !== undefined) style.minWidth = cssLength(options.minWidth)
@@ -175,13 +177,13 @@ const modifiers: Modifiers = {
     if (isComponentElement(this)) {
       const clone = cloneElement(raw(this))
       copyLayoutProps(this, clone)
-      setLayoutClass(clone, value)
+      setLayoutClass(clone, classNameOf(layoutPropsOf(this)?.className, value))
       return styled(clone)
     }
-    const className = Array.isArray(value) ? value.filter(Boolean).join(' ') : value
+    const className = classNameOf((raw(this).props as any)?.className, value)
     return patch(this, { className })
   },
-  style(this: ReactElement, value: CSSProperties) { return patchStyle(this, value) },
+  style(this: ReactElement, value: StyleValue) { return patchStyle(this, value) },
   withProps(this: ReactElement, value: Record<string, unknown>) { return patch(this, value) },
   attr(this: ReactElement, name: string, value: unknown) { return patch(this, { [name]: value }) },
   on(this: ReactElement, event: string, handler: (...args: any[]) => unknown) { return patch(this, { [event]: handler }) },

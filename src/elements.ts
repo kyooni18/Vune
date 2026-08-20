@@ -86,12 +86,14 @@ export function Raw(element: ReactElement): StyledElement { return styled(elemen
 export function Key(key: string | number, child: ReactElement): StyledElement { return styled(child).keyed(key) }
 export function ElementRef(reference: Ref<unknown>, child: ReactElement): StyledElement { return styled(child).elementRef(reference) }
 export function Group(...children: ReactNode[]): ReactElement { return createElement(Fragment, null, ...flatten(children)) }
-export function Box(...children: ReactNode[]): StyledElement { return styled(createElement('div', null, ...layoutChildren(flatten(children)))) }
+export function Box(...children: ReactNode[]): StyledElement {
+  return styled(createElement('div', { style: { outline: 'none' } }, ...layoutChildren(flatten(children))))
+}
 
 export function ScrollView(child: ReactNode, axis: ScrollAxis = 'vertical'): StyledElement {
   const overflowX = axis === 'horizontal' || axis === 'both' ? 'auto' : 'hidden'
   const overflowY = axis === 'vertical' || axis === 'both' ? 'auto' : 'hidden'
-  return styled(createElement('div', { style: { overflowX, overflowY } }, layoutChild(child)))
+  return styled(createElement('div', { style: { outline: 'none', overflowX, overflowY } }, layoutChild(child)))
 }
 
 export function Rectangle(): StyledElement { return Box() }
@@ -108,6 +110,9 @@ export function VStack(...args: any[]): StyledElement {
     style: {
       display: 'flex',
       flexDirection: 'column',
+      width: '100%',
+      boxSizing: 'border-box',
+      outline: 'none',
       ...(options.alignment === undefined ? {} : { alignItems: horizontalAlignment(options.alignment) }),
       ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
     },
@@ -124,6 +129,8 @@ export function HStack(...args: any[]): StyledElement {
       display: 'flex',
       flexDirection: 'row',
       width: '100%',
+      boxSizing: 'border-box',
+      outline: 'none',
       alignItems: verticalAlignment(options.alignment ?? 'center'),
       ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
     },
@@ -146,7 +153,7 @@ export function ZStack(...args: any[]): StyledElement {
     }, child)
   })
   return styled(createElement('div', {
-    style: { display: 'grid', ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)) },
+    style: { display: 'grid', boxSizing: 'border-box', outline: 'none', ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)) },
   }, ...layers))
 }
 
@@ -155,6 +162,8 @@ export function Grid(columnsOrOptions: number | string | GridOptions = 1, ...chi
   return styled(createElement('div', {
     style: {
       display: 'grid',
+      boxSizing: 'border-box',
+      outline: 'none',
       gridTemplateColumns: cssTrack(options.columns ?? 1),
       ...(options.rows === undefined ? {} : { gridTemplateRows: cssTrack(options.rows) }),
       ...(options.autoFlow === undefined ? {} : { gridAutoFlow: options.autoFlow }),

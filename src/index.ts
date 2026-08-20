@@ -67,6 +67,7 @@ export type {
   Modifiers,
   NativeProps,
   ScrollAxis,
+  StyleValue,
   StateRef,
   StyledElement,
   UIChild,

@@ -29,7 +29,10 @@ export interface StateRef<T> {
 export type Value<T> = T | StateRef<T> | (() => T)
 export type NativeProps = Record<string, unknown>
 export type ComponentProps<C extends ElementType> = ComponentPropsWithoutRef<C>
-export type ClassValue = string | readonly string[] | undefined
+export type ClassValue = string | false | null | readonly (string | false | null | undefined)[] | undefined
+export type StyleValue = CSSProperties | (CSSProperties & {
+  [property: `--${string}`]: string | number | undefined
+})
 
 export interface VStackOptions {
   alignment?: 'leading' | 'center' | 'trailing'
@@ -112,7 +115,7 @@ export interface Modifiers {
   keyed(value: Key): StyledElement
   elementRef(value: Ref<unknown>): StyledElement
   className(value: ClassValue): StyledElement
-  style(value: CSSProperties): StyledElement
+  style(value: StyleValue): StyledElement
   withProps(value: Record<string, unknown>): StyledElement
   attr(name: string, value: unknown): StyledElement
   on(event: string, handler: (...args: any[]) => unknown): StyledElement

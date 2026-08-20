@@ -18,6 +18,8 @@ function Badge(props: { label: string }) {
 
 const count = State(0)
 const custom: StyledElement = Component(Badge, { label: 'React' }).padding(8)
+Text('Theme').style({ '--rui-accent': '#7c3aed' })
+Text('Conditional').className(['card', false && 'featured'])
 
 export const StaticView = view(
   VStack(

@@ -2,15 +2,14 @@ import {
   Fragment,
   createElement,
   isValidElement,
-  type CSSProperties,
   type ReactElement,
   type ReactNode,
 } from 'react'
-import type { ClassValue } from './types.js'
+import type { ClassValue, StyleValue } from './types.js'
 
 export interface ComponentLayoutProps {
   className?: ClassValue
-  style?: CSSProperties
+  style?: StyleValue
 }
 
 export const ruiIntrinsic = Symbol.for('rui.intrinsic')
@@ -51,7 +50,7 @@ export function copyLayoutProps(source: ReactElement, target: ReactElement): voi
   })
 }
 
-export function setLayoutStyle(element: ReactElement, style: CSSProperties): void {
+export function setLayoutStyle(element: ReactElement, style: StyleValue): void {
   const target = identity(element)
   const current = componentLayoutProps.get(target as object)
   componentLayoutProps.set(target as object, {
@@ -66,9 +65,16 @@ export function setLayoutClass(element: ReactElement, className: ClassValue): vo
   componentLayoutProps.set(target as object, { ...current, className })
 }
 
-function classNameOf(value: ClassValue): string | undefined {
-  if (Array.isArray(value)) return value.filter(Boolean).join(' ')
-  return value as string | undefined
+export function classNameOf(...values: ClassValue[]): string | undefined {
+  const names: string[] = []
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) if (item) names.push(item)
+    } else if (typeof value === 'string') {
+      names.push(value)
+    }
+  }
+  return names.length > 0 ? names.join(' ') : undefined
 }
 
 export function layoutChild(child: ReactNode): ReactNode {
