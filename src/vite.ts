@@ -177,7 +177,11 @@ export function transformVuneMacros(source: string, id = ''): string | null {
   let replacement: string
   if (states.length > 0) {
     const renderedBody = looksLikeFunction(body) ? `(${body})()` : `(${body})`
-    replacement = `view({\n  state: () => ({\n${states.map(state => `    ${state.name}: State(${state.initializer}),`).join('\n')}\n  }),\n  body: ({ ${states.map(state => state.name).join(', ')} }) => ${renderedBody},\n})`
+    const declarations = states
+      .map(state => `    const ${state.name} = State(${state.initializer})`)
+      .join('\n')
+    const names = states.map(state => state.name).join(', ')
+    replacement = `view({\n  state: () => {\n${declarations}\n    return { ${names} }\n  },\n  body: ({ ${names} }) => ${renderedBody},\n})`
   } else {
     replacement = looksLikeFunction(body) ? `view(${body})` : `view(() => (${body}))`
   }
