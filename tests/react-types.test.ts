@@ -22,7 +22,7 @@ const count = State(0)
 const custom: StyledElement = Component(Badge, { label: 'React' }).padding(8)
 // @ts-expect-error required React props must be supplied to Component()
 Component(Badge)
-Text('Theme').style({ '--rui-accent': '#7c3aed' })
+Text('Theme').style({ '--muse-accent': '#7c3aed' })
 Text('Conditional').className(['card', false && 'featured'])
 
 export const StaticView = view(
@@ -50,7 +50,7 @@ export const GreetingView = view((props: { name: string }) =>
   Text(`Hello, ${props.name}`),
 )
 
-createElement(GreetingView, { name: 'Rui' })
+createElement(GreetingView, { name: 'Muse' })
 // @ts-expect-error name is required
 createElement(GreetingView, {})
 

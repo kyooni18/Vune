@@ -1,6 +1,6 @@
-# Rui
+# Muse
 
-Rui is a SwiftUI-like declarative UI layer for React. It keeps layout coordinate-free, lets UI be written as plain TypeScript expressions, and uses React as the renderer and component runtime.
+Muse is a SwiftUI-like declarative UI layer for React. It keeps layout coordinate-free, lets UI be written as plain TypeScript expressions, and uses React as the renderer and component runtime.
 
 The default Vite workflow can hide common callback wrappers with `State`, `Action`, and `view` macros, so a stateful screen can stay compact without JSX.
 
@@ -9,26 +9,26 @@ The default Vite workflow can hide common callback wrappers with `State`, `Actio
 For a local sibling checkout:
 
 ```bash
-pnpm add ../Rui
+pnpm add ../Muse
 pnpm add react react-dom
 ```
 
-For Vite, install the React plugin and put the Rui macro before it:
+For Vite, install the React plugin and put the Muse macro before it:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { ruiMacro } from 'rui/vite'
+import { museMacro } from 'muse/vite'
 
 export default defineConfig({
   plugins: [
-    ruiMacro(),
+    museMacro(),
     react(),
   ],
 })
 ```
 
-A Rui screen can then be a plain `.ts` file:
+A Muse screen can then be a plain `.ts` file:
 
 ```ts
 import {
@@ -40,14 +40,14 @@ import {
   Text,
   VStack,
   view,
-} from 'rui'
+} from 'muse'
 
 const count = State(0)
 
 export default view(
   VStack(
     { alignment: 'leading', spacing: 16 },
-    Text('Hello, Rui').fontSize(28).bold(),
+    Text('Hello, Muse').fontSize(28).bold(),
     Text(`Count: ${count.value}`),
     Button('Increase', Action(count.value += 1)),
     HStack(
@@ -85,7 +85,7 @@ const Greeting = view((props: { name: string }) =>
 )
 ```
 
-State-scoped views can initialize their local Rui state from React props too:
+State-scoped views can initialize their local Muse state from React props too:
 
 ```ts
 type CounterProps = {
@@ -110,7 +110,7 @@ Arrays and plain objects stored in `State()` are mutation-aware, including neste
 
 ```ts
 const todos = State([
-  { title: 'Ship Rui', done: false },
+  { title: 'Ship Muse', done: false },
 ])
 
 Button('Add', Action(
@@ -140,18 +140,18 @@ metadata/plugin registry, and block-builder transform are experimental while
 their integration contract is being consolidated:
 
 ```ts
-import { layoutPass, registerRuiPlugin } from 'rui/experimental'
+import { layoutPass, registerMusePlugin } from 'muse/experimental'
 ```
 
-The automatic JSX runtime remains available through `rui/jsx-runtime` and
-`rui/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
+The automatic JSX runtime remains available through `muse/jsx-runtime` and
+`muse/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
 registered experimental plugins. The block-builder compiler adapter remains
-available through `rui/compiler`; it is not part of the stable root DSL
+available through `muse/compiler`; it is not part of the stable root DSL
 contract.
 
 ## Coordinate-free layout
 
-Rui prefers relationships over x/y coordinates:
+Muse prefers relationships over x/y coordinates:
 
 ```ts
 VStack(
@@ -212,16 +212,16 @@ CSS escape hatch through `.style()` and `.className()`.
 
 ## JSX typing
 
-When using automatic JSX, set `jsxImportSource` to `rui` (or configure the
-equivalent TypeScript setting). Rui's `rui/jsx-runtime` declarations add the
-Rui modifier attributes to intrinsic elements, so runtime features such as
+When using automatic JSX, set `jsxImportSource` to `muse` (or configure the
+equivalent TypeScript setting). Muse's `muse/jsx-runtime` declarations add the
+Muse modifier attributes to intrinsic elements, so runtime features such as
 `<div padding={12} frame={{ maxWidth: 'infinity' }} />` are type-checked by the
 editor as well as handled at runtime. Function-DSL nodes and JSX nodes both
 pass through registered experimental plugins.
 
 ## React components are first-class layout items
 
-Ordinary React components can sit beside Rui primitives and `Spacer()`:
+Ordinary React components can sit beside Muse primitives and `Spacer()`:
 
 ```ts
 function ProfileCard(props: { name: string }) {
@@ -231,13 +231,13 @@ function ProfileCard(props: { name: string }) {
 HStack(
   Text('Profile'),
   Spacer(),
-  Component(ProfileCard, { name: 'Rui' })
+  Component(ProfileCard, { name: 'Muse' })
     .padding(12)
     .frame({ minWidth: 240 }),
 )
 ```
 
-Inside a Rui layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
+Inside a Muse layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
 
 `Raw(element)` accepts an already-created React element when modifier chaining is needed.
 
@@ -327,18 +327,18 @@ pnpm run test:browser
 pnpm run benchmark:modifiers
 ```
 
-`test:browser` is opt-in and uses `RUI_BROWSER_URL` so it can target a running
+`test:browser` is opt-in and uses `MUSE_BROWSER_URL` so it can target a running
 demo server, for example
-`RUI_BROWSER_URL=http://localhost:5173 pnpm run test:browser`. CI uses the
+`MUSE_BROWSER_URL=http://localhost:5173 pnpm run test:browser`. CI uses the
 committed `pnpm-lock.yaml` with frozen-lockfile mode
 and runs the suite against React 18 and React 19.
 
 ## End-to-end example
 
 The Vite example is a small task app in [`examples/App.ts`](examples/App.ts). It
-exercises the parts of Rui that tend to reveal API problems early: mutable
+exercises the parts of Muse that tend to reveal API problems early: mutable
 arrays and nested objects, text input, filtering, a React component inside a
-Rui layout, a portal-based `Sheet`, and an `Alert` confirmation flow.
+Muse layout, a portal-based `Sheet`, and an `Alert` confirmation flow.
 
 Run it locally with:
 
@@ -353,7 +353,7 @@ changing filters, opening Settings, and clearing completed tasks.
 
 The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
-Rui's layout API is SwiftUI-inspired and CSS-native rather than a promise of
+Muse's layout API is SwiftUI-inspired and CSS-native rather than a promise of
 SwiftUI's proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and
 infinity sizing translate the relationship into CSS-native web layout semantics; they
 do not guarantee pixel-for-pixel SwiftUI behavior.

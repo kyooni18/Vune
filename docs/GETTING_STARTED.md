@@ -1,10 +1,10 @@
-# Getting started with Rui
+# Getting started with Muse
 
-Rui is a SwiftUI-like declarative UI layer for React. You describe layout with
+Muse is a SwiftUI-like declarative UI layer for React. You describe layout with
 relationships such as `VStack`, `HStack`, `Grid`, and `Spacer`, while React
 continues to own rendering, components, hooks, refs, and context.
 
-This guide covers the smallest useful Rui application: a Vite app with one
+This guide covers the smallest useful Muse application: a Vite app with one
 stateful screen, a React component, and a few interactive controls.
 
 ## Requirements
@@ -13,36 +13,36 @@ stateful screen, a React component, and a few interactive controls.
 - React `18` or `19`
 - TypeScript when writing `.ts` or `.tsx` source
 
-## Install Rui
+## Install Muse
 
 In an existing React application:
 
 ```bash
-pnpm add rui react react-dom
+pnpm add muse react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-When working from a local Rui checkout:
+When working from a local Muse checkout:
 
 ```bash
-pnpm add ../Rui
+pnpm add ../Muse
 pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
 ## Configure Vite
 
-The Rui macro is optional, but it makes stateful screens compact. When it is
-enabled, place `ruiMacro()` before the React plugin:
+The Muse macro is optional, but it makes stateful screens compact. When it is
+enabled, place `museMacro()` before the React plugin:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { ruiMacro } from 'rui/vite'
+import { museMacro } from 'muse/vite'
 
 export default defineConfig({
   plugins: [
-    ruiMacro(),
+    museMacro(),
     react(),
   ],
 })
@@ -51,24 +51,24 @@ export default defineConfig({
 The macro is a build-time transform. It does not replace React or introduce a
 second renderer.
 
-If you use automatic JSX, configure Rui's runtime and modifier attribute types
+If you use automatic JSX, configure Muse's runtime and modifier attribute types
 in `tsconfig.json`:
 
 ```json
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "rui"
+    "jsxImportSource": "muse"
   }
 }
 ```
 
 This enables intrinsic JSX such as `<div padding={12} />`. Function DSL and
-JSX-created Rui nodes use the same modifier/plugin pipeline.
+JSX-created Muse nodes use the same modifier/plugin pipeline.
 
 ## Create the React entry point
 
-Rui views are React components, so mount them with the normal React DOM API:
+Muse views are React components, so mount them with the normal React DOM API:
 
 ```ts
 import { createElement } from 'react'
@@ -91,7 +91,7 @@ import {
   Text,
   VStack,
   view,
-} from 'rui'
+} from 'muse'
 
 const count = State(0)
 
@@ -152,12 +152,12 @@ React elements, replace the root value instead of mutating it in place.
 
 ## Compose layouts and controls
 
-Rui layouts accept React nodes, Rui elements, and ordinary React components in
+Muse layouts accept React nodes, Muse elements, and ordinary React components in
 the same tree:
 
 ```ts
 import { createElement } from 'react'
-import { Component, HStack, Spacer, Text, VStack } from 'rui'
+import { Component, HStack, Spacer, Text, VStack } from 'muse'
 
 function ProfileCard({ name }: { name: string }) {
   return createElement('strong', null, name)
@@ -168,7 +168,7 @@ VStack(
   HStack(
     Text('Profile'),
     Spacer(),
-    Component(ProfileCard, { name: 'Rui' }).padding(12),
+    Component(ProfileCard, { name: 'Muse' }).padding(12),
   ),
 )
 ```
@@ -192,9 +192,9 @@ mutation ownership and both containers' subscribers are notified. Proxy
 identity is not a public contract; replace the State root for frozen values,
 class instances, `Map`, `Set`, or React elements.
 
-The root `rui` import is the stable function-DSL surface. The experimental
+The root `muse` import is the stable function-DSL surface. The experimental
 layout engine, coordinate observer, metadata/plugin registry, and block-builder
-transform are available explicitly from `rui/experimental` while their
+transform are available explicitly from `muse/experimental` while their
 integration contract evolves.
 
 ## Styling
@@ -235,7 +235,7 @@ On the client, `Sheet` handles Escape, initial focus, focus wrapping, and focus
 restoration. `Alert` exposes one `alertdialog` host, and `Menu` provides
 keyboard navigation with `menuitem` children.
 
-## Run the Rui example
+## Run the Muse example
 
 The repository includes an end-to-end task app in `examples/App.ts`. It covers
 mutable lists, filtering, text input, React component interop, a settings
@@ -251,9 +251,9 @@ pnpm run dev
 Open the local URL printed by Vite and try adding a task, completing it,
 changing filters, opening Settings, and clearing completed tasks.
 
-## Verify a Rui project
+## Verify a Muse project
 
-For the Rui repository itself:
+For the Muse repository itself:
 
 ```bash
 pnpm test
@@ -264,7 +264,7 @@ pnpm run benchmark:modifiers
 
 `pnpm test` checks the TypeScript build, public type usage, runtime rendering,
 macro transforms, controls, presentation, and State behavior.
-`benchmark:modifiers` compares raw React styles with Rui modifier chains across
+`benchmark:modifiers` compares raw React styles with Muse modifier chains across
 element counts and chain depths; it is a measurement tool, not a virtualization
 benchmark.
 

@@ -1,8 +1,8 @@
 # Roadmap
 
-Rui's next releases prioritize dependable semantics over additional controls or
+Muse's next releases prioritize dependable semantics over additional controls or
 new syntax. The alpha already has enough surface area for experimentation; the
-focus now is reducing cases where valid Rui code behaves differently because of
+focus now is reducing cases where valid Muse code behaves differently because of
 syntax, nesting, or the API layer that created it.
 
 ## Correctness release
@@ -24,7 +24,7 @@ behavior silently:
   notification ownership. A mutation notifies every owning subscriber, including
   owners reached through nested state values.
 - `Component(...)` preserves required React props in TypeScript. Required props
-  remain required when the wrapped component is used from Rui.
+  remain required when the wrapped component is used from Muse.
 - Shared State ownership is reconciled against the current raw object graph;
   root replacement, nested deletion, unsubscribe, re-subscription, arrays,
   shared objects, and circular graphs have regression coverage.
@@ -54,7 +54,7 @@ is settled:
 - `LazyVStack` and related APIs use `content-visibility: auto`. This is a
   browser-assisted rendering optimization, not virtualization or windowing.
 - Layout-engine, coordinate-runtime, observer, builder, and plugin facilities
-  are available from `rui/experimental`; their geometry types now distinguish
+  are available from `muse/experimental`; their geometry types now distinguish
   observed `CoordinateNode` values from measured `LayoutNode` values, but they
   are not part of the stable root API yet.
 - JSX runtime support is available, but its modifier typing and plugin behavior
@@ -63,12 +63,12 @@ is settled:
 - Modifier performance is benchmarked against raw React styles at 100, 1,000,
   and 10,000 elements with chain depths of 1, 5, 10, and 20. CI runs a smaller
   matrix with a generous regression guard; large lists and deeply modified
-  trees still establish a measurable need before Rui changes its materialization
+  trees still establish a measurable need before Muse changes its materialization
   strategy.
 
 ## Semantic contract
 
-Rui is a SwiftUI-inspired, CSS-native API with web-native semantics. Stacks, `Spacer`,
+Muse is a SwiftUI-inspired, CSS-native API with web-native semantics. Stacks, `Spacer`,
 `frame`, and infinity sizing express familiar relationships through CSS; they
 do not promise SwiftUI's proposal-based layout algorithm or pixel-for-pixel
 behavior. That distinction is part of the public contract and will remain

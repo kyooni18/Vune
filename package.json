@@ -1,5 +1,5 @@
 {
-  "name": "rui",
+  "name": "muse",
   "version": "1.0.0-alpha.4",
   "packageManager": "pnpm@11.22.0",
   "description": "A SwiftUI-like declarative UI layer for React with optional Vite macros.",
@@ -47,7 +47,7 @@
     "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/react-client.test.mjs tests/macro-react.test.mjs tests/new-features.test.mjs",
     "test:browser": "node --test tests/browser.test.mjs",
     "benchmark:modifiers": "pnpm run build && node benchmarks/modifiers.mjs",
-    "benchmark:modifiers:ci": "RUI_BENCH_CI=1 RUI_BENCH_MAX_RATIO=50 pnpm run benchmark:modifiers",
+    "benchmark:modifiers:ci": "MUSE_BENCH_CI=1 MUSE_BENCH_MAX_RATIO=50 pnpm run benchmark:modifiers",
     "test": "pnpm run build && pnpm run test:types && pnpm run test:runtime",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
@@ -81,12 +81,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kyooni18/Rui.git"
+    "url": "git+https://github.com/kyooni18/Muse.git"
   },
   "bugs": {
-    "url": "https://github.com/kyooni18/Rui/issues"
+    "url": "https://github.com/kyooni18/Muse/issues"
   },
-  "homepage": "https://github.com/kyooni18/Rui#readme",
+  "homepage": "https://github.com/kyooni18/Muse#readme",
   "dependencies": {
     "typescript": "^5.8.3"
   }

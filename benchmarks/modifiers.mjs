@@ -2,13 +2,13 @@ import { performance } from 'node:perf_hooks'
 import { createElement } from 'react'
 import { Text, VStack } from '../dist/index.js'
 
-const defaultCounts = process.env.RUI_BENCH_CI === '1' ? [100, 1000] : [100, 1000, 10000]
-const itemCounts = (process.env.RUI_BENCH_ITEMS ?? defaultCounts.join(','))
+const defaultCounts = process.env.MUSE_BENCH_CI === '1' ? [100, 1000] : [100, 1000, 10000]
+const itemCounts = (process.env.MUSE_BENCH_ITEMS ?? defaultCounts.join(','))
   .split(',')
   .map(value => Number(value.trim()))
   .filter(value => Number.isFinite(value) && value > 0)
 const depths = [1, 5, 10, 20]
-const rounds = Number(process.env.RUI_BENCH_ROUNDS ?? (process.env.RUI_BENCH_CI === '1' ? 2 : 5))
+const rounds = Number(process.env.MUSE_BENCH_ROUNDS ?? (process.env.MUSE_BENCH_CI === '1' ? 2 : 5))
 const results = []
 
 function measure(name, itemCount, factory) {
@@ -79,15 +79,15 @@ for (const itemCount of itemCounts) {
   })
 
   for (const depth of depths) {
-    const average = measure(`Rui modifier chain depth ${depth}`, itemCount, () => {
+    const average = measure(`Muse modifier chain depth ${depth}`, itemCount, () => {
       VStack(...Array.from({ length: itemCount }, (_, index) => {
         let element = Text(String(index))
         for (let step = 0; step < depth; step += 1) element = modifierSteps[step % modifierSteps.length](element)
         return element
       }))
     })
-    if (process.env.RUI_BENCH_MAX_RATIO && average / Math.max(raw, 0.001) > Number(process.env.RUI_BENCH_MAX_RATIO)) {
-      throw new Error(`Rui modifier chain exceeded the configured ratio at ${itemCount} items and depth ${depth}`)
+    if (process.env.MUSE_BENCH_MAX_RATIO && average / Math.max(raw, 0.001) > Number(process.env.MUSE_BENCH_MAX_RATIO)) {
+      throw new Error(`Muse modifier chain exceeded the configured ratio at ${itemCount} items and depth ${depth}`)
     }
   }
 }

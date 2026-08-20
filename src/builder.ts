@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 
-export type RuiBuilder = () => ReactNode | ReactNode[]
+export type MuseBuilder = () => ReactNode | ReactNode[]
 
 export function resolveBuilder(value: unknown): ReactNode[] | null {
   if (typeof value !== 'function') return null
-  const result = (value as RuiBuilder)()
+  const result = (value as MuseBuilder)()
   return Array.isArray(result) ? result : [result]
 }
 

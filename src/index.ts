@@ -52,7 +52,7 @@ export {
 
 export { Action, State } from './state.js'
 export { styled } from './modifiers.js'
-export type { RuiBuilder } from './builder.js'
+export type { MuseBuilder } from './builder.js'
 export { view } from './view.js'
 
 export type {
