@@ -6,6 +6,7 @@ import {
   Component,
   HStack,
   Spacer,
+  State,
   Text,
   VStack,
   view,
@@ -37,4 +38,19 @@ test('view produces a renderable React component', () => {
   const App = view(() => VStack(Text('Hello Vune')))
   const html = renderToStaticMarkup(createElement(App))
   assert.match(html, /Hello Vune/)
+})
+
+test('view state factories are scoped to a component instance', () => {
+  let factoryCalls = 0
+  const App = view({
+    state: () => {
+      factoryCalls += 1
+      return { count: State(2) }
+    },
+    body: ({ count }) => Text(`Count: ${count.value}`),
+  })
+
+  const html = renderToStaticMarkup(createElement(App))
+  assert.match(html, /Count: 2/)
+  assert.equal(factoryCalls, 1)
 })

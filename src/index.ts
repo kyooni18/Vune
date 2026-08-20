@@ -87,7 +87,6 @@ export type {
   ImageFit,
   ImageOptions,
   LabelOptions,
-  LinkProps,
   PickerOption,
   PickerProps,
   ProgressViewOptions,
@@ -107,12 +106,8 @@ export type {
 export type {
   AlertAction,
   AlertOptions,
-  NavigationLinkProps,
   RouterLike,
   SheetOptions,
 } from './presentation.js'
 
-export type {
-  ViewContent,
-  ViewDefinition,
-} from './view.js'
+export type { ViewContent, ViewDefinition } from './view.js'
