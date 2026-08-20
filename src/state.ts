@@ -1,10 +1,12 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { StateRef, Value } from './types.js'
 
 type Listener = () => void
+
 interface StateRecord<T> {
   current: T
   listeners: Set<Listener>
+  version: number
 }
 
 const records = new WeakMap<object, StateRecord<any>>()
@@ -16,7 +18,11 @@ export function isStateRef(value: unknown): value is StateRef<unknown> {
 
 export function State<T>(initial: T): StateRef<T> {
   const state = {} as StateRef<T>
-  const record: StateRecord<T> = { current: initial, listeners: new Set() }
+  const record: StateRecord<T> = {
+    current: initial,
+    listeners: new Set(),
+    version: 0,
+  }
   records.set(state as object, record)
 
   Object.defineProperty(state, 'value', {
@@ -29,6 +35,7 @@ export function State<T>(initial: T): StateRef<T> {
     set(next: T) {
       if (Object.is(record.current, next)) return
       record.current = next
+      record.version += 1
       for (const listener of [...record.listeners]) listener()
     },
   })
@@ -56,30 +63,28 @@ export function collectStateReads<T>(
   }
 }
 
+function dependencyVersion(dependencies: ReadonlySet<StateRef<unknown>>): number {
+  let version = 0
+  for (const state of dependencies) {
+    version += records.get(state as object)?.version ?? 0
+  }
+  return version
+}
+
 export function useReactiveValue<T>(compute: () => T): T {
-  const [, rerender] = useReducer((version: number) => version + 1, 0)
-  const subscriptions = useRef(new Map<StateRef<unknown>, () => void>())
   const dependencies = new Set<StateRef<unknown>>()
   const value = collectStateReads(compute, state => dependencies.add(state))
 
-  useEffect(() => {
-    for (const [state, unsubscribe] of subscriptions.current) {
-      if (!dependencies.has(state)) {
-        unsubscribe()
-        subscriptions.current.delete(state)
+  useSyncExternalStore(
+    listener => {
+      const unsubscribers = [...dependencies].map(state => subscribeState(state, listener))
+      return () => {
+        for (const unsubscribe of unsubscribers) unsubscribe()
       }
-    }
-    for (const state of dependencies) {
-      if (!subscriptions.current.has(state)) {
-        subscriptions.current.set(state, subscribeState(state, () => rerender()))
-      }
-    }
-  })
-
-  useEffect(() => () => {
-    for (const unsubscribe of subscriptions.current.values()) unsubscribe()
-    subscriptions.current.clear()
-  }, [])
+    },
+    () => dependencyVersion(dependencies),
+    () => dependencyVersion(dependencies),
+  )
 
   return value
 }
