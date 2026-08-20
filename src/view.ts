@@ -43,11 +43,12 @@ export function view<State extends Record<string, unknown>>(
       instance.current.initialized = true
     }
 
-    const node = useReactiveValue(() => {
+    const node = useReactiveValue<ReactNode>(() => {
       if (definition) return definition.body(instance.current.state as State)
-      return typeof input === 'function'
-        ? (input as () => ReactNode)()
-        : input
+      const content = input as ViewContent
+      return typeof content === 'function'
+        ? (content as () => ReactNode)()
+        : content
     })
 
     return createElement(Fragment, null, layoutChild(node))
