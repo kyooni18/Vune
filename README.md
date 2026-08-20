@@ -142,7 +142,7 @@ VStack(
 
 Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `Spacer`, `Divider`, and `Group`.
 
-`Spacer()` consumes available flex space. `HStack` is full-width by default, and `.frame({ maxWidth: 'infinity' })` is available when a parent or another element should explicitly stretch.
+`Spacer()` consumes available flex space. `Spacer(minLength)` keeps that explicit minimum when flex space becomes tight. `HStack` is full-width by default, and `.frame({ maxWidth: 'infinity' })` is available when a parent or another element should explicitly stretch.
 
 ## Modifiers and CSS
 
@@ -187,9 +187,9 @@ HStack(
 )
 ```
 
-Inside a Vune layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering.
+Inside a Vune layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
 
-`Raw(element)` accepts an already-created React element when needed.
+`Raw(element)` accepts an already-created React element when modifier chaining is needed.
 
 ## Controls
 
@@ -275,6 +275,6 @@ CI currently checks TypeScript build output, public type usage, runtime renderin
 
 ## Status
 
-The React rewrite is currently versioned as `1.0.0-alpha.3`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
+The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
 
 See [Design](docs/DESIGN.md), [Migration](docs/MIGRATION.md), and [Changelog](docs/CHANGELOG.md).
