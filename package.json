@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
-    "test:runtime": "node --test tests/react-runtime.test.mjs tests/macro-react.test.mjs",
+    "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/macro-react.test.mjs",
     "test": "npm run build && npm run test:types && npm run test:runtime",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
