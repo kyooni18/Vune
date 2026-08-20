@@ -11,6 +11,7 @@ import {
   VStack,
   view,
 } from '../dist/index.js'
+import { subscribeState } from '../dist/state.js'
 
 function Badge({ label }) {
   return createElement('strong', null, label)
@@ -32,6 +33,20 @@ test('hosts ordinary React components without passing layout styles into them', 
   assert.match(html, /data-vune-layout-host/)
   assert.match(html, /padding:12px/)
   assert.match(html, /<strong>React<\/strong>/)
+})
+
+test('State subscriptions notify on changes, ignore identical values, and unsubscribe cleanly', () => {
+  const count = State(0)
+  let notifications = 0
+  const unsubscribe = subscribeState(count, () => { notifications += 1 })
+
+  count.value = 1
+  count.value = 1
+  assert.equal(notifications, 1)
+
+  unsubscribe()
+  count.value = 2
+  assert.equal(notifications, 1)
 })
 
 test('view produces a renderable React component', () => {
