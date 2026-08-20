@@ -8,30 +8,42 @@ import {
 import { layoutChild } from './layout.js'
 import { useReactiveValue } from './state.js'
 
-export type ViewContent = ReactNode | (() => ReactNode)
+export type ViewContent<Props extends object = {}> = ReactNode | ((props: Props) => ReactNode)
 
-export interface ViewDefinition<State extends Record<string, unknown>> {
-  state: () => State
-  body: (state: State) => ReactNode
+export interface ViewDefinition<
+  State extends Record<string, unknown>,
+  Props extends object = {},
+> {
+  state: (props: Props) => State
+  body: (state: State, props: Props) => ReactNode
 }
 
-function isViewDefinition<State extends Record<string, unknown>>(
-  value: ViewContent | ViewDefinition<State>,
-): value is ViewDefinition<State> {
+function isViewDefinition<
+  State extends Record<string, unknown>,
+  Props extends object,
+>(
+  value: ViewContent<Props> | ViewDefinition<State, Props>,
+): value is ViewDefinition<State, Props> {
   return typeof value === 'object'
     && value !== null
     && 'state' in value
-    && typeof (value as ViewDefinition<State>).state === 'function'
+    && typeof (value as ViewDefinition<State, Props>).state === 'function'
     && 'body' in value
-    && typeof (value as ViewDefinition<State>).body === 'function'
+    && typeof (value as ViewDefinition<State, Props>).body === 'function'
 }
 
-export function view<State extends Record<string, unknown>>(definition: ViewDefinition<State>): ComponentType
-export function view(content: ViewContent): ComponentType
-export function view<State extends Record<string, unknown>>(
-  input: ViewContent | ViewDefinition<State>,
-): ComponentType {
-  function VuneView() {
+export function view<
+  State extends Record<string, unknown>,
+  Props extends object = {},
+>(definition: ViewDefinition<State, Props>): ComponentType<Props>
+export function view<Props extends object = {}>(content: ViewContent<Props>): ComponentType<Props>
+export function view<
+  State extends Record<string, unknown>,
+  Props extends object = {},
+>(
+  input: ViewContent<Props> | ViewDefinition<State, Props>,
+): ComponentType<Props> {
+  function VuneView(props: Props) {
     const instance = useRef<{ initialized: boolean; state: State | null }>({
       initialized: false,
       state: null,
@@ -39,15 +51,15 @@ export function view<State extends Record<string, unknown>>(
 
     const definition = isViewDefinition(input) ? input : null
     if (definition && !instance.current.initialized) {
-      instance.current.state = definition.state()
+      instance.current.state = definition.state(props)
       instance.current.initialized = true
     }
 
     const node = useReactiveValue<ReactNode>(() => {
-      if (definition) return definition.body(instance.current.state as State)
-      const content = input as ViewContent
+      if (definition) return definition.body(instance.current.state as State, props)
+      const content = input as ViewContent<Props>
       return typeof content === 'function'
-        ? (content as () => ReactNode)()
+        ? (content as (props: Props) => ReactNode)(props)
         : content
     })
 
