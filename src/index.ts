@@ -52,6 +52,10 @@ export {
 
 export { Action, State } from './state.js'
 export { styled } from './modifiers.js'
+export { collectChildren, resolveBuilder } from './builder.js'
+export type { RuiBuilder } from './builder.js'
+export { coordinateSpace, coordinateSpaceOf, emptyLayoutNode } from './coordinate.js'
+export type { CoordinateSpace, LayoutFrame, LayoutNode as CoordinateLayoutNode } from './coordinate.js'
 export { view } from './view.js'
 
 export type {
@@ -112,3 +116,12 @@ export type {
 } from './presentation.js'
 
 export type { ViewContent, ViewDefinition } from './view.js'
+
+export { transformRuiBuilderSyntax } from './compiler/index.js'
+
+export * from './runtime/layout-observer.js'
+export * from './runtime/modifier-pipeline.js'
+
+export * from './layout-engine.js'
+export * from './runtime/jsx-node.js'
+export * from './runtime/coordinate-runtime.js'

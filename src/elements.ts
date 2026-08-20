@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { isComponentElement, layoutChild, layoutChildren, layoutPropsOf } from './layout.js'
 import { styled } from './modifiers.js'
+import { collectChildren, type RuiBuilder } from './builder.js'
 import { resolveValue } from './state.js'
 import type {
   ComponentProps,
@@ -85,7 +86,11 @@ export function Component<C extends ElementType>(
 export function Raw(element: ReactElement): StyledElement { return styled(element) }
 export function Key(key: string | number, child: ReactElement): StyledElement { return styled(child).keyed(key) }
 export function ElementRef(reference: Ref<unknown>, child: ReactElement): StyledElement { return styled(child).elementRef(reference) }
-export function Group(...children: ReactNode[]): ReactElement { return createElement(Fragment, null, ...flatten(children)) }
+export function Group(builder: RuiBuilder): ReactElement
+export function Group(...children: ReactNode[]): ReactElement
+export function Group(...children: Array<ReactNode | RuiBuilder>): ReactElement {
+  return createElement(Fragment, null, ...flatten(collectChildren(children)))
+}
 export function Box(...children: ReactNode[]): StyledElement {
   return styled(createElement('div', { style: { outline: 'none' } }, ...layoutChildren(flatten(children))))
 }
@@ -101,11 +106,13 @@ export function RoundedRectangle(radius: Length = 8): StyledElement { return Box
 export function Circle(): StyledElement { return Box().radius('50%') }
 export function Capsule(): StyledElement { return Box().radius('9999px') }
 
+export function VStack(builder: RuiBuilder): StyledElement
 export function VStack(...children: ReactNode[]): StyledElement
 export function VStack(options: VStackOptions, ...children: ReactNode[]): StyledElement
+export function VStack(options: VStackOptions, builder: RuiBuilder): StyledElement
 export function VStack(...args: any[]): StyledElement {
   const options: VStackOptions = isOptions(args[0]) ? args[0] as VStackOptions : {}
-  const children = isOptions(args[0]) ? args.slice(1) : args
+  const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
   return styled(createElement('div', {
     style: {
       display: 'flex',
@@ -119,11 +126,13 @@ export function VStack(...args: any[]): StyledElement {
   }, ...layoutChildren(flatten(children))))
 }
 
+export function HStack(builder: RuiBuilder): StyledElement
 export function HStack(...children: ReactNode[]): StyledElement
 export function HStack(options: HStackOptions, ...children: ReactNode[]): StyledElement
+export function HStack(options: HStackOptions, builder: RuiBuilder): StyledElement
 export function HStack(...args: any[]): StyledElement {
   const options: HStackOptions = isOptions(args[0]) ? args[0] as HStackOptions : {}
-  const children = isOptions(args[0]) ? args.slice(1) : args
+  const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
   return styled(createElement('div', {
     style: {
       display: 'flex',
@@ -137,11 +146,13 @@ export function HStack(...args: any[]): StyledElement {
   }, ...layoutChildren(flatten(children))))
 }
 
+export function ZStack(builder: RuiBuilder): StyledElement
 export function ZStack(...children: ReactNode[]): StyledElement
 export function ZStack(options: ZStackOptions, ...children: ReactNode[]): StyledElement
+export function ZStack(options: ZStackOptions, builder: RuiBuilder): StyledElement
 export function ZStack(...args: any[]): StyledElement {
   const options: ZStackOptions = isOptions(args[0]) ? args[0] as ZStackOptions : {}
-  const children = isOptions(args[0]) ? args.slice(1) : args
+  const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
   const layers = flatten(children).map((child, index) => {
     const component = isValidElement(child) && isComponentElement(child)
     const layout = component ? layoutPropsOf(child) : undefined
@@ -157,8 +168,20 @@ export function ZStack(...args: any[]): StyledElement {
   }, ...layers))
 }
 
-export function Grid(columnsOrOptions: number | string | GridOptions = 1, ...children: ReactNode[]): StyledElement {
-  const options: GridOptions = typeof columnsOrOptions === 'object' ? columnsOrOptions : { columns: columnsOrOptions }
+export function Grid(...children: ReactNode[]): StyledElement
+export function Grid(columnsOrOptions: number | string | GridOptions, ...children: ReactNode[]): StyledElement
+export function Grid(builder: () => ReactNode | ReactNode[]): StyledElement
+export function Grid(columnsOrOptions: number | string | GridOptions, builder: RuiBuilder): StyledElement
+export function Grid(columnsOrOptions: ReactNode | GridOptions | RuiBuilder = 1, ...children: Array<ReactNode | RuiBuilder>): StyledElement {
+  const builder = typeof columnsOrOptions === 'function'
+  const hasOptions = !builder && (typeof columnsOrOptions === 'number'
+    || typeof columnsOrOptions === 'string'
+    || isOptions(columnsOrOptions))
+  const options: GridOptions = hasOptions
+    ? typeof columnsOrOptions === 'object' ? columnsOrOptions as GridOptions : { columns: columnsOrOptions as number | string }
+    : {}
+  const childArgs = builder ? [columnsOrOptions] : hasOptions ? children : [columnsOrOptions, ...children]
+  const resolvedChildren = collectChildren(childArgs)
   return styled(createElement('div', {
     style: {
       display: 'grid',
@@ -168,7 +191,7 @@ export function Grid(columnsOrOptions: number | string | GridOptions = 1, ...chi
       ...(options.rows === undefined ? {} : { gridTemplateRows: cssTrack(options.rows) }),
       ...(options.autoFlow === undefined ? {} : { gridAutoFlow: options.autoFlow }),
     },
-  }, ...layoutChildren(flatten(children))))
+  }, ...layoutChildren(flatten(resolvedChildren))))
 }
 
 export type TextProps = HTMLAttributes<HTMLSpanElement>

@@ -3,6 +3,8 @@ import {
   Action,
   Button,
   Component,
+  Grid,
+  Group,
   HStack,
   Spacer,
   State,
@@ -28,6 +30,11 @@ export const StaticView = view(
     HStack(Text('Left'), Spacer(), custom).frame({ maxWidth: 'infinity' }),
   ),
 )
+
+Grid(Text('One'), Text('Two'))
+Grid(2, () => Text('Builder'))
+VStack({ spacing: 8 }, () => Text('Optioned builder'))
+Group(() => [Text('Grouped one'), Text('Grouped two')])
 
 export const ScopedView = view({
   state: () => ({ count: State(0) }),

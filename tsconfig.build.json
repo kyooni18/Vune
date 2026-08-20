@@ -24,6 +24,8 @@
     "src/state.ts",
     "src/types.ts",
     "src/view.ts",
-    "src/vite.ts"
+    "src/vite.ts",
+    "src/jsx-runtime.ts",
+    "src/jsx-dev-runtime.ts"
   ]
 }
