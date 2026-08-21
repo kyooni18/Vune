@@ -12,7 +12,7 @@ Both styles return a new React element, so modifiers can be chained without muta
 Use modifiers for styles that describe the intent of a view:
 
 ```ts
-import { Text, VStack } from 'muse'
+import { Text, VStack } from 'react-muse-ui'
 
 VStack(
   { spacing: 12, alignment: 'leading' },
@@ -87,7 +87,7 @@ Use `.className()` for selectors, responsive rules, pseudo-classes, keyframes, a
 
 ```ts
 import './styles.css'
-import { Text } from 'muse'
+import { Text } from 'react-muse-ui'
 
 Text('Interactive card')
   .className('card')
@@ -142,7 +142,7 @@ attributes on intrinsic elements:
 </div>
 ```
 
-Set `jsxImportSource: "muse"` in `tsconfig.json` for project-wide support.
+Set `jsxImportSource: "react-muse-ui"` in `tsconfig.json` for project-wide support.
 Muse's declarations type-check these attributes, while native `style`,
 `className`, event handlers, and element-specific attributes keep React's
 normal types. The modifier attributes are applied through the same pipeline as

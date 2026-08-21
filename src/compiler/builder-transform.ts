@@ -12,10 +12,11 @@
  *
  * This is a small lexical parser rather than a regular-expression replacement:
  * strings, comments, templates, regular expressions, nested calls and nested
- * builder blocks are all kept out of the syntax scan.
+ * builder blocks are all kept out of the syntax scan. The parser deliberately
+ * does not keep a component-name allow-list. A trailing block is syntax sugar
+ * for an overload; the runtime initializer resolver decides whether the call
+ * is valid for that type.
  */
-
-export const DEFAULT_BUILDER_COMPONENTS = ['VStack', 'HStack', 'ZStack', 'Group', 'Grid'] as const
 
 type Delimiter = '(' | '{' | '['
 
@@ -263,7 +264,111 @@ function splitBuilderChildren(source: string): string[] {
   return parts
 }
 
-function transformRange(source: string, components: Set<string>): string {
+const controlKeywords = new Set([
+  'if', 'else', 'for', 'while', 'switch', 'catch', 'with', 'function', 'class',
+  'try', 'do', 'finally', 'return', 'throw', 'new', 'typeof', 'void', 'delete',
+])
+
+function splitTopLevelArguments(source: string): string[] {
+  const parts: string[] = []
+  let start = 0
+  let parens = 0
+  let brackets = 0
+  let braces = 0
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i]
+    const next = source[i + 1]
+    if (char === "'" || char === '"') {
+      i = skipQuoted(source, i, char) - 1
+      continue
+    }
+    if (char === '`') {
+      i = skipTemplate(source, i) - 1
+      continue
+    }
+    if (char === '/' && next === '/') {
+      i = skipLineComment(source, i) - 1
+      continue
+    }
+    if (char === '/' && next === '*') {
+      i = skipBlockComment(source, i) - 1
+      continue
+    }
+    if (char === '/' && regexCanStartAfter(source, i)) {
+      i = skipRegex(source, i) - 1
+      continue
+    }
+    if (char === '(') parens += 1
+    else if (char === ')') parens -= 1
+    else if (char === '[') brackets += 1
+    else if (char === ']') brackets -= 1
+    else if (char === '{') braces += 1
+    else if (char === '}') braces -= 1
+    else if (char === ',' && parens === 0 && brackets === 0 && braces === 0) {
+      parts.push(source.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+
+  const final = source.slice(start).trim()
+  if (final) parts.push(final)
+  return parts
+}
+
+function namedCallArguments(source: string): string {
+  const parts = splitTopLevelArguments(source)
+  if (parts.length === 0 || parts.some(part => !/^[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(part))) return source.trim()
+  const values = parts.map(part => {
+    const match = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*([\s\S]*)$/.exec(part)
+    if (!match) return part
+    const [, label, value] = match
+    const trimmed = value.trim()
+    if (!['label', 'content', 'action'].includes(label) || trimmed[0] !== '{') return `${label}: ${value}`
+    const close = findMatching(trimmed, 0, '{')
+    if (close !== trimmed.length - 1) return `${label}: ${value}`
+    const body = trimmed.slice(1, close)
+    if (label === 'action') return `${label}: () => { ${transformRange(body)} }`
+    return `${label}: () => [${transformBuilderBody(body).join(', ')}]`
+  })
+  return `{ ${values.join(', ')} }`
+}
+
+function conditionalChild(source: string): string | null {
+  const trimmed = source.trim()
+  if (!/^if\b/.test(trimmed)) return null
+  const open = trimmed.indexOf('(')
+  if (open < 0) return null
+  const close = findMatching(trimmed, open, '(')
+  const condition = trimmed.slice(open + 1, close).trim()
+  const thenOpen = skipTrivia(trimmed, close + 1)
+  if (trimmed[thenOpen] !== '{') return null
+  const thenClose = findMatching(trimmed, thenOpen, '{')
+  const thenChildren = splitBuilderChildren(transformRange(trimmed.slice(thenOpen + 1, thenClose)))
+  const afterThen = skipTrivia(trimmed, thenClose + 1)
+  let elseChildren = '[]'
+  if (trimmed.slice(afterThen, afterThen + 4) === 'else') {
+    const elseOpen = skipTrivia(trimmed, afterThen + 4)
+    if (trimmed.slice(elseOpen, elseOpen + 2) === 'if') {
+      const nested = conditionalChild(trimmed.slice(elseOpen))
+      elseChildren = nested ?? '[]'
+    } else if (trimmed[elseOpen] === '{') {
+      const elseClose = findMatching(trimmed, elseOpen, '{')
+      const children = splitBuilderChildren(transformRange(trimmed.slice(elseOpen + 1, elseClose)))
+      elseChildren = `[${children.join(', ')}]`
+    }
+  }
+  return `(${condition} ? [${thenChildren.join(', ')}] : ${elseChildren})`
+}
+
+function transformBuilderBody(source: string): string[] {
+  return splitBuilderChildren(source).map(part => {
+    const transformed = transformRange(part)
+    return conditionalChild(transformed) ?? transformed
+  })
+}
+
+function transformRange(source: string): string {
   let output = ''
 
   for (let i = 0; i < source.length;) {
@@ -306,7 +411,7 @@ function transformRange(source: string, components: Set<string>): string {
       while (isIdentifierPart(source[i])) i += 1
       const name = source.slice(start, i)
       const previous = source[start - 1]
-      if (!components.has(name) || previous === '.' || isIdentifierPart(previous)) {
+      if (controlKeywords.has(name) || previous === '.' || isIdentifierPart(previous)) {
         output += source.slice(start, i)
         continue
       }
@@ -319,15 +424,25 @@ function transformRange(source: string, components: Set<string>): string {
       const close = findMatching(source, open, '(')
       const blockOpen = skipTrivia(source, close + 1)
       if (source[blockOpen] !== '{') {
-        output += source.slice(start, close + 1)
+        const originalArgs = source.slice(open + 1, close)
+        const transformedArgs = transformRange(originalArgs)
+        const args = namedCallArguments(transformedArgs)
+        output += args === transformedArgs.trim()
+          ? source.slice(start, close + 1)
+          : `${name}(${args})`
         i = close + 1
         continue
       }
 
       const blockClose = findMatching(source, blockOpen, '{')
-      const args = transformRange(source.slice(open + 1, close), components).trim()
-      const body = splitBuilderChildren(transformRange(source.slice(blockOpen + 1, blockClose), components))
-      const callback = `() => [${body.join(', ')}]`
+      const args = namedCallArguments(transformRange(source.slice(open + 1, close)))
+      const rawBody = source.slice(blockOpen + 1, blockClose)
+      const parameterMatch = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+([\s\S]*)$/.exec(rawBody)
+      const bodySource = parameterMatch?.[2] ?? rawBody
+      const body = transformBuilderBody(bodySource)
+      const callback = parameterMatch
+        ? `(${parameterMatch[1]}) => [${body.join(', ')}]`
+        : `() => [${body.join(', ')}]`
       output += `${name}(${args ? `${args}, ` : ''}${callback})`
       i = blockClose + 1
       continue
@@ -342,7 +457,6 @@ function transformRange(source: string, components: Set<string>): string {
 
 export function transformMuseBuilderSyntax(
   source: string,
-  componentNames: readonly string[] = DEFAULT_BUILDER_COMPONENTS,
 ): string {
-  return transformRange(source, new Set(componentNames))
+  return transformRange(source)
 }

@@ -5,20 +5,17 @@
  * pass the source through this adapter before their own AST pipeline without
  * forcing Muse to depend on a specific compiler.
  */
-import { transformMuseBuilderSyntax, DEFAULT_BUILDER_COMPONENTS } from './builder-transform.js'
+import { transformMuseBuilderSyntax } from './builder-transform.js'
+import { transformMuseStructSyntax } from './struct-transform.js'
 
-export interface MuseTransformOptions {
-  components?: readonly string[]
-}
+export interface MuseTransformOptions {}
 
-export function createMuseSwcVisitor(options: MuseTransformOptions = {}) {
-  const components = options.components ?? DEFAULT_BUILDER_COMPONENTS
+export function createMuseSwcVisitor(_options: MuseTransformOptions = {}) {
 
   return {
     name: 'muse-builder-transform',
-    components: new Set(components),
     transform(code: string) {
-      return transformMuseBuilderSyntax(code, components)
+      return transformMuseBuilderSyntax(transformMuseStructSyntax(code))
     },
   }
 }

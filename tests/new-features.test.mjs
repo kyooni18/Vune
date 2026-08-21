@@ -12,7 +12,6 @@ import {
   VStack,
 } from '../dist/index.js'
 import {
-  DEFAULT_BUILDER_COMPONENTS,
   createMuseSwcVisitor,
   createMuseVitePlugin,
   transformMuseBuilderSyntax,
@@ -57,12 +56,11 @@ VStack({ spacing: 8 }) {
   )
 })
 
-test('builder transformer supports custom components and reports malformed blocks', () => {
+test('builder transformer resolves arbitrary View names and reports malformed blocks', () => {
   assert.equal(
-    transformMuseBuilderSyntax('Card() { Text(\'Card\') }', ['Card']),
+    transformMuseBuilderSyntax('Card() { Text(\'Card\') }'),
     "Card(() => [Text('Card')])",
   )
-  assert.deepEqual(DEFAULT_BUILDER_COMPONENTS, ['VStack', 'HStack', 'ZStack', 'Group', 'Grid'])
   assert.throws(
     () => transformMuseBuilderSyntax('VStack() { Text(\'missing\')'),
     /Unclosed \{ block/,
@@ -82,7 +80,14 @@ test('Vite and SWC adapters use the same builder transform and support query IDs
   const vite = createMuseVitePlugin()
   assert.deepEqual(vite.transform(source, '/src/App.tsx?direct'), {
     code: "VStack(() => [Text('A')])",
-    map: null,
+    map: {
+      version: 3,
+      file: '/src/App.tsx',
+      sources: ['/src/App.tsx'],
+      sourcesContent: [source],
+      names: [],
+      mappings: 'AAAA',
+    },
   })
   assert.equal(vite.transform(source, '/src/App.css'), null)
 

@@ -2,13 +2,17 @@ import {
   Fragment,
   createElement,
   isValidElement,
+  type Key,
   type CSSProperties,
   type ReactNode,
 } from 'react'
 import { Grid, HStack, Text, VStack } from './elements.js'
 import { collectChildren, type MuseBuilder } from './builder.js'
-import { layoutChild, layoutChildren } from './layout.js'
-import { finalize, styled } from './modifiers.js'
+import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
+import { styled } from './modifiers.js'
+import { resolveValue, useReactiveValue } from './state.js'
+import { defineBuiltinView, initializer, initializerKinds } from './view-system.js'
+import { viewElement, type ViewNode } from './runtime/view-graph.js'
 import type {
   GridOptions,
   HStackOptions,
@@ -34,17 +38,19 @@ function cssLength(value: Length): string {
   return typeof value === 'number' ? `${value}px` : value
 }
 
+const noFunction = (args: readonly unknown[]) => !args.some(value => typeof value === 'function')
+const optionsBuilder = (args: readonly unknown[]) => args.length === 2
+  && typeof args[0] === 'object' && args[0] !== null && typeof args[1] === 'function'
+
 export interface ListOptions {
   spacing?: Length
   inset?: Length
   separators?: boolean
 }
 
-export function List(...children: ReactNode[]): StyledElement
-export function List(options: ListOptions, ...children: ReactNode[]): StyledElement
-export function List(...args: any[]): StyledElement {
+function buildList(args: readonly unknown[]): ViewNode {
   const options: ListOptions = isOptions(args[0]) ? args[0] as ListOptions : {}
-  const children = isOptions(args[0]) ? args.slice(1) : args
+  const children = (isOptions(args[0]) ? args.slice(1) : args) as ReactNode[]
   const flat = flatten(children)
   const rows = flat.map((child, index) => createElement(
     'div',
@@ -62,14 +68,21 @@ export function List(...args: any[]): StyledElement {
     layoutChild(child),
   ))
 
-  return finalize(createElement('div', {
+  return viewElement('div', {
     role: 'list',
     style: {
       display: 'flex',
       flexDirection: 'column',
       ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
     },
-  }, ...rows))
+  }, rows)
+}
+
+export const List = defineBuiltinView<{ args: readonly unknown[] }>('List', [
+  initializer('List(options, ...children)', args => !args.some(value => typeof value === 'function'), args => ({ args: [...args] })),
+], ({ args }) => buildList(args)) as unknown as {
+  (...children: ReactNode[]): StyledElement
+  (options: ListOptions, ...children: ReactNode[]): StyledElement
 }
 
 export interface SectionOptions {
@@ -78,34 +91,69 @@ export interface SectionOptions {
   spacing?: Length
 }
 
+interface ForEachHostProps<Item> {
+  items: import('./types.js').Value<readonly Item[]>
+  content: (item: Item, index: number) => ReactNode
+  keyOf?: (item: Item, index: number) => Key
+}
+
+function ForEachHost<Item>({ items, content, keyOf }: ForEachHostProps<Item>) {
+  const values = useReactiveValue(() => resolveValue(items) ?? [])
+  return createElement(Fragment, null, values.map((item, index) => createElement(
+    Fragment,
+    { key: keyOf?.(item, index) ?? index },
+    content(item, index),
+  )))
+}
+
+markIntrinsic(ForEachHost)
+
+interface ForEachBuiltinProps { args: readonly unknown[] }
+
+export const ForEach = defineBuiltinView<ForEachBuiltinProps>('ForEach', [
+  initializer('ForEach(data, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', args => ({ args: [...args] }), [initializerKinds.value(true, 'data'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('ForEach(data, @ViewBuilder content, key)', args => args.length === 3 && typeof args[1] === 'function' && typeof args[2] === 'function', args => ({ args: [...args] }), [initializerKinds.value(true, 'data'), initializerKinds.viewBuilder(true, 'content'), initializerKinds.value(true, 'key')]),
+], ({ args }) => {
+  const items = args[0] as import('./types.js').Value<readonly unknown[]>
+  const content = args[1] as (item: unknown, index: number) => ReactNode
+  const keyOf = args[2] as ((item: unknown, index: number) => Key) | undefined
+  if (typeof content !== 'function') throw new TypeError('ForEach requires a trailing @ViewBuilder closure')
+  return createElement(ForEachHost as any, { items, content, keyOf })
+}) as unknown as {
+  <Item>(items: import('./types.js').Value<readonly Item[]>, content: (item: Item, index: number) => ReactNode, keyOf?: (item: Item, index: number) => Key): StyledElement
+}
+
 function sectionPart(value: ReactNode | string | undefined, role: 'heading' | 'note'): ReactNode {
   if (value === undefined) return null
   const child = typeof value === 'string' ? Text(value) : value
   return createElement('div', { role }, layoutChild(child))
 }
 
-export function Section(...children: ReactNode[]): StyledElement
-export function Section(title: string, ...children: ReactNode[]): StyledElement
-export function Section(options: SectionOptions, ...children: ReactNode[]): StyledElement
-export function Section(...args: any[]): StyledElement {
+function buildSection(args: readonly unknown[]): ViewNode {
   let options: SectionOptions = {}
-  let children: ReactNode[] = args
+  let children: ReactNode[] = [...args] as ReactNode[]
 
   if (typeof args[0] === 'string') {
     options = { header: args[0] }
-    children = args.slice(1)
+    children = args.slice(1) as ReactNode[]
   } else if (isOptions(args[0])) {
     options = args[0] as SectionOptions
-    children = args.slice(1)
+    children = args.slice(1) as ReactNode[]
   }
 
-  return finalize(createElement(
-    'section',
-    { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } },
+  return viewElement('section', { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } }, [
     sectionPart(options.header, 'heading'),
     createElement('div', { role: 'group' }, ...layoutChildren(flatten(children))),
     sectionPart(options.footer, 'note'),
-  ))
+  ])
+}
+
+export const Section = defineBuiltinView<{ args: readonly unknown[] }>('Section', [
+  initializer('Section(options, ...children)', args => !args.some(value => typeof value === 'function'), args => ({ args: [...args] })),
+], ({ args }) => buildSection(args)) as unknown as {
+  (...children: ReactNode[]): StyledElement
+  (title: string, ...children: ReactNode[]): StyledElement
+  (options: SectionOptions, ...children: ReactNode[]): StyledElement
 }
 
 export interface LazyOptions { estimatedItemSize?: Length }
@@ -125,34 +173,45 @@ function lazyChild(child: ReactNode, estimatedItemSize?: Length): ReactNode {
   return styled(child).style(lazyStyle(estimatedItemSize))
 }
 
-export function LazyVStack(...children: ReactNode[]): StyledElement
-export function LazyVStack(options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
-export function LazyVStack(builder: MuseBuilder): StyledElement
-export function LazyVStack(options: LazyVStackOptions, builder: MuseBuilder): StyledElement
-export function LazyVStack(...args: any[]): StyledElement {
+function buildLazyVStack(args: readonly unknown[]): ReactNode {
   const options: LazyVStackOptions = isOptions(args[0]) ? args[0] as LazyVStackOptions : {}
-  const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
+  const children = isOptions(args[0]) ? collectChildren([...args.slice(1)]) : collectChildren([...args])
   const { estimatedItemSize, ...stackOptions } = options
   return VStack(stackOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }
 
-export function LazyHStack(...children: ReactNode[]): StyledElement
-export function LazyHStack(options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
-export function LazyHStack(builder: MuseBuilder): StyledElement
-export function LazyHStack(options: LazyHStackOptions, builder: MuseBuilder): StyledElement
-export function LazyHStack(...args: any[]): StyledElement {
+export const LazyVStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyVStack', [
+  initializer('LazyVStack(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
+  initializer('LazyVStack(options, @ViewBuilder content)', optionsBuilder, args => ({ args: [...args] }), [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('LazyVStack(...children)', noFunction, args => ({ args: [...args] })),
+], ({ args }) => buildLazyVStack(args)) as unknown as {
+  (...children: ReactNode[]): StyledElement
+  (options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
+  (builder: MuseBuilder): StyledElement
+  (options: LazyVStackOptions, builder: MuseBuilder): StyledElement
+}
+
+function buildLazyHStack(args: readonly unknown[]): ReactNode {
   const options: LazyHStackOptions = isOptions(args[0]) ? args[0] as LazyHStackOptions : {}
-  const children = isOptions(args[0]) ? collectChildren(args.slice(1)) : collectChildren(args)
+  const children = isOptions(args[0]) ? collectChildren([...args.slice(1)]) : collectChildren([...args])
   const { estimatedItemSize, ...stackOptions } = options
   return HStack(stackOptions, ...flatten(children).map(child => lazyChild(child, estimatedItemSize)))
 }
 
-export function LazyGrid(builder: MuseBuilder): StyledElement
-export function LazyGrid(columnsOrOptions: number | string | LazyGridOptions, builder: MuseBuilder): StyledElement
-export function LazyGrid(
-  columnsOrOptions: number | string | LazyGridOptions | (() => ReactNode | ReactNode[]) = 1,
-  ...children: Array<ReactNode | MuseBuilder>
-): StyledElement {
+export const LazyHStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyHStack', [
+  initializer('LazyHStack(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
+  initializer('LazyHStack(options, @ViewBuilder content)', optionsBuilder, args => ({ args: [...args] }), [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('LazyHStack(...children)', noFunction, args => ({ args: [...args] })),
+], ({ args }) => buildLazyHStack(args)) as unknown as {
+  (...children: ReactNode[]): StyledElement
+  (options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
+  (builder: MuseBuilder): StyledElement
+  (options: LazyHStackOptions, builder: MuseBuilder): StyledElement
+}
+
+function buildLazyGrid(args: readonly unknown[]): ReactNode {
+  const columnsOrOptions = (args[0] ?? 1) as number | string | LazyGridOptions | MuseBuilder
+  const children = args.slice(1) as Array<ReactNode | MuseBuilder>
   const builder = typeof columnsOrOptions === 'function'
   const options: LazyGridOptions = builder ? {} : typeof columnsOrOptions === 'object'
     ? columnsOrOptions
@@ -160,4 +219,13 @@ export function LazyGrid(
   const { estimatedItemSize, ...gridOptions } = options
   const resolvedChildren = builder ? collectChildren([columnsOrOptions]) : collectChildren(children)
   return Grid(gridOptions, ...flatten(resolvedChildren).map(child => lazyChild(child, estimatedItemSize)))
+}
+
+export const LazyGrid = defineBuiltinView<{ args: readonly unknown[] }>('LazyGrid', [
+  initializer('LazyGrid(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
+  initializer('LazyGrid(columns, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', args => ({ args: [...args] }), [initializerKinds.value(true, 'columns'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('LazyGrid(...children)', noFunction, args => ({ args: [...args] })),
+], ({ args }) => buildLazyGrid(args)) as unknown as {
+  (builder: MuseBuilder): StyledElement
+  (columnsOrOptions: number | string | LazyGridOptions, builder: MuseBuilder): StyledElement
 }

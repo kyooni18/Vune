@@ -26,7 +26,12 @@ export interface StateRef<T> {
   value: T
 }
 
-export type Value<T> = T | StateRef<T> | (() => T)
+/** A writable lens used by controls without exposing the owning State. */
+export interface BindingRef<T> {
+  value: T
+}
+
+export type Value<T> = T | StateRef<T> | BindingRef<T> | (() => T)
 export type NativeProps = Record<string, unknown>
 export type ComponentProps<C extends ElementType> = ComponentPropsWithoutRef<C>
 export type ClassValue = string | false | null | readonly (string | false | null | undefined)[] | undefined

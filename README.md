@@ -13,12 +13,22 @@ pnpm add ../Muse
 pnpm add react react-dom
 ```
 
+To replace a newly-created Vite app's starter screen with the Muse demo:
+
+```bash
+pnpm exec muse init --force
+```
+
+This explicitly writes `src/App.tsx`, `src/App.css`, and `src/index.css` in the
+current project and adds `museMacro()` before the React plugin in
+`vite.config.ts`. Installing Muse alone never overwrites an existing app file.
+
 For Vite, install the React plugin and put the Muse macro before it:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { museMacro } from 'muse/vite'
+import { museMacro } from 'react-muse-ui/vite'
 
 export default defineConfig({
   plugins: [
@@ -40,7 +50,7 @@ import {
   Text,
   VStack,
   view,
-} from 'muse'
+} from 'react-muse-ui'
 
 const count = State(0)
 
@@ -62,6 +72,39 @@ export default view(
 ```
 
 The macro is a TypeScript AST transform. It moves only top-level `State()` declarations into per-component-instance state (including generic calls such as `State<Todo[]>(...)`), re-evaluates the `view(...)` body reactively, and turns `Action(expression)` into a deferred event callback. Function-valued actions such as `Action(() => save())` are preserved unchanged. The Vite plugin returns source maps for transformed modules.
+
+## View values, initializers, and builders
+
+Muse's declarative core now has a View/initializer boundary. Built-in Views and
+user Views select a registered initializer from the actual argument list before
+rendering; a trailing block is valid only when that selected initializer accepts
+`@ViewBuilder` or `@Action`.
+
+```ts
+import { defineView, initializer, resolveBuilderClosure, Text, VStack } from 'react-muse-ui'
+
+const Card = defineView('Card', {
+  initializers: [initializer(
+    'Card(@ViewBuilder content)',
+    args => args.length === 1 && typeof args[0] === 'function',
+    args => ({ content: resolveBuilderClosure(args[0]) }),
+  )],
+  body: ({ content }) => VStack(() => [content]),
+})
+
+Card() {
+  Text('CPU')
+  Text('72%')
+}
+```
+
+The compiler also lowers the optional `struct Name: View { ... }` form to this
+model, including `var body`, `@ViewBuilder`, `@Action`, and `@State` fields.
+Builder blocks support nested Views, conditionals, optional branches, and
+`ForEach(items) { item in ... }`. The compiler resolves syntax by initializer
+metadata rather than a hard-coded component-name list; malformed calls produce
+structured compiler diagnostics and `MuseInitializerError` at the runtime
+boundary.
 
 ## React entry point
 
@@ -140,13 +183,13 @@ metadata/plugin registry, and block-builder transform are experimental while
 their integration contract is being consolidated:
 
 ```ts
-import { layoutPass, registerMusePlugin } from 'muse/experimental'
+import { layoutPass, registerMusePlugin } from 'react-muse-ui/experimental'
 ```
 
-The automatic JSX runtime remains available through `muse/jsx-runtime` and
-`muse/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
+The automatic JSX runtime remains available through `react-muse-ui/jsx-runtime` and
+`react-muse-ui/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
 registered experimental plugins. The block-builder compiler adapter remains
-available through `muse/compiler`; it is not part of the stable root DSL
+available through `react-muse-ui/compiler`; it is not part of the stable root DSL
 contract.
 
 ## Coordinate-free layout
@@ -213,7 +256,7 @@ CSS escape hatch through `.style()` and `.className()`.
 ## JSX typing
 
 When using automatic JSX, set `jsxImportSource` to `muse` (or configure the
-equivalent TypeScript setting). Muse's `muse/jsx-runtime` declarations add the
+equivalent TypeScript setting). Muse's `react-muse-ui/jsx-runtime` declarations add the
 Muse modifier attributes to intrinsic elements, so runtime features such as
 `<div padding={12} frame={{ maxWidth: 'infinity' }} />` are type-checked by the
 editor as well as handled at runtime. Function-DSL nodes and JSX nodes both
@@ -335,10 +378,9 @@ and runs the suite against React 18 and React 19.
 
 ## End-to-end example
 
-The Vite example is a small task app in [`examples/App.ts`](examples/App.ts). It
-exercises the parts of Muse that tend to reveal API problems early: mutable
-arrays and nested objects, text input, filtering, a React component inside a
-Muse layout, a portal-based `Sheet`, and an `Alert` confirmation flow.
+The Vite example is a small component demo in [`examples/App.ts`](examples/App.ts). It
+shows a text field, slider, checkbox, button, and progress view in a Muse
+layout.
 
 Run it locally with:
 
@@ -351,7 +393,8 @@ changing filters, opening Settings, and clearing completed tasks.
 
 ## Status
 
-The React rewrite is currently versioned as `1.0.0-alpha.4`. The previous Vue runtime was the 0.x line and is intentionally not retained as a compatibility layer in 1.0.
+The React rewrite is currently versioned as `0.1.0`. The previous Vue runtime is
+not retained as a compatibility layer in this release.
 
 Muse's layout API is SwiftUI-inspired and CSS-native rather than a promise of
 SwiftUI's proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and

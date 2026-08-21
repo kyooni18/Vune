@@ -5,6 +5,24 @@ new syntax. The alpha already has enough surface area for experimentation; the
 focus now is reducing cases where valid Muse code behaves differently because of
 syntax, nesting, or the API layer that created it.
 
+## View-system foundation
+
+The first View-system slice is implemented and covered by `tests/view-system.test.mjs`:
+
+- initializer metadata selects overloads from arguments and rejects an
+  unsupported trailing closure;
+- `defineView`/`structView` provide a user View `init`/`body` boundary;
+- builder IR helpers cover block, optional, either, array, and `ForEach`
+  composition;
+- `State` and `Binding` remain reactive while modifier chains retain value
+  semantics and an inspectable graph;
+- the builder compiler has labeled arguments, struct lowering, diagnostics,
+  formatter hooks, and source-map output without a component-name registry.
+
+The remaining work is to move more built-in rendering primitives behind the
+renderer interface and to connect the compiler diagnostics to a full editor
+language service rather than the current formatter/diagnostic hooks.
+
 ## Correctness release
 
 The first correctness pass covers the parts most likely to change program
@@ -54,7 +72,7 @@ is settled:
 - `LazyVStack` and related APIs use `content-visibility: auto`. This is a
   browser-assisted rendering optimization, not virtualization or windowing.
 - Layout-engine, coordinate-runtime, observer, builder, and plugin facilities
-  are available from `muse/experimental`; their geometry types now distinguish
+  are available from `react-muse-ui/experimental`; their geometry types now distinguish
   observed `CoordinateNode` values from measured `LayoutNode` values, but they
   are not part of the stable root API yet.
 - JSX runtime support is available, but its modifier typing and plugin behavior

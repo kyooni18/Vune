@@ -18,7 +18,7 @@ stateful screen, a React component, and a few interactive controls.
 In an existing React application:
 
 ```bash
-pnpm add muse react react-dom
+pnpm add react-muse-ui react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
@@ -30,6 +30,20 @@ pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
+## Install the starter demo
+
+After adding Muse to a Vite project, install the minimal demo into that
+project's `src/` directory:
+
+```bash
+pnpm exec muse init --force
+```
+
+The command replaces `src/App.tsx` and the two starter style files, then adds
+`museMacro()` before the React plugin in `vite.config.ts`. The `--force` flag is
+required when those files already exist, so `pnpm add react-muse-ui` does not silently
+overwrite application code.
+
 ## Configure Vite
 
 The Muse macro is optional, but it makes stateful screens compact. When it is
@@ -38,7 +52,7 @@ enabled, place `museMacro()` before the React plugin:
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { museMacro } from 'muse/vite'
+import { museMacro } from 'react-muse-ui/vite'
 
 export default defineConfig({
   plugins: [
@@ -58,7 +72,7 @@ in `tsconfig.json`:
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "muse"
+    "jsxImportSource": "react-muse-ui"
   }
 }
 ```
@@ -91,7 +105,7 @@ import {
   Text,
   VStack,
   view,
-} from 'muse'
+} from 'react-muse-ui'
 
 const count = State(0)
 
@@ -157,7 +171,7 @@ the same tree:
 
 ```ts
 import { createElement } from 'react'
-import { Component, HStack, Spacer, Text, VStack } from 'muse'
+import { Component, HStack, Spacer, Text, VStack } from 'react-muse-ui'
 
 function ProfileCard({ name }: { name: string }) {
   return createElement('strong', null, name)
@@ -192,9 +206,9 @@ mutation ownership and both containers' subscribers are notified. Proxy
 identity is not a public contract; replace the State root for frozen values,
 class instances, `Map`, `Set`, or React elements.
 
-The root `muse` import is the stable function-DSL surface. The experimental
+The root `react-muse-ui` import is the stable function-DSL surface. The experimental
 layout engine, coordinate observer, metadata/plugin registry, and block-builder
-transform are available explicitly from `muse/experimental` while their
+transform are available explicitly from `react-muse-ui/experimental` while their
 integration contract evolves.
 
 ## Styling
@@ -237,9 +251,8 @@ keyboard navigation with `menuitem` children.
 
 ## Run the Muse example
 
-The repository includes an end-to-end task app in `examples/App.ts`. It covers
-mutable lists, filtering, text input, React component interop, a settings
-sheet, and an alert confirmation flow.
+The repository includes a small component demo in `examples/App.ts`. It shows
+common Muse controls inside a simple declarative layout.
 
 From the repository root:
 

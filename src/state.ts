@@ -1,5 +1,5 @@
 import { isValidElement, useSyncExternalStore } from 'react'
-import type { StateRef, Value } from './types.js'
+import type { BindingRef, StateRef, Value } from './types.js'
 
 type Listener = () => void
 
@@ -17,12 +17,17 @@ interface ReactiveOwner {
 }
 
 const records = new WeakMap<object, StateRecord<any>>()
+const bindings = new WeakSet<object>()
 const owners = new WeakMap<object, ReactiveOwner>()
 const proxyRaws = new WeakMap<object, object>()
 let activeCollector: ((state: StateRef<unknown>) => void) | null = null
 
 export function isStateRef(value: unknown): value is StateRef<unknown> {
   return typeof value === 'object' && value !== null && records.has(value as object)
+}
+
+export function isBinding(value: unknown): value is BindingRef<unknown> {
+  return typeof value === 'object' && value !== null && bindings.has(value as object)
 }
 
 function isReactiveContainer(value: unknown): value is object {
@@ -218,8 +223,25 @@ export function useReactiveValue<T>(compute: () => T): T {
 
 export function resolveValue<T>(value: Value<T>): T {
   if (typeof value === 'function') return (value as () => T)()
-  if (isStateRef(value)) return value.value as T
+  if (isStateRef(value) || isBinding(value)) return value.value as T
   return value as T
+}
+
+export function Binding<T>(source: StateRef<T> | BindingRef<T>): BindingRef<T>
+export function Binding<T>(get: () => T, set: (value: T) => void): BindingRef<T>
+export function Binding<T>(
+  sourceOrGet: StateRef<T> | BindingRef<T> | (() => T),
+  set?: (value: T) => void,
+): BindingRef<T> {
+  const binding = {} as BindingRef<T>
+  Object.defineProperty(binding, 'value', {
+    configurable: false,
+    enumerable: true,
+    get: typeof sourceOrGet === 'function' ? sourceOrGet : () => sourceOrGet.value,
+    set: typeof sourceOrGet === 'function' ? (set ?? (() => undefined)) : (value: T) => { sourceOrGet.value = value },
+  })
+  bindings.add(binding as object)
+  return binding
 }
 
 /**

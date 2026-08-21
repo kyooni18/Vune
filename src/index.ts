@@ -35,6 +35,7 @@ export {
 } from './controls.js'
 
 export {
+  ForEach,
   LazyGrid,
   LazyHStack,
   LazyVStack,
@@ -50,14 +51,50 @@ export {
   Sheet,
 } from './presentation.js'
 
-export { Action, State } from './state.js'
-export { styled } from './modifiers.js'
+export { Action, Binding, State } from './state.js'
+export { modifierGraphOf, styled } from './modifiers.js'
+export type { ModifierRecord } from './modifiers.js'
+export { materializeViewNode, reactRenderer } from './runtime/renderer.js'
+export {
+  isViewNode,
+  markViewNode,
+  viewElement,
+  viewFragment,
+  viewNodeOf,
+} from './runtime/view-graph.js'
 export type { MuseBuilder } from './builder.js'
 export { view } from './view.js'
+export {
+  ViewBuilder,
+  defineView,
+  defineBuiltinView,
+  initializersOf,
+  initializer,
+  MuseInitializerError,
+  museInitializers,
+  museView,
+  registerInitializers,
+  renderViewTree,
+  resolveBuilderClosure,
+  resolveInitializer,
+  structView,
+} from './view-system.js'
+export type {
+  InitializerMatch,
+  InitializerParameter,
+  InitializerParameterKind,
+  View,
+  ViewObject,
+  ViewBuilderResult,
+  ViewConstructor,
+} from './view-system.js'
+export type { ViewNode } from './runtime/view-graph.js'
+export type { ViewDefinition as StructViewDefinition } from './view-system.js'
 
 export type {
   Alignment,
   Axis,
+  BindingRef,
   BorderOptions,
   ClassValue,
   ComponentProps,
@@ -79,6 +116,7 @@ export type {
 
 export type {
   ButtonProps,
+  ButtonConfiguration,
   TextAreaOptions,
   TextFieldOptions,
   TextProps,

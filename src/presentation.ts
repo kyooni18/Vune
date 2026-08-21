@@ -18,6 +18,8 @@ import { createPortal } from 'react-dom'
 import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
 import { finalize } from './modifiers.js'
 import { isStateRef, resolveValue } from './state.js'
+import { assertInitializerCall, initializer, initializerKinds, registerInitializers } from './view-system.js'
+import { collectChildren, type MuseBuilder } from './builder.js'
 import type { StateRef, StyledElement, Value } from './types.js'
 
 export interface RouterLike {
@@ -72,14 +74,18 @@ function NavigationLinkHost({ destination, children, onClick, ...props }: Naviga
   }, children)
 }
 
-export function NavigationStack(router: RouterLike, ...children: ReactNode[]): StyledElement {
+export function NavigationStack(router: RouterLike, ...children: Array<ReactNode | MuseBuilder>): StyledElement {
+  assertInitializerCall(NavigationStack, [router, ...children])
+  const resolvedChildren = children.length === 1 && typeof children[0] === 'function'
+    ? collectChildren(children)
+    : children as ReactNode[]
   return finalize(createElement(
     'div',
     { 'data-muse-navigation-stack': '' },
     createElement(
       NavigationContext.Provider,
       { value: router },
-      ...layoutChildren(flatten(children)),
+      ...layoutChildren(flatten(resolvedChildren)),
     ),
   ))
 }
@@ -91,6 +97,7 @@ export function NavigationLink(
   label: ReactNode | Value<string | number>,
   props: NavigationLinkProps = {},
 ): StyledElement {
+  assertInitializerCall(NavigationLink, arguments.length === 2 ? [destination, label] : [destination, label, props])
   return finalize(createElement(NavigationLinkHost, { ...props, destination }, content(label)))
 }
 
@@ -219,6 +226,7 @@ export function Sheet(
   sheetContent: ReactNode,
   options: SheetOptions = {},
 ): ReactNode {
+  assertInitializerCall(Sheet, arguments.length === 2 ? [isPresented, sheetContent] : [isPresented, sheetContent, options])
   if (!isPresented.value) return null
   return createElement(SheetHost, { isPresented, sheetContent, options })
 }
@@ -283,6 +291,7 @@ function AlertHost({ isPresented, options }: AlertHostProps): ReactNode {
 markIntrinsic(AlertHost)
 
 export function Alert(isPresented: StateRef<boolean>, options: AlertOptions): ReactNode {
+  assertInitializerCall(Alert, [isPresented, options])
   if (!isPresented.value) return null
   return createElement(AlertHost, { isPresented, options })
 }
@@ -401,7 +410,26 @@ function MenuHost({ label, items }: MenuHostProps) {
 
 export function Menu(
   label: ReactNode | Value<string | number>,
-  ...items: ReactNode[]
+  ...items: Array<ReactNode | MuseBuilder>
 ): StyledElement {
-  return finalize(createElement(MenuHost, { label, items: flatten(items) }))
+  assertInitializerCall(Menu, [label, ...items])
+  const resolvedItems = items.length === 1 && typeof items[0] === 'function'
+    ? collectChildren(items)
+    : items as ReactNode[]
+  return finalize(createElement(MenuHost, { label, items: flatten(resolvedItems) }))
 }
+
+const noTrailingFunction = (args: readonly unknown[]) => args.length > 0
+  && !args.slice(1).some(value => typeof value === 'function')
+
+registerInitializers(NavigationStack, [
+  initializer('NavigationStack(router, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', undefined, [initializerKinds.value(), initializerKinds.viewBuilder()]),
+  initializer('NavigationStack(router, ...children)', noTrailingFunction),
+])
+registerInitializers(NavigationLink, [initializer('NavigationLink(destination, label, props?)', args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'))])
+registerInitializers(Sheet, [initializer('Sheet(isPresented, content, options?)', args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'))])
+registerInitializers(Alert, [initializer('Alert(isPresented, options)', args => args.length === 2 && typeof args[1] === 'object')])
+registerInitializers(Menu, [
+  initializer('Menu(label, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', undefined, [initializerKinds.value(), initializerKinds.viewBuilder()]),
+  initializer('Menu(label, ...items)', noTrailingFunction),
+])

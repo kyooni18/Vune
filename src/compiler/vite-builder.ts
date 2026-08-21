@@ -1,18 +1,18 @@
-import { DEFAULT_BUILDER_COMPONENTS, transformMuseBuilderSyntax } from './builder-transform.js'
+import { transformMuseBuilderSyntax } from './builder-transform.js'
+import { transformMuseStructSyntax } from './struct-transform.js'
+import { createMuseSourceMap } from './source-map.js'
 
-export interface MuseViteBuilderOptions {
-  components?: readonly string[]
-}
+export interface MuseViteBuilderOptions {}
 
-export function createMuseVitePlugin(options: MuseViteBuilderOptions = {}) {
-  const components = options.components ?? DEFAULT_BUILDER_COMPONENTS
+export function createMuseVitePlugin(_options: MuseViteBuilderOptions = {}) {
   return {
     name: 'muse-builder-transform',
     enforce: 'pre' as const,
     transform(code: string, id: string) {
       if (!/\.[cm]?[jt]sx?$/.test(id.split('?', 1)[0])) return null
-      const result = transformMuseBuilderSyntax(code, components)
-      return result === code ? null : { code: result, map: null }
+      const structCode = transformMuseStructSyntax(code)
+      const result = transformMuseBuilderSyntax(structCode)
+      return result === code ? null : { code: result, map: createMuseSourceMap(code, result, id.split('?', 1)[0]) }
     }
   }
 }

@@ -24,7 +24,7 @@ Before:
 
 ```ts
 import vue from '@vitejs/plugin-vue'
-import { museMacro } from 'muse/vite'
+import { museMacro } from 'react-muse-ui/vite'
 
 plugins: [museMacro(), vue()]
 ```
@@ -33,7 +33,7 @@ After:
 
 ```ts
 import react from '@vitejs/plugin-react'
-import { museMacro } from 'muse/vite'
+import { museMacro } from 'react-muse-ui/vite'
 
 plugins: [museMacro(), react()]
 ```

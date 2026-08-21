@@ -6,7 +6,7 @@ import { museMacro, transformMuseMacros } from '../dist/vite.js'
 
 test('moves State declarations into per-view state and defers Action expressions', () => {
   const source = `
-import { Action, Button, State, Text, VStack, view } from 'muse'
+import { Action, Button, State, Text, VStack, view } from 'react-muse-ui'
 const count = State(0)
 export default view(
   VStack(
@@ -27,7 +27,7 @@ export default view(
 
 test('preserves State declaration order inside the per-view factory', () => {
   const source = `
-import { State, Text, VStack, view } from 'muse'
+import { State, Text, VStack, view } from 'react-muse-ui'
 const count = State(2)
 const doubled = State(count.value * 2)
 export default view(
@@ -63,7 +63,7 @@ export default view(
 })
 
 test('wraps a plain view expression in a render function', () => {
-  const source = `import { Text, view } from 'muse'\nexport default view(Text('Hello'))`
+  const source = `import { Text, view } from 'react-muse-ui'\nexport default view(Text('Hello'))`
   const output = transformMuseMacros(source, '/src/App.ts')
   assert.ok(output)
   assert.match(output, /view\(\(\) => \(Text\('Hello'\)\)\)/)

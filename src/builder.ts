@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
+import { resolveBuilderClosure, type ViewBuilderClosure } from './view-system.js'
 
-export type MuseBuilder = () => ReactNode | ReactNode[]
+export type MuseBuilder = ViewBuilderClosure
 
 export function resolveBuilder(value: unknown): ReactNode[] | null {
   if (typeof value !== 'function') return null
-  const result = (value as MuseBuilder)()
-  return Array.isArray(result) ? result : [result]
+  return resolveBuilderClosure(value as MuseBuilder) as ReactNode[]
 }
 
 export function collectChildren(args: unknown[]): ReactNode[] {

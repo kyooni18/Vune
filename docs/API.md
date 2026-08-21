@@ -1,15 +1,17 @@
 # Muse public API
 
-This page describes the public contract for the current React alpha.
+This page describes the public contract for the current React release.
 
 ## Stable entry points
 
-The root `muse` entry point is the stable function-DSL surface:
+The root `react-muse-ui` entry point is the stable function-DSL surface:
 
-- Core views and state: `view`, `State`, `Action`.
+- Core views and state: `view`, `defineView`, `View`, `ViewBuilder`, `State`,
+  `Binding`, and `Action`.
 - Layout and composition: `Element`, `Component`, `Raw`, `Key`, `ElementRef`, `Group`, `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `Spacer`, `Divider`, and shapes.
 - Controls: `Text`, `Button`, `TextField`, `TextArea`, `Toggle`, `Image`, `Label`, `Link`, `ProgressView`, `Picker`, `Slider`, and `Stepper`.
-- Collections: `List`, `Section`, `LazyVStack`, `LazyHStack`, and `LazyGrid`.
+- Collections: `List`, `Section`, `ForEach`, `LazyVStack`, `LazyHStack`, and
+  `LazyGrid`.
 - Presentation: `NavigationStack`, `NavigationLink`, `Sheet`, `Alert`, and `Menu`.
 - Styling and types: `styled` plus the exported modifier, layout, state, and control types.
 
@@ -22,18 +24,39 @@ props, hooks, refs, context, children, and internal rendering.
 recursively normalizes them before deciding which children need a neutral
 layout host.
 
+## View model and compiler
+
+`defineView(name, definition)` creates a React-compatible View constructor with
+explicit initializer metadata and a `body(props)` function. `initializer()`
+describes overload matching, labels, and `value`/`viewBuilder`/`action`
+parameters. `resolveInitializer()` is the same overload boundary used by
+built-in Views. `structView` is an alias for this model.
+
+`ViewBuilder.buildBlock`, `buildOptional`, `buildEither`, and `buildArray` are
+the runtime intermediate representation for builder composition. The compiler
+entry point `react-muse-ui/compiler` transforms trailing blocks, labeled arguments,
+conditionals, `ForEach` item closures, and the supported `struct ...: View`
+syntax. It does not classify calls by a `VStack`-style allow-list. Use
+`formatMuseSource()` and `diagnoseMuseSource()` from that entry point for editor
+and formatter integrations; Vite transforms return source maps.
+
+Modifier chains are immutable. They return cloned React values and retain an
+inspectable `modifierGraphOf()` record, analogous to a `ModifiedContent<View,
+Modifier>` graph. `Binding()` provides a writable lens over State or a custom
+getter/setter and remains compatible with controlled Muse controls.
+
 ## Supported integration entry points
 
-- `muse/vite` — the optional TypeScript AST macro for `State`, `Action`, and
+- `react-muse-ui/vite` — the optional TypeScript AST macro for `State`, `Action`, and
   `view`. Put `museMacro()` before `@vitejs/plugin-react`. Transformed modules
   include source maps.
-- `muse/jsx-runtime` and `muse/jsx-dev-runtime` — the automatic JSX runtimes.
-  With `jsxImportSource: "muse"`, Muse modifier attributes on intrinsic elements
+- `react-muse-ui/jsx-runtime` and `react-muse-ui/jsx-dev-runtime` — the automatic JSX runtimes.
+  With `jsxImportSource: "react-muse-ui"`, Muse modifier attributes on intrinsic elements
   are type-checked as well as applied at runtime.
 
 ## Experimental entry points
 
-Import exploratory infrastructure explicitly from `muse/experimental`:
+Import exploratory infrastructure explicitly from `react-muse-ui/experimental`:
 
 - coordinate spaces and the layout observer;
 - observed `CoordinateNode` values;
@@ -42,7 +65,7 @@ Import exploratory infrastructure explicitly from `muse/experimental`:
 - coordinate runtime helpers;
 - builder collection helpers and the block-builder transform.
 
-The builder/compiler adapters are also available from `muse/compiler` for
+The builder/compiler adapters are also available from `react-muse-ui/compiler` for
 experimentation. They are not part of the stable root API and may change as
 the layout and JSX integration contracts are consolidated.
 

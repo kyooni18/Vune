@@ -13,6 +13,7 @@ import {
   setLayoutStyle,
 } from './layout.js'
 import { applyMusePlugins } from './runtime/modifier-pipeline.js'
+import { inheritViewNode, markModifiedViewNode } from './runtime/view-graph.js'
 import type {
   Alignment,
   Axis,
@@ -27,9 +28,31 @@ import type {
 
 const proxyCache = new WeakMap<object, StyledElement>()
 const proxyTargets = new WeakMap<object, ReactElement>()
+export interface ModifierRecord {
+  readonly name: string
+  readonly arguments: readonly unknown[]
+}
+const modifierGraphs = new WeakMap<object, readonly ModifierRecord[]>()
 
 function raw(element: ReactElement): ReactElement {
   return proxyTargets.get(element as object) ?? element
+}
+
+function inheritModifierGraph(source: ReactElement, target: ReactElement): void {
+  const graph = modifierGraphs.get(raw(source) as object)
+  if (graph) modifierGraphs.set(raw(target) as object, graph)
+  inheritViewNode(source, target)
+}
+
+function appendModifier(element: ReactElement, name: string, args: readonly unknown[]): void {
+  const target = raw(element)
+  const previous = modifierGraphs.get(target as object) ?? []
+  modifierGraphs.set(target as object, [...previous, { name, arguments: [...args] }])
+}
+
+/** Inspect the immutable ModifiedContent-like graph represented by an element. */
+export function modifierGraphOf(element: ReactElement): readonly ModifierRecord[] {
+  return [...(modifierGraphs.get(raw(element) as object) ?? [])]
 }
 
 function cssLength(value: Length): string {
@@ -45,6 +68,7 @@ function currentStyle(element: ReactElement): StyleValue {
 function patch(element: ReactElement, extraProps: Record<string, unknown>): StyledElement {
   const target = raw(element)
   const clone = cloneElement(target, extraProps as any)
+  inheritModifierGraph(element, clone)
   copyLayoutProps(element, clone)
   return styled(clone)
 }
@@ -52,6 +76,7 @@ function patch(element: ReactElement, extraProps: Record<string, unknown>): Styl
 function patchStyle(element: ReactElement, style: StyleValue): StyledElement {
   if (isComponentElement(element)) {
     const clone = cloneElement(raw(element))
+    inheritModifierGraph(element, clone)
     copyLayoutProps(element, clone)
     setLayoutStyle(clone, style)
     return styled(clone)
@@ -208,7 +233,12 @@ export function styled(element: ReactElement): StyledElement {
     get(current, property, receiver) {
       if (typeof property === 'string' && property in modifiers) {
         const modifier = (modifiers as any)[property]
-        return (...args: any[]) => modifier.apply(proxy, args)
+        return (...args: any[]) => {
+          const result = modifier.apply(proxy, args)
+          appendModifier(result, property, args)
+          markModifiedViewNode(proxy, result, property, args)
+          return result
+        }
       }
       return Reflect.get(current as object, property, receiver)
     },

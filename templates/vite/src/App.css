@@ -1,0 +1,134 @@
+.demo-page {
+  width: min(100% - 40px, 520px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 52px 0;
+}
+
+.demo-title {
+  color: #20384a;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.demo-description {
+  color: #718793;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.code-sample {
+  width: 100%;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f6f8f9;
+  color: #526673;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.field-label {
+  color: #627987;
+  font-size: 13px;
+}
+
+.field-value {
+  color: #687d88;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: #f4f7f8;
+  color: #20384a;
+  box-shadow: none;
+}
+
+.demo-input::placeholder {
+  color: #9aabb5;
+}
+
+.demo-input:focus {
+  background: #eef5f7;
+}
+
+.demo-slider {
+  width: 100%;
+  accent-color: #8eacba;
+}
+
+.demo-page input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #8eacba;
+}
+
+.section-label {
+  color: #718793;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.component-list {
+  gap: 0;
+  padding-top: 4px;
+}
+
+.object-row {
+  min-height: 44px;
+  padding: 8px 0;
+}
+
+.object-name {
+  color: #718793;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.object-preview {
+  color: #405866;
+  font-size: 13px;
+}
+
+.demo-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #eef2f3;
+  color: #405866;
+  font-size: 12px;
+}
+
+.object-progress {
+  width: 120px;
+  height: 4px;
+  accent-color: #8eacba;
+}
+
+.object-progress::-webkit-progress-bar {
+  background: #e7edef;
+  border-radius: 4px;
+}
+
+.object-progress::-webkit-progress-value {
+  background: #8eacba;
+  border-radius: 4px;
+}
+
+@media (max-width: 520px) {
+  .demo-page {
+    width: min(100% - 28px, 520px);
+    padding-top: 32px;
+  }
+}

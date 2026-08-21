@@ -50,7 +50,7 @@ Vite macro is parsed with the TypeScript AST and returns source maps.
 
 The stable package entry point is the function DSL. The layout engine,
 coordinate runtime, layout observer, metadata/plugin registry, and block-builder
-transform are exported from `muse/experimental` until their integration story
+transform are exported from `react-muse-ui/experimental` until their integration story
 is consolidated. Experimental plugins run for both DSL and JSX-created nodes;
 JSX additionally records its creation-time modifier metadata.
 
@@ -62,11 +62,11 @@ The explicit runtime APIs remain available when macros are undesirable.
 
 ## Public surface
 
-The root `muse` entry point intentionally contains the stable function DSL. The
-automatic JSX runtimes and `muse/vite` are supported integration entry points.
+The root `react-muse-ui` entry point intentionally contains the stable function DSL. The
+automatic JSX runtimes and `react-muse-ui/vite` are supported integration entry points.
 Coordinate spaces expose `CoordinateNode` values, while the proposal-based
 measurement experiment exposes `LayoutNode` values; keeping those concepts
 distinct avoids silently treating observed DOM geometry as a layout proposal.
-The block-builder transform lives behind `muse/experimental` or `muse/compiler`
+The block-builder transform lives behind `react-muse-ui/experimental` or `react-muse-ui/compiler`
 until these contracts are consolidated. See [API.md](./API.md) for the current
 surface inventory.
