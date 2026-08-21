@@ -106,6 +106,35 @@ metadata rather than a hard-coded component-name list; malformed calls produce
 structured compiler diagnostics and `MuseInitializerError` at the runtime
 boundary.
 
+The same source syntax can be used with built-in and custom Views:
+
+```ts
+VStack(alignment: .leading, spacing: 12) {
+  Text('Header').font(.title)
+  if (enabled) {
+    EnabledView()
+  } else {
+    DisabledView()
+  }
+}
+
+Button(action: { save() }) {
+  Text('Save')
+}
+```
+
+`museMacro()` lowers these builder, labeled-argument, shorthand-modifier, and
+`struct` forms before the TypeScript/React transform. `parseMuseBuilder()` and
+`parseMuseStructs()` expose the source-ranged AST consumed by that lowering
+pass, without a component-name allow-list. Labeled calls use an internal
+`namedArguments()` carrier; JavaScript object calls remain available as the
+compatibility form. Editor integrations that do not
+run Vite can use `createMuseLanguageService()` from `react-muse-ui/compiler`;
+its diagnostics and positions remain in the original Muse source space. A
+TypeScript host can use `createMuseTypeScriptLanguageService()` to parse the
+same lowered snapshots in editor tooling; diagnostics and common text spans are
+mapped back to the original Muse file.
+
 ## React entry point
 
 A minimal app entry can stay free of JSX too:

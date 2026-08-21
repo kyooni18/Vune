@@ -1,12 +1,18 @@
 import * as ts from 'typescript'
+import { transformMuseBuilderSyntax } from './compiler/builder-transform.js'
+import { transformMuseStructSyntax } from './compiler/struct-transform.js'
+import { createLegacyMuseSourceMap } from './compiler/source-map.js'
 
 export interface MuseSourceMap {
-  version: 3
-  file?: string
-  sources: string[]
-  sourcesContent?: string[]
-  names: string[]
-  mappings: string
+  readonly version: 3
+  readonly file?: string
+  readonly sources: readonly string[]
+  readonly sourcesContent?: readonly string[]
+  readonly names: readonly string[]
+  readonly mappings: string
+  readonly x_muse?: {
+    readonly lineMappings: readonly { line: number; column: number }[]
+  }
 }
 
 export interface MuseMacroPlugin {
@@ -382,6 +388,37 @@ interface MacroTransformResult {
   diagnostics: MacroDiagnostic[]
 }
 
+function hasMuseSyntax(source: string): boolean {
+  const hasStruct = /\bstruct\s+[A-Z][A-Za-z0-9_$]*(?:\s*<[^>{}]*>)?\s*:\s*View\b/.test(source)
+  const hasView = /\bview\s*\(/.test(source)
+  if (!hasStruct && !hasView) return false
+  return hasStruct
+    || /\b(?:@State|@Binding|@ViewBuilder|@Action)\b/.test(source)
+    || /\b[A-Z][A-Za-z0-9_$]*\s*\([^\n]*\)\s*\{/.test(source)
+    || /\b[A-Za-z_$][A-Za-z0-9_$]*\s*:\s*(?:\.|\$|\{)/.test(source)
+    || /\.font\s*\(\s*\./.test(source)
+}
+
+function lowerMuseSyntax(source: string): string {
+  if (!hasMuseSyntax(source)) return source
+  const lowered = transformMuseBuilderSyntax(transformMuseStructSyntax(source))
+  const required = [
+    ...( /\bBinding\s*\(/.test(lowered) ? ['Binding'] : []),
+    ...( /\bnamedArguments\s*\(/.test(lowered) ? ['namedArguments'] : []),
+    ...( /\boverloadClosure\s*\(/.test(lowered) ? ['overloadClosure'] : []),
+  ]
+  if (required.length === 0) return lowered
+
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(lowered)
+  if (!existing) return `import { ${required.join(', ')} } from 'react-muse-ui'\n${lowered}`
+  const imported = existing[1].split(',').map(name => name.trim()).filter(Boolean)
+  const merged = [...imported]
+  for (const name of required) if (!merged.includes(name)) merged.push(name)
+  if (merged.length === imported.length) return lowered
+  const replacement = `import { ${merged.join(', ')} } from 'react-muse-ui'`
+  return lowered.slice(0, existing.index) + replacement + lowered.slice(existing.index + existing[0].length)
+}
+
 function transformMuseMacrosWithMap(source: string, id = ''): MacroTransformResult | null {
   if (source.includes('/* @muse-macro-transformed */')) return null
   if (id) {
@@ -436,15 +473,21 @@ export function museMacro(): MuseMacroPlugin {
     name: 'muse-macro',
     enforce: 'pre',
     transform(code, id) {
-      const result = transformMuseMacrosWithMap(code, id)
+      const lowered = lowerMuseSyntax(code)
+      const result = transformMuseMacrosWithMap(lowered, id)
       if (result) {
         for (const diagnostic of result.diagnostics) {
           const location = sourceLocation(code, diagnostic.start)
           this?.warn(`[muse-macro] ${id}:${location.line + 1}:${location.column + 1}: ${diagnostic.message}`)
         }
-        return { code: result.code, map: result.map }
+        return {
+          code: result.code,
+          map: lowered === code ? result.map : createLegacyMuseSourceMap(code, result.code, id) as MuseSourceMap,
+        }
       }
-      return null
+      return lowered === code
+        ? null
+        : { code: lowered, map: createLegacyMuseSourceMap(code, lowered, id) as MuseSourceMap }
     },
   }
 }
@@ -454,5 +497,6 @@ export function museMacro(): MuseMacroPlugin {
  * source-map object. The Vite plugin uses the richer internal result above.
  */
 export function transformMuseMacros(source: string, id = ''): string | null {
-  return transformMuseMacrosWithMap(source, id)?.code ?? null
+  const lowered = lowerMuseSyntax(source)
+  return transformMuseMacrosWithMap(lowered, id)?.code ?? (lowered === source ? null : lowered)
 }

@@ -1,4 +1,5 @@
 import { isValidElement, useSyncExternalStore } from 'react'
+import { actionClosure } from './closures.js'
 import type { BindingRef, StateRef, Value } from './types.js'
 
 type Listener = () => void
@@ -249,6 +250,6 @@ export function Binding<T>(
  * Action(() => expression) also works without the macro.
  */
 export function Action<T>(expression: T | (() => T)): () => T {
-  if (typeof expression === 'function') return expression as () => T
-  return () => expression
+  if (typeof expression === 'function') return actionClosure(expression as () => T)
+  return actionClosure(() => expression)
 }

@@ -1,3 +1,6 @@
+import { museSyntaxError } from './errors.js'
+import { lowerMuseBuilderAst, parseMuseBuilder } from './ast.js'
+
 /**
  * Transforms Muse's optional block-builder syntax into ordinary JavaScript.
  *
@@ -44,7 +47,7 @@ function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
     if (source[i] === quote) return i + 1
     i += 1
   }
-  throw new SyntaxError(`Unclosed ${quote} string in Muse builder source`)
+  throw museSyntaxError(`Unclosed ${quote} string in Muse builder source`, index)
 }
 
 function skipLineComment(source: string, index: number): number {
@@ -54,7 +57,7 @@ function skipLineComment(source: string, index: number): number {
 
 function skipBlockComment(source: string, index: number): number {
   const close = source.indexOf('*/', index + 2)
-  if (close === -1) throw new SyntaxError('Unclosed block comment in Muse builder source')
+  if (close === -1) throw museSyntaxError('Unclosed block comment in Muse builder source', index)
   return close + 2
 }
 
@@ -72,7 +75,7 @@ function skipTemplate(source: string, index: number): number {
     }
     i += 1
   }
-  throw new SyntaxError('Unclosed template literal in Muse builder source')
+  throw museSyntaxError('Unclosed template literal in Muse builder source', index)
 }
 
 function skipRegex(source: string, index: number): number {
@@ -155,119 +158,28 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
     }
   }
 
-  throw new SyntaxError(`Unclosed ${open} block in Muse builder source`)
-}
-
-function isLineBreakDelimiter(source: string, index: number): boolean {
-  const previous = previousSignificant(source, index)
-  const nextIndex = skipTrivia(source, index + 1)
-  const next = source[nextIndex]
-  if (previous === undefined || next === undefined) return true
-  if (',([{.=:+-*/%!&|?<>'.includes(previous)) return false
-  if ('.),]}:;'.includes(next)) return false
-  return true
-}
-
-function protectTopLevelLineComment(source: string): string {
-  let parens = 0
-  let brackets = 0
-  let braces = 0
-  for (let i = 0; i < source.length; i += 1) {
-    const char = source[i]
-    const next = source[i + 1]
-    if (char === "'" || char === '"') {
-      i = skipQuoted(source, i, char) - 1
-      continue
-    }
-    if (char === '`') {
-      i = skipTemplate(source, i) - 1
-      continue
-    }
-    if (char === '/' && next === '/' && parens === 0 && brackets === 0 && braces === 0) {
-      if (!source.slice(0, i).trim()) return ''
-      return `${source.slice(0, i)}/*${source.slice(i + 2)}*/`
-    }
-    if (char === '/' && next === '*') {
-      i = skipBlockComment(source, i) - 1
-      continue
-    }
-    if (char === '/' && regexCanStartAfter(source, i)) {
-      i = skipRegex(source, i) - 1
-      continue
-    }
-    if (char === '(') parens += 1
-    else if (char === ')') parens -= 1
-    else if (char === '[') brackets += 1
-    else if (char === ']') brackets -= 1
-    else if (char === '{') braces += 1
-    else if (char === '}') braces -= 1
-  }
-  return source
-}
-
-function splitBuilderChildren(source: string): string[] {
-  const parts: string[] = []
-  let start = 0
-  let parens = 0
-  let brackets = 0
-  let braces = 0
-  let breakAfterLineComment = false
-
-  const push = (end: number) => {
-    const part = protectTopLevelLineComment(source.slice(start, end)).trim()
-    if (part) parts.push(part)
-    start = end + 1
-  }
-
-  for (let i = 0; i < source.length; i += 1) {
-    const char = source[i]
-    const next = source[i + 1]
-    if (char === "'" || char === '"') {
-      i = skipQuoted(source, i, char) - 1
-      continue
-    }
-    if (char === '`') {
-      i = skipTemplate(source, i) - 1
-      continue
-    }
-    if (char === '/' && next === '/') {
-      const end = skipLineComment(source, i)
-      breakAfterLineComment = end < source.length && parens === 0 && brackets === 0 && braces === 0
-      i = end - 1
-      continue
-    }
-    if (char === '/' && next === '*') {
-      i = skipBlockComment(source, i) - 1
-      continue
-    }
-    if (char === '/' && regexCanStartAfter(source, i)) {
-      i = skipRegex(source, i) - 1
-      continue
-    }
-    if (char === '(') parens += 1
-    else if (char === ')') parens -= 1
-    else if (char === '[') brackets += 1
-    else if (char === ']') brackets -= 1
-    else if (char === '{') braces += 1
-    else if (char === '}') braces -= 1
-
-    if (parens === 0 && brackets === 0 && braces === 0) {
-      if (char === ',' || char === ';' || (char === '\n' && (breakAfterLineComment || isLineBreakDelimiter(source, i)))) {
-        push(i)
-      }
-      if (char === '\n') breakAfterLineComment = false
-    }
-  }
-
-  const final = source.slice(start).trim()
-  if (final) parts.push(final)
-  return parts
+  throw museSyntaxError(`Unclosed ${open} block in Muse builder source`, openIndex)
 }
 
 const controlKeywords = new Set([
   'if', 'else', 'for', 'while', 'switch', 'catch', 'with', 'function', 'class',
   'try', 'do', 'finally', 'return', 'throw', 'new', 'typeof', 'void', 'delete',
 ])
+
+function isDeclarationLikeCall(source: string, start: number, body: string): boolean {
+  const prefix = source.slice(Math.max(0, start - 80), start)
+  if (/\bfunction\s*\*?\s*$/.test(prefix)) return true
+  // JavaScript class/object methods have no `function` token. A return/yield
+  // at the start of their block is a reliable boundary for this lexical
+  // transform, while ordinary Muse builder blocks contain child expressions.
+  return /^(?:return|yield)\b/.test(body.trim())
+}
+
+function isDeclarationLikeSignature(source: string, start: number, close: number, next: number): boolean {
+  const prefix = source.slice(Math.max(0, start - 80), start)
+  if (/\bfunction\s*\*?\s*$/.test(prefix)) return true
+  return /^\s*:\s*/.test(source.slice(close + 1, next))
+}
 
 function splitTopLevelArguments(source: string): string[] {
   const parts: string[] = []
@@ -316,55 +228,67 @@ function splitTopLevelArguments(source: string): string[] {
   return parts
 }
 
-function namedCallArguments(source: string): string {
-  const parts = splitTopLevelArguments(source)
-  if (parts.length === 0 || parts.some(part => !/^[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(part))) return source.trim()
-  const values = parts.map(part => {
-    const match = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*([\s\S]*)$/.exec(part)
-    if (!match) return part
-    const [, label, value] = match
-    const trimmed = value.trim()
-    if (!['label', 'content', 'action'].includes(label) || trimmed[0] !== '{') return `${label}: ${value}`
-    const close = findMatching(trimmed, 0, '{')
-    if (close !== trimmed.length - 1) return `${label}: ${value}`
-    const body = trimmed.slice(1, close)
-    if (label === 'action') return `${label}: () => { ${transformRange(body)} }`
-    return `${label}: () => [${transformBuilderBody(body).join(', ')}]`
-  })
-  return `{ ${values.join(', ')} }`
+function lowerMuseShorthand(value: string): string {
+  // Swift-style enum cases are unqualified in argument position. Keep this
+  // deliberately lexical: a normal member expression such as `item.value`
+  // must remain untouched.
+  return value.replace(/(^|[(:,=]\s*)\.([A-Za-z_$][A-Za-z0-9_$]*)/g, "$1'$2'")
 }
 
-function conditionalChild(source: string): string | null {
-  const trimmed = source.trim()
-  if (!/^if\b/.test(trimmed)) return null
-  const open = trimmed.indexOf('(')
-  if (open < 0) return null
-  const close = findMatching(trimmed, open, '(')
-  const condition = trimmed.slice(open + 1, close).trim()
-  const thenOpen = skipTrivia(trimmed, close + 1)
-  if (trimmed[thenOpen] !== '{') return null
-  const thenClose = findMatching(trimmed, thenOpen, '{')
-  const thenChildren = splitBuilderChildren(transformRange(trimmed.slice(thenOpen + 1, thenClose)))
-  const afterThen = skipTrivia(trimmed, thenClose + 1)
-  let elseChildren = '[]'
-  if (trimmed.slice(afterThen, afterThen + 4) === 'else') {
-    const elseOpen = skipTrivia(trimmed, afterThen + 4)
-    if (trimmed.slice(elseOpen, elseOpen + 2) === 'if') {
-      const nested = conditionalChild(trimmed.slice(elseOpen))
-      elseChildren = nested ?? '[]'
-    } else if (trimmed[elseOpen] === '{') {
-      const elseClose = findMatching(trimmed, elseOpen, '{')
-      const children = splitBuilderChildren(transformRange(trimmed.slice(elseOpen + 1, elseClose)))
-      elseChildren = `[${children.join(', ')}]`
-    }
+function namedClosure(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed[0] !== '{') return lowerMuseShorthand(value)
+  const close = findMatching(trimmed, 0, '{')
+  if (close !== trimmed.length - 1) return lowerMuseShorthand(value)
+  const body = trimmed.slice(1, close)
+  return closureSource(body)
+}
+
+function actionOnlyClosureBody(source: string): boolean {
+  return /(?:^|[;\n])\s*(?:const|let|var|return|throw|function|class|if|for|while|switch|try|do|break|continue|debugger)\b/.test(source)
+}
+
+function builderClosureBody(source: string): string {
+  const program = parseMuseBuilder(source)
+  const containsStatement = program.statements.some(node => node.kind === 'raw'
+    && /^(?:const|let|var|return|throw|function|class|for|while|switch|try|do|break|continue|debugger)\b/.test(node.source.trim()))
+  return containsStatement ? '[]' : `[${transformBuilderBody(source).join(', ')}]`
+}
+
+function closureSource(body: string, parameter?: string): string {
+  const prefix = parameter ? `(${parameter})` : '()'
+  if (actionOnlyClosureBody(body)) {
+    return `overloadClosure(${prefix} => ${builderClosureBody(body)}, ${prefix} => { ${transformRange(body)} })`
   }
-  return `(${condition} ? [${thenChildren.join(', ')}] : ${elseChildren})`
+  return `${prefix} => [${transformBuilderBody(body).join(', ')}]`
+}
+
+function namedCallArguments(source: string): string {
+  const parts = splitTopLevelArguments(source)
+  if (parts.length === 0) return source.trim()
+
+  const labeled = parts.map(part => {
+    const match = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*([\s\S]*)$/.exec(part)
+    return match ? { label: match[1], value: match[2] } : null
+  })
+  if (!labeled.some(Boolean)) return lowerMuseShorthand(source.trim())
+
+  const named = labeled.flatMap((part, index) => {
+    if (!part) return []
+    return [`${part.label}: ${namedClosure(part.value)}`]
+  })
+  const positional = labeled.flatMap((part, index) => part ? [] : [lowerMuseShorthand(parts[index])])
+  const object = `namedArguments({ ${named.join(', ')} })`
+  // Muse's labeled arguments are lowered to one compatibility object. Keeping
+  // positional arguments in front lets APIs such as Toggle("Wi-Fi", isOn: ...)
+  // use the same resolver as fully labeled calls.
+  return positional.length > 0 ? `${positional.join(', ')}, ${object}` : object
 }
 
 function transformBuilderBody(source: string): string[] {
-  return splitBuilderChildren(source).map(part => {
-    const transformed = transformRange(part)
-    return conditionalChild(transformed) ?? transformed
+  return lowerMuseBuilderAst(parseMuseBuilder(source), {
+    transformRaw: transformRange,
+    closure: closureSource,
   })
 }
 
@@ -411,7 +335,7 @@ function transformRange(source: string): string {
       while (isIdentifierPart(source[i])) i += 1
       const name = source.slice(start, i)
       const previous = source[start - 1]
-      if (controlKeywords.has(name) || previous === '.' || isIdentifierPart(previous)) {
+      if (controlKeywords.has(name) || isIdentifierPart(previous)) {
         output += source.slice(start, i)
         continue
       }
@@ -425,9 +349,14 @@ function transformRange(source: string): string {
       const blockOpen = skipTrivia(source, close + 1)
       if (source[blockOpen] !== '{') {
         const originalArgs = source.slice(open + 1, close)
+        if (isDeclarationLikeSignature(source, start, close, blockOpen)) {
+          output += source.slice(start, close + 1)
+          i = close + 1
+          continue
+        }
         const transformedArgs = transformRange(originalArgs)
         const args = namedCallArguments(transformedArgs)
-        output += args === transformedArgs.trim()
+        output += args === transformedArgs.trim() && transformedArgs === originalArgs
           ? source.slice(start, close + 1)
           : `${name}(${args})`
         i = close + 1
@@ -437,12 +366,14 @@ function transformRange(source: string): string {
       const blockClose = findMatching(source, blockOpen, '{')
       const args = namedCallArguments(transformRange(source.slice(open + 1, close)))
       const rawBody = source.slice(blockOpen + 1, blockClose)
+      if (isDeclarationLikeCall(source, start, rawBody)) {
+        output += source.slice(start, blockClose + 1)
+        i = blockClose + 1
+        continue
+      }
       const parameterMatch = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+([\s\S]*)$/.exec(rawBody)
       const bodySource = parameterMatch?.[2] ?? rawBody
-      const body = transformBuilderBody(bodySource)
-      const callback = parameterMatch
-        ? `(${parameterMatch[1]}) => [${body.join(', ')}]`
-        : `() => [${body.join(', ')}]`
+      const callback = closureSource(bodySource, parameterMatch?.[1])
       output += `${name}(${args ? `${args}, ` : ''}${callback})`
       i = blockClose + 1
       continue
@@ -455,8 +386,66 @@ function transformRange(source: string): string {
   return output
 }
 
+function bindingShorthandContext(source: string, index: number): boolean {
+  const previous = previousSignificant(source, index)
+  if (previous !== undefined && '([{=,:'.includes(previous)) return true
+  const prefix = source.slice(0, index).match(/([A-Za-z_$][A-Za-z0-9_$]*)\s*$/)?.[1]
+  return prefix === 'return' || prefix === 'yield' || prefix === 'case'
+}
+
+/** Lower Swift-style `$state` projections without touching JS identifiers. */
+function lowerBindingShorthand(source: string): string {
+  let output = ''
+  for (let index = 0; index < source.length;) {
+    const char = source[index]
+    if (char === "'" || char === '"') {
+      const end = skipQuoted(source, index, char)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '`') {
+      const end = skipTemplate(source, index)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = skipLineComment(source, index)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const end = skipBlockComment(source, index)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '/' && regexCanStartAfter(source, index)) {
+      const end = skipRegex(source, index)
+      if (end !== index + 1) {
+        output += source.slice(index, end)
+        index = end
+        continue
+      }
+    }
+    if (char === '$' && bindingShorthandContext(source, index)) {
+      const match = /^\$([A-Za-z_$][A-Za-z0-9_$]*)/.exec(source.slice(index))
+      if (match) {
+        output += `Binding(${match[1]})`
+        index += match[0].length
+        continue
+      }
+    }
+    output += char
+    index += 1
+  }
+  return output
+}
+
 export function transformMuseBuilderSyntax(
   source: string,
 ): string {
-  return transformRange(source)
+  return lowerBindingShorthand(transformRange(source))
 }

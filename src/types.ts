@@ -95,6 +95,7 @@ export interface Modifiers {
   border(options?: BorderOptions): StyledElement
   shadow(value: NonNullable<CSSProperties['boxShadow']>): StyledElement
   fontSize(value: Length): StyledElement
+  font(value: string): StyledElement
   fontWeight(value: NonNullable<CSSProperties['fontWeight']>): StyledElement
   fontFamily(value: NonNullable<CSSProperties['fontFamily']>): StyledElement
   lineHeight(value: NonNullable<CSSProperties['lineHeight']>): StyledElement

@@ -175,6 +175,19 @@ const modifiers: Modifiers = {
   },
   shadow(this: ReactElement, value: any) { return patchStyle(this, { boxShadow: value }) },
   fontSize(this: ReactElement, value: Length) { return patchStyle(this, { fontSize: cssLength(value) }) },
+  font(this: ReactElement, value: string) {
+    const styles: Record<string, CSSProperties> = {
+      largeTitle: { fontSize: '2.125rem', fontWeight: 700 },
+      title: { fontSize: '1.5rem', fontWeight: 700 },
+      headline: { fontSize: '1.0625rem', fontWeight: 700 },
+      subheadline: { fontSize: '0.9375rem' },
+      body: { fontSize: '1rem' },
+      callout: { fontSize: '0.9375rem' },
+      caption: { fontSize: '0.75rem' },
+      footnote: { fontSize: '0.8125rem' },
+    }
+    return patchStyle(this, styles[value] ?? { fontFamily: value })
+  },
   fontWeight(this: ReactElement, value: any) { return patchStyle(this, { fontWeight: value }) },
   fontFamily(this: ReactElement, value: any) { return patchStyle(this, { fontFamily: value }) },
   lineHeight(this: ReactElement, value: any) { return patchStyle(this, { lineHeight: value }) },
@@ -247,6 +260,9 @@ export function styled(element: ReactElement): StyledElement {
   proxyCache.set(target as object, proxy)
   proxyTargets.set(proxy as object, target)
   registerStyledProxy(proxy as object, target)
+  // Renderer materialization marks the raw React element. Keep that graph
+  // visible through the public styled proxy as well.
+  inheritViewNode(target, proxy)
   return proxy
 }
 

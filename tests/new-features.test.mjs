@@ -93,6 +93,7 @@ test('Vite and SWC adapters use the same builder transform and support query IDs
 
   const swc = createMuseSwcVisitor()
   assert.equal(swc.transform(source), "VStack(() => [Text('A')])")
+  assert.match(swc.transform('VStack(spacing: 8) { Text(\'A\') }'), /import \{ namedArguments \}/)
 })
 
 test('Muse JSX runtimes preserve native props and apply all style modifiers', () => {

@@ -26,30 +26,60 @@ layout host.
 
 ## View model and compiler
 
-`defineView(name, definition)` creates a React-compatible View constructor with
-explicit initializer metadata and a `body(props)` function. `initializer()`
+`defineView(name, definition)` creates a `ViewType` plus a callable compatibility
+constructor with explicit initializer metadata and a `body(props)` function.
+Built-in layout, control, collection, and presentation constructors use the same
+boundary; `Element`, `Component`, and `Group` are native compatibility views
+rather than a separate construction path. The legacy `view(...)` factory also
+returns a React component backed by a `ViewType`.
+`createViewNode()` can run
+the same initializer boundary and return a renderer-neutral graph node before
+React is involved; calling the constructor remains the compatibility path that
+materializes that node as a React element. User View nodes can be traversed by a
+custom renderer through the optional `view` hook or by recursively lowering
+their body graph. `initializer()`
 describes overload matching, labels, and `value`/`viewBuilder`/`action`
-parameters. `resolveInitializer()` is the same overload boundary used by
-built-in Views. `structView` is an alias for this model.
+parameters; `valueClosure()`, `viewBuilderClosure()`, and `actionClosure()`
+retain those roles at runtime as well. `resolveInitializer()`
+is the same overload boundary used by built-in Views. `structView` is an alias
+for this model.
 
 `ViewBuilder.buildBlock`, `buildOptional`, `buildEither`, and `buildArray` are
 the runtime intermediate representation for builder composition. The compiler
 entry point `react-muse-ui/compiler` transforms trailing blocks, labeled arguments,
 conditionals, `ForEach` item closures, and the supported `struct ...: View`
-syntax. It does not classify calls by a `VStack`-style allow-list. Use
-`formatMuseSource()` and `diagnoseMuseSource()` from that entry point for editor
-and formatter integrations; Vite transforms return source maps.
+syntax. `parseMuseBuilder()` and `parseMuseStructs()` expose the source-ranged
+AST used by the lowering pass; it does not classify calls by a `VStack`-style
+allow-list. Labeled syntax is lowered through the internal `namedArguments()`
+carrier, while ordinary JavaScript object calls remain a compatibility form.
+`formatMuseSource()` and `diagnoseMuseSource()` are available for one-off
+editor operations. `createMuseLanguageService()` combines formatting,
+diagnostics, source-map output, and original-source position conversion for an
+editor integration. `createMuseTypeScriptLanguageService()` wraps a
+`ts.LanguageServiceHost` so TypeScript/VS Code-style services parse the same
+lowered snapshots. `mapGeneratedPosition()` and `mapOriginalPosition()` expose
+the token-level anchors used by that adapter. Vite transforms use the standard
+source-map shape.
 
-Modifier chains are immutable. They return cloned React values and retain an
+Modifier chains are immutable. They return cloned compatibility values and retain an
 inspectable `modifierGraphOf()` record, analogous to a `ModifiedContent<View,
-Modifier>` graph. `Binding()` provides a writable lens over State or a custom
-getter/setter and remains compatible with controlled Muse controls.
+Modifier>` graph. The graph also exposes a renderer-neutral `ModifiedContent`
+node and can be traversed with `renderViewNode(value, renderer)`. React is the
+default materializer; other renderers can implement `value()` for primitive
+leaves and `view()`/`modifier()` for host-specific behavior. `Binding()` provides
+a writable lens over State or a custom getter/setter and remains compatible with
+controlled Muse controls.
+
+`createViewIdentityStore()` exposes the same renderer-independent identity
+primitive used by the React host for per-mounted-View storage; the host-specific
+hook only supplies mount lifetime.
 
 ## Supported integration entry points
 
-- `react-muse-ui/vite` — the optional TypeScript AST macro for `State`, `Action`, and
-  `view`. Put `museMacro()` before `@vitejs/plugin-react`. Transformed modules
-  include source maps.
+- `react-muse-ui/vite` — the TypeScript AST macro for `State`, `Action`, `view`,
+  builder blocks, labeled arguments, shorthand modifiers, and `struct ...: View`.
+  Put `museMacro()` before `@vitejs/plugin-react`. Transformed modules include
+  source maps.
 - `react-muse-ui/jsx-runtime` and `react-muse-ui/jsx-dev-runtime` — the automatic JSX runtimes.
   With `jsxImportSource: "react-muse-ui"`, Muse modifier attributes on intrinsic elements
   are type-checked as well as applied at runtime.

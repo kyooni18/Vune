@@ -69,6 +69,26 @@ export default view(
 
 The React macro now lowers this to per-component-instance `view({ state, body })` state.
 
+## View initializers and builder syntax
+
+The function DSL remains source-compatible, but new View code should use the
+shared initializer boundary. Built-ins and custom `struct ...: View` types use
+the same `value`, `@ViewBuilder`, and `@Action` metadata; labeled calls and
+trailing builders are lowered by `museMacro()`:
+
+```ts
+VStack(alignment: .leading, spacing: 12) {
+  Text('Header')
+}
+
+Button(action: { save() }) {
+  Text('Save')
+}
+```
+
+Existing object forms such as `VStack({ alignment: 'leading' }, builder)` and
+`Button({ action, label })` remain the compatibility form during migration.
+
 The current macro is parsed with the TypeScript AST. It recognizes generic
 calls such as `State<Todo[]>([])`, respects lexical scope, preserves
 `Action(() => callback)` functions, and emits source maps through the Vite

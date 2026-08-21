@@ -15,7 +15,21 @@ export function createMuseSwcVisitor(_options: MuseTransformOptions = {}) {
   return {
     name: 'muse-builder-transform',
     transform(code: string) {
-      return transformMuseBuilderSyntax(transformMuseStructSyntax(code))
+      const lowered = transformMuseBuilderSyntax(transformMuseStructSyntax(code))
+      return [
+        ...(lowered.includes('namedArguments(') ? ['namedArguments'] : []),
+        ...(lowered.includes('overloadClosure(') ? ['overloadClosure'] : []),
+      ].reduce((value, name) => ensureRuntimeImport(value, name), lowered)
     },
   }
+}
+
+function ensureRuntimeImport(source: string, name: string): string {
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${name} } from 'react-muse-ui'\n${source}`
+  const imported = existing[1].split(',').map(value => value.trim()).filter(Boolean)
+  if (imported.includes(name)) return source
+  imported.push(name)
+  const replacement = `import { ${imported.join(', ')} } from 'react-muse-ui'`
+  return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }

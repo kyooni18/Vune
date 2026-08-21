@@ -14,16 +14,15 @@ import {
 import { flattenTransparentFragments, isComponentElement, layoutChild, layoutChildren, layoutPropsOf } from './layout.js'
 import { finalize } from './modifiers.js'
 import { collectChildren, type MuseBuilder } from './builder.js'
+import { closureKindOf, markMuseClosure } from './closures.js'
 import { resolveValue } from './state.js'
 import {
-  assertInitializerCall,
   defineBuiltinView,
   initializer,
   initializerKinds,
-  registerInitializers,
+  type ViewCallable,
 } from './view-system.js'
-import { materializeViewNode } from './runtime/renderer.js'
-import { viewElement, viewFragment, type ViewNode } from './runtime/view-graph.js'
+import { viewElement, viewFragment, viewGraphChild, viewGraphChildren, type ViewNode } from './runtime/view-graph.js'
 import type {
   ComponentProps,
   GridOptions,
@@ -92,10 +91,7 @@ function builtinArgs(args: readonly unknown[]): Record<string, unknown> {
   return { args: [...args] }
 }
 
-export function Element(tag: string, props: NativeProps | null = null, ...children: ReactNode[]): StyledElement {
-  assertInitializerCall(Element, [tag, props, ...children])
-  return finalize(createElement(tag, props as any, ...flatten(children)))
-}
+type BuiltinViewCallable<Call extends (...args: any[]) => any> = ViewCallable<Call, { args: readonly unknown[] }>
 
 type RequiredPropKeys<T> = {
   [K in keyof T]-?: {} extends Pick<T, K> ? never : K
@@ -105,35 +101,55 @@ type ComponentArguments<C extends ElementType> = [RequiredPropKeys<ComponentProp
   ? [props?: ComponentProps<C> | null, ...children: ReactNode[]]
   : [props: ComponentProps<C>, ...children: ReactNode[]]
 
-export function Component<C extends ElementType>(component: C, ...args: ComponentArguments<C>): StyledElement
-export function Component(component: ElementType, ...args: Array<unknown>): StyledElement {
-  assertInitializerCall(Component, [component, ...args])
-  const [props, ...children] = args
-  return finalize(createElement(component as any, props as any, ...children as ReactNode[]))
-}
+const ElementView = defineBuiltinView<{ args: readonly unknown[] }>('Element', [
+  initializer('Element(tag, props?, ...children)', noFunction, builtinArgs),
+], ({ args }) => {
+  const [tag, props, ...children] = args
+  return viewElement(tag, (props ?? null) as NativeProps | null, viewGraphChildren(flatten(children as ReactNode[])))
+}) as unknown as BuiltinViewCallable<{
+  (tag: string, props?: NativeProps | null, ...children: ReactNode[]): StyledElement
+}>
+
+export const Element = ElementView
+
+const ComponentView = defineBuiltinView<{ args: readonly unknown[] }>('Component', [
+  initializer('Component(component, props?, ...children)', args => args.length >= 1 && !args.slice(1).some(value => typeof value === 'function'), builtinArgs),
+], ({ args }) => {
+  const [component, props, ...children] = args
+  return viewElement(component, (props ?? null) as object | null, viewGraphChildren(children as ReactNode[]))
+}) as unknown as BuiltinViewCallable<{
+  <C extends ElementType>(component: C, ...args: ComponentArguments<C>): StyledElement
+}>
+
+export const Component = ComponentView
 
 export function Raw(element: ReactElement): StyledElement { return finalize(element) }
 export function Key(key: string | number, child: ReactElement): StyledElement { return finalize(child).keyed(key) }
 export function ElementRef(reference: Ref<unknown>, child: ReactElement): StyledElement { return finalize(child).elementRef(reference) }
-export function Group(builder: MuseBuilder): ReactElement
-export function Group(...children: ReactNode[]): ReactElement
-export function Group(...children: Array<ReactNode | MuseBuilder>): ReactElement {
-  assertInitializerCall(Group, children)
-  return finalize(materializeViewNode(viewFragment(flatten(collectChildren(children)))))
-}
+const GroupView = defineBuiltinView<{ args: readonly unknown[] }>('Group', [
+  initializer('Group(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder()]),
+  initializer('Group(...children)', noFunction, builtinArgs),
+], ({ args }) => viewFragment(
+  viewGraphChildren(flatten(collectChildren([...args]) as ReactNode[])),
+)) as unknown as BuiltinViewCallable<{
+  (builder: MuseBuilder): ReactElement
+  (...children: ReactNode[]): ReactElement
+}>
+
+export const Group = GroupView
 
 function buildBox(args: readonly unknown[]): ViewNode {
   const children = args.length === 1 && typeof args[0] === 'function' ? collectChildren([...args]) : [...args] as ReactNode[]
-  return viewElement('div', { style: { outline: 'none' } }, layoutChildren(flatten(children)))
+  return viewElement('div', { style: { outline: 'none' } }, viewGraphChildren(layoutChildren(flatten(children))))
 }
 
 export const Box = defineBuiltinView<{ args: readonly unknown[] }>('Box', [
   initializer('Box(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
   initializer('Box(...children)', noFunction, builtinArgs),
-], ({ args }) => buildBox(args)) as unknown as {
+], ({ args }) => buildBox(args)) as unknown as BuiltinViewCallable<{
   (builder: MuseBuilder): StyledElement
   (...children: ReactNode[]): StyledElement
-}
+}>
 
 function buildScrollView(args: readonly unknown[]): ViewNode {
   const child = args[0] as ReactNode
@@ -141,20 +157,41 @@ function buildScrollView(args: readonly unknown[]): ViewNode {
   const resolved = typeof child === 'function' ? collectChildren([child]) : [child]
   const overflowX = axis === 'horizontal' || axis === 'both' ? 'auto' : 'hidden'
   const overflowY = axis === 'vertical' || axis === 'both' ? 'auto' : 'hidden'
-  return viewElement('div', { style: { outline: 'none', overflowX, overflowY } }, layoutChildren(flatten(resolved)))
+  return viewElement('div', { style: { outline: 'none', overflowX, overflowY } }, viewGraphChildren(layoutChildren(flatten(resolved))))
 }
 
 export const ScrollView = defineBuiltinView<{ args: readonly unknown[] }>('ScrollView', [
   initializer('ScrollView(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
   initializer('ScrollView(content, axis?)', args => args.length >= 1 && args.length <= 2 && typeof args[0] !== 'function', builtinArgs, [initializerKinds.value(true, 'content'), initializerKinds.value(false, 'axis')]),
-], ({ args }) => buildScrollView(args)) as unknown as {
+], ({ args }) => buildScrollView(args)) as unknown as BuiltinViewCallable<{
   (child: ReactNode, axis?: ScrollAxis): StyledElement
-}
+}>
 
-export function Rectangle(): StyledElement { return Box() }
-export function RoundedRectangle(radius: Length = 8): StyledElement { return Box().radius(radius) }
-export function Circle(): StyledElement { return Box().radius('50%') }
-export function Capsule(): StyledElement { return Box().radius('9999px') }
+const shapeArgs = (args: readonly unknown[]): Record<string, unknown> => ({ args: [...args] })
+
+export const Rectangle = defineBuiltinView<{ args: readonly unknown[] }>('Rectangle', [
+  initializer('Rectangle()', args => args.length === 0, shapeArgs),
+], () => viewElement('div', { style: { outline: 'none' } })) as unknown as BuiltinViewCallable<{
+  (): StyledElement
+}>
+
+export const RoundedRectangle = defineBuiltinView<{ args: readonly unknown[] }>('RoundedRectangle', [
+  initializer('RoundedRectangle(radius?)', args => args.length <= 1 && typeof args[0] !== 'function', shapeArgs, [initializerKinds.value(false, 'radius')]),
+], ({ args }) => viewElement('div', { style: { outline: 'none', borderRadius: cssLength((args[0] ?? 8) as Length) } })) as unknown as BuiltinViewCallable<{
+  (radius?: Length): StyledElement
+}>
+
+export const Circle = defineBuiltinView<{ args: readonly unknown[] }>('Circle', [
+  initializer('Circle()', args => args.length === 0, shapeArgs),
+], () => viewElement('div', { style: { outline: 'none', borderRadius: '50%' } })) as unknown as BuiltinViewCallable<{
+  (): StyledElement
+}>
+
+export const Capsule = defineBuiltinView<{ args: readonly unknown[] }>('Capsule', [
+  initializer('Capsule()', args => args.length === 0, shapeArgs),
+], () => viewElement('div', { style: { outline: 'none', borderRadius: '9999px' } })) as unknown as BuiltinViewCallable<{
+  (): StyledElement
+}>
 
 function buildVStack(args: readonly unknown[]): ViewNode {
   const options: VStackOptions = isOptions(args[0]) ? args[0] as VStackOptions : {}
@@ -169,19 +206,19 @@ function buildVStack(args: readonly unknown[]): ViewNode {
       ...(options.alignment === undefined ? {} : { alignItems: horizontalAlignment(options.alignment) }),
       ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
     },
-  }, layoutChildren(flatten(children)))
+  }, viewGraphChildren(layoutChildren(flatten(children))))
 }
 
 export const VStack = defineBuiltinView<{ args: readonly unknown[] }>('VStack', [
   initializer('VStack(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
-  initializer('VStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('VStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options', ['alignment', 'spacing']), initializerKinds.viewBuilder(true, 'content')]),
   initializer('VStack(...children)', noFunction, builtinArgs),
-], ({ args }) => buildVStack(args)) as unknown as {
+], ({ args }) => buildVStack(args)) as unknown as BuiltinViewCallable<{
   (builder: MuseBuilder): StyledElement
   (...children: ReactNode[]): StyledElement
   (options: VStackOptions, ...children: ReactNode[]): StyledElement
   (options: VStackOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 function buildHStack(args: readonly unknown[]): ViewNode {
   const options: HStackOptions = isOptions(args[0]) ? args[0] as HStackOptions : {}
@@ -196,19 +233,19 @@ function buildHStack(args: readonly unknown[]): ViewNode {
       alignItems: verticalAlignment(options.alignment ?? 'center'),
       ...(options.spacing === undefined ? {} : { gap: cssLength(options.spacing) }),
     },
-  }, layoutChildren(flatten(children)))
+  }, viewGraphChildren(layoutChildren(flatten(children))))
 }
 
 export const HStack = defineBuiltinView<{ args: readonly unknown[] }>('HStack', [
   initializer('HStack(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
-  initializer('HStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('HStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options', ['alignment', 'spacing']), initializerKinds.viewBuilder(true, 'content')]),
   initializer('HStack(...children)', noFunction, builtinArgs),
-], ({ args }) => buildHStack(args)) as unknown as {
+], ({ args }) => buildHStack(args)) as unknown as BuiltinViewCallable<{
   (builder: MuseBuilder): StyledElement
   (...children: ReactNode[]): StyledElement
   (options: HStackOptions, ...children: ReactNode[]): StyledElement
   (options: HStackOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 function buildZStack(args: readonly unknown[]): ViewNode {
   const options: ZStackOptions = isOptions(args[0]) ? args[0] as ZStackOptions : {}
@@ -216,12 +253,12 @@ function buildZStack(args: readonly unknown[]): ViewNode {
   const layers = flattenTransparentFragments(children).map((child, index) => {
     const component = isValidElement(child) && isComponentElement(child)
     const layout = component ? layoutPropsOf(child) : undefined
-    return createElement('div', {
+    return viewElement('div', {
       key: isValidElement(child) ? child.key ?? index : index,
       ...(component ? { 'data-muse-layout-host': '' } : {}),
       className: Array.isArray(layout?.className) ? layout.className.join(' ') : layout?.className,
       style: { gridArea: '1 / 1', minWidth: 0, minHeight: 0, ...(component ? layout?.style ?? {} : {}) },
-    }, child)
+    }, [viewGraphChild(child)])
   })
   return viewElement('div', {
     style: { display: 'grid', boxSizing: 'border-box', outline: 'none', ...(options.alignment === undefined ? {} : stackAlignment(options.alignment)) },
@@ -230,14 +267,14 @@ function buildZStack(args: readonly unknown[]): ViewNode {
 
 export const ZStack = defineBuiltinView<{ args: readonly unknown[] }>('ZStack', [
   initializer('ZStack(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
-  initializer('ZStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
+  initializer('ZStack(options, @ViewBuilder content)', optionsBuilder, builtinArgs, [initializerKinds.value(true, 'options', ['alignment']), initializerKinds.viewBuilder(true, 'content')]),
   initializer('ZStack(...children)', noFunction, builtinArgs),
-], ({ args }) => buildZStack(args)) as unknown as {
+], ({ args }) => buildZStack(args)) as unknown as BuiltinViewCallable<{
   (builder: MuseBuilder): StyledElement
   (...children: ReactNode[]): StyledElement
   (options: ZStackOptions, ...children: ReactNode[]): StyledElement
   (options: ZStackOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 function buildGrid(args: readonly unknown[]): ViewNode {
   const columnsOrOptions = (args[0] ?? 1) as ReactNode | GridOptions | MuseBuilder
@@ -260,19 +297,19 @@ function buildGrid(args: readonly unknown[]): ViewNode {
       ...(options.rows === undefined ? {} : { gridTemplateRows: cssTrack(options.rows) }),
       ...(options.autoFlow === undefined ? {} : { gridAutoFlow: options.autoFlow }),
     },
-  }, layoutChildren(flatten(resolvedChildren)))
+  }, viewGraphChildren(layoutChildren(flatten(resolvedChildren))))
 }
 
 export const Grid = defineBuiltinView<{ args: readonly unknown[] }>('Grid', [
   initializer('Grid(@ViewBuilder content)', builderOnly, builtinArgs, [initializerKinds.viewBuilder(true, 'content')]),
   initializer('Grid(columns, @ViewBuilder content)', gridBuilder, builtinArgs, [initializerKinds.value(true, 'columns'), initializerKinds.viewBuilder(true, 'content')]),
   initializer('Grid(...children)', noFunction, builtinArgs),
-], ({ args }) => buildGrid(args)) as unknown as {
+], ({ args }) => buildGrid(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (columnsOrOptions: number | string | GridOptions, ...children: ReactNode[]): StyledElement
   (builder: MuseBuilder): StyledElement
   (columnsOrOptions: number | string | GridOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 export type TextProps = HTMLAttributes<HTMLSpanElement>
 interface TextBuiltinProps {
@@ -297,10 +334,10 @@ function buildText({ args, resolvedValue }: TextBuiltinProps): ViewNode {
 }
 
 export const Text = defineBuiltinView<TextBuiltinProps>('Text', [
-  initializer('Text(value)', args => args.length === 1 || (args.length === 2 && args[1] === null) || (args.length === 2 && isOptions(args[1])), textArgs),
-], props => buildText(props)) as unknown as {
+  initializer('Text(value)', args => args.length === 1 || (args.length === 2 && args[1] === null) || (args.length === 2 && isOptions(args[1])), textArgs, [initializerKinds.value(true, 'value')]),
+], props => buildText(props)) as unknown as BuiltinViewCallable<{
   (value: Value<string | number>, props?: TextProps | null): StyledElement
-}
+}>
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement>
 export interface ButtonConfiguration extends ButtonProps {
@@ -313,18 +350,35 @@ function buildButton(args: readonly unknown[]): ViewNode {
   let action: ((event: any) => unknown) | null = null
   let props: ButtonProps | null = null
 
-  if (typeof args[0] === 'function') {
+  if (typeof args[0] === 'function' && typeof args[1] === 'function') {
+    const firstKind = closureKindOf(args[0])
+    const secondKind = closureKindOf(args[1])
+    if (firstKind === 'viewBuilder' && secondKind === 'action') {
+      label = collectChildren([args[0]]) as any
+      action = args[1] as (event: any) => unknown
+    } else {
+      action = args[0] as (event: any) => unknown
+      label = collectChildren([args[1]]) as any
+    }
+  } else if (typeof args[0] === 'function') {
     action = args[0] as (event: any) => unknown
     if (typeof args[1] === 'function') label = collectChildren([args[1]]) as any
     else props = args[1] ?? null
   } else if (isOptions(args[0]) && ('action' in args[0] || 'label' in args[0])) {
     const options = args[0] as Record<string, unknown>
-    action = options.action as ((event: any) => unknown) | null
+    action = typeof options.action === 'function'
+      ? markMuseClosure(options.action as (event: any) => unknown, 'action')
+      : null
     label = typeof options.label === 'function'
       ? collectChildren([options.label]) as any
-      : options.label as ReactNode | null
+      : (options.label ?? options.title) as ReactNode | null
     props = options.props as ButtonProps | null ?? null
     if (typeof args[1] === 'function' && label === undefined) label = collectChildren([args[1]]) as any
+  } else if (isOptions(args[1]) && typeof (args[1] as any).action === 'function') {
+    const options = args[1] as Record<string, unknown>
+    label = args[0] as ReactNode
+    action = markMuseClosure(options.action as (event: any) => unknown, 'action')
+    props = options.props as ButtonProps | null ?? null
   } else {
     label = args[0] as ReactNode
     action = args[1] as ((event: any) => unknown) | null
@@ -343,21 +397,24 @@ function buildButton(args: readonly unknown[]): ViewNode {
   }, (label === null || label === undefined
     ? []
     : Array.isArray(label)
-      ? label
-      : [isValidElement(label) ? label : String(resolveValue(label as any))]))
+      ? viewGraphChildren(label)
+      : [isValidElement(label) ? viewGraphChild(label) : String(resolveValue(label as any))]))
 }
 
 export const Button = defineBuiltinView<{ args: readonly unknown[] }>('Button', [
   initializer('Button(@Action action)', args => args.length === 1 && typeof args[0] === 'function', builtinArgs, [initializerKinds.action(true, 'action')]),
   initializer('Button(title, @Action action)', args => args.length === 2 && typeof args[1] === 'function', builtinArgs, [initializerKinds.value(true, 'title'), initializerKinds.action(true, 'action')]),
+  initializer('Button(@Action action, @ViewBuilder label)', args => args.length === 2 && typeof args[0] === 'function' && typeof args[1] === 'function' && (closureKindOf(args[0]) !== 'viewBuilder' && closureKindOf(args[1]) !== 'action'), builtinArgs, [initializerKinds.action(true, 'action'), initializerKinds.viewBuilder(true, 'label')]),
+  initializer('Button(@ViewBuilder label, @Action action)', args => args.length === 2 && typeof args[0] === 'function' && typeof args[1] === 'function' && (closureKindOf(args[0]) !== 'action' && closureKindOf(args[1]) !== 'viewBuilder'), builtinArgs, [initializerKinds.viewBuilder(true, 'label'), initializerKinds.action(true, 'action')]),
   initializer('Button(configuration)', args => args.length === 1 && isOptions(args[0]) && typeof (args[0] as any).action === 'function', builtinArgs),
   initializer('Button(configuration, @ViewBuilder label)', args => args.length === 2 && isOptions(args[0]) && typeof args[1] === 'function', builtinArgs, [initializerKinds.value(), initializerKinds.viewBuilder()]),
+  initializer('Button(title, action: @Action)', args => args.length === 2 && !isOptions(args[0]) && isOptions(args[1]) && typeof (args[1] as any).action === 'function', builtinArgs, [initializerKinds.value(true, 'title'), initializerKinds.value(true, 'action', ['action', 'props'])]),
   initializer('Button(title, @Action action, props)', args => args.length >= 2 && typeof args[1] === 'function' && args.length <= 3, builtinArgs),
-], ({ args }) => buildButton(args)) as unknown as {
+], ({ args }) => buildButton(args)) as unknown as BuiltinViewCallable<{
   (action: (event: any) => unknown): StyledElement
   (label: Value<string | number>, action: (event: any) => unknown, props?: ButtonProps | null): StyledElement
   (configuration: ButtonConfiguration, label?: MuseBuilder): StyledElement
-}
+}>
 
 export type TextFieldOptions = InputHTMLAttributes<HTMLInputElement>
 function buildTextField(args: readonly unknown[]): ViewNode {
@@ -376,9 +433,9 @@ function buildTextField(args: readonly unknown[]): ViewNode {
 
 export const TextField = defineBuiltinView<{ args: readonly unknown[] }>('TextField', [
   initializer('TextField(value, options?)', args => args.length >= 1 && args.length <= 2 && (args.length < 2 || typeof args[1] === 'object'), builtinArgs, [initializerKinds.value(true, 'value'), initializerKinds.value(false, 'options')]),
-], ({ args }) => buildTextField(args)) as unknown as {
+], ({ args }) => buildTextField(args)) as unknown as BuiltinViewCallable<{
   (value: import('./types.js').StateRef<string>, options?: TextFieldOptions): StyledElement
-}
+}>
 
 export type TextAreaOptions = TextareaHTMLAttributes<HTMLTextAreaElement>
 function buildTextArea(args: readonly unknown[]): ViewNode {
@@ -397,16 +454,19 @@ function buildTextArea(args: readonly unknown[]): ViewNode {
 
 export const TextArea = defineBuiltinView<{ args: readonly unknown[] }>('TextArea', [
   initializer('TextArea(value, options?)', args => args.length >= 1 && args.length <= 2 && (args.length < 2 || typeof args[1] === 'object'), builtinArgs, [initializerKinds.value(true, 'value'), initializerKinds.value(false, 'options')]),
-], ({ args }) => buildTextArea(args)) as unknown as {
+], ({ args }) => buildTextArea(args)) as unknown as BuiltinViewCallable<{
   (value: import('./types.js').StateRef<string>, options?: TextAreaOptions): StyledElement
-}
+}>
 
 export type ToggleProps = InputHTMLAttributes<HTMLInputElement>
 function buildToggle(args: readonly unknown[]): ViewNode {
-  const value = args[0] as import('./types.js').StateRef<boolean>
-  const props = args[1] as ToggleProps | null | undefined
+  const labeled = isOptions(args[1]) && 'isOn' in args[1]
+  const options = labeled ? args[1] as Record<string, unknown> : null
+  const title = labeled ? args[0] as ReactNode : null
+  const value = (options?.isOn ?? args[0]) as import('./types.js').StateRef<boolean>
+  const props = (options?.props ?? (labeled ? null : args[1])) as ToggleProps | null | undefined
   const { onChange, ...rest } = props ?? {}
-  return viewElement('input', {
+  const input = viewElement('input', {
     ...rest,
     type: 'checkbox',
     checked: value.value,
@@ -415,13 +475,17 @@ function buildToggle(args: readonly unknown[]): ViewNode {
       onChange?.(event)
     },
   })
+  return title === null
+    ? input
+    : viewElement('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } }, [viewGraphChild(title), input])
 }
 
 export const Toggle = defineBuiltinView<{ args: readonly unknown[] }>('Toggle', [
+  initializer('Toggle(title, isOn:)', args => args.length === 2 && typeof args[0] === 'string' && isOptions(args[1]) && 'isOn' in args[1], builtinArgs, [initializerKinds.value(true, 'title', undefined, 'string'), initializerKinds.value(true, 'isOn')]),
   initializer('Toggle(value, props?)', args => args.length >= 1 && args.length <= 2 && (args.length < 2 || args[1] === null || typeof args[1] === 'object'), builtinArgs, [initializerKinds.value(true, 'value'), initializerKinds.value(false, 'props')]),
-], ({ args }) => buildToggle(args)) as unknown as {
+], ({ args }) => buildToggle(args)) as unknown as BuiltinViewCallable<{
   (value: import('./types.js').StateRef<boolean>, props?: ToggleProps | null): StyledElement
-}
+}>
 
 function buildSpacer(args: readonly unknown[]): ViewNode {
   const minLength = args[0] as Length | undefined
@@ -439,23 +503,12 @@ function buildSpacer(args: readonly unknown[]): ViewNode {
 
 export const Spacer = defineBuiltinView<{ args: readonly unknown[] }>('Spacer', [
   initializer('Spacer(minLength?)', args => args.length <= 1 && typeof args[0] !== 'function', builtinArgs, [initializerKinds.value(false, 'minLength')]),
-], ({ args }) => buildSpacer(args)) as unknown as {
+], ({ args }) => buildSpacer(args)) as unknown as BuiltinViewCallable<{
   (minLength?: Length): StyledElement
-}
+}>
 
 export const Divider = defineBuiltinView<{ args: readonly unknown[] }>('Divider', [
   initializer('Divider()', args => args.length === 0, builtinArgs),
-], () => viewElement('hr', null)) as unknown as {
+], () => viewElement('hr', null)) as unknown as BuiltinViewCallable<{
   (): StyledElement
-}
-
-registerInitializers(Group, [
-  initializer('Group(@ViewBuilder content)', builderOnly, undefined, [initializerKinds.viewBuilder()]),
-  initializer('Group(...children)', noFunction),
-])
-registerInitializers(Element, [initializer('Element(tag, props?, ...children)', noFunction)])
-registerInitializers(Component, [initializer('Component(component, props?, ...children)', args => args.length >= 1 && !args.slice(1).some(value => typeof value === 'function'))])
-registerInitializers(Rectangle, [initializer('Rectangle()', args => args.length === 0)])
-registerInitializers(RoundedRectangle, [initializer('RoundedRectangle(radius?)', args => args.length <= 1 && typeof args[0] !== 'function')])
-registerInitializers(Circle, [initializer('Circle()', args => args.length === 0)])
-registerInitializers(Capsule, [initializer('Capsule()', args => args.length === 0)])
+}>

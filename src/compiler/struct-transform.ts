@@ -15,17 +15,15 @@
  */
 
 import { transformMuseBuilderSyntax } from './builder-transform.js'
-
-type Open = '(' | '{'
-
-const closeFor: Record<Open, ')' | '}'> = { '(': ')', '{': '}' }
+import { parseMuseStructs, type MuseStructDeclaration } from './ast.js'
+import { museSyntaxError } from './errors.js'
 
 function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
   for (let i = index + 1; i < source.length; i += 1) {
     if (source[i] === '\\') { i += 1; continue }
     if (source[i] === quote) return i + 1
   }
-  throw new SyntaxError(`Unclosed ${quote} string in Muse struct source`)
+  throw museSyntaxError(`Unclosed ${quote} string in Muse struct source`, index)
 }
 
 function skipTemplate(source: string, index: number): number {
@@ -33,43 +31,7 @@ function skipTemplate(source: string, index: number): number {
     if (source[i] === '\\') { i += 1; continue }
     if (source[i] === '`') return i + 1
   }
-  throw new SyntaxError('Unclosed template literal in Muse struct source')
-}
-
-function findMatching(source: string, openIndex: number, open: Open): number {
-  const close = closeFor[open]
-  let depth = 0
-  for (let i = openIndex; i < source.length; i += 1) {
-    const char = source[i]
-    const next = source[i + 1]
-    if (char === "'" || char === '"') { i = skipQuoted(source, i, char) - 1; continue }
-    if (char === '`') { i = skipTemplate(source, i) - 1; continue }
-    if (char === '/' && next === '/') {
-      const newline = source.indexOf('\n', i + 2)
-      i = (newline < 0 ? source.length : newline) - 1
-      continue
-    }
-    if (char === '/' && next === '*') {
-      const end = source.indexOf('*/', i + 2)
-      if (end < 0) throw new SyntaxError('Unclosed block comment in Muse struct source')
-      i = end + 1
-      continue
-    }
-    if (char === open) depth += 1
-    if (char === close && --depth === 0) return i
-  }
-  throw new SyntaxError(`Unclosed ${open} block in Muse struct source`)
-}
-
-function trivia(source: string, index: number): number {
-  let i = index
-  while (/\s/.test(source[i] ?? '')) i += 1
-  return i
-}
-
-function identifierAt(source: string, index: number): { name: string; end: number } | null {
-  const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(index))
-  return match ? { name: match[0], end: index + match[0].length } : null
+  throw museSyntaxError('Unclosed template literal in Muse struct source', index)
 }
 
 function splitArguments(source: string): string[] {
@@ -99,33 +61,61 @@ interface InitParameter {
   name: string
   kind: 'value' | 'viewBuilder' | 'action'
   label?: string
+  type?: string
+  required: boolean
+  defaultValue?: string
 }
 
-function parseParameter(source: string): InitParameter {
+function parseParameter(source: string, offset = 0): InitParameter {
   const kind = source.includes('@ViewBuilder') ? 'viewBuilder' : source.includes('@Action') ? 'action' : 'value'
   const withoutAnnotation = source.replace(/@(?:ViewBuilder|Action)\s*/g, '').trim()
-  const colon = withoutAnnotation.indexOf(':')
-  const head = (colon < 0 ? withoutAnnotation : withoutAnnotation.slice(0, colon)).trim()
+  let defaultIndex = -1
+  for (let index = 0; index < withoutAnnotation.length; index += 1) {
+    if (withoutAnnotation[index] !== '=' || withoutAnnotation[index + 1] === '>' || withoutAnnotation[index - 1] === '=' || withoutAnnotation[index - 1] === '<' || withoutAnnotation[index - 1] === '!') continue
+    defaultIndex = index
+    break
+  }
+  const declaration = defaultIndex < 0 ? withoutAnnotation : withoutAnnotation.slice(0, defaultIndex).trim()
+  const colon = declaration.indexOf(':')
+  const head = (colon < 0 ? declaration : declaration.slice(0, colon)).trim()
   const names = head.split(/\s+/).filter(Boolean)
   const name = names[names.length - 1]?.replace(/^_+/, '')
-  if (!name) throw new SyntaxError(`Invalid initializer parameter: ${source}`)
-  return { name, kind, label: names[0] === '_' ? undefined : names[0] }
+  if (!name) throw museSyntaxError(`Invalid initializer parameter: ${source}`, offset)
+  const type = colon < 0 ? undefined : declaration.slice(colon + 1).trim()
+  const defaultValue = defaultIndex < 0 ? undefined : withoutAnnotation.slice(defaultIndex + 1).trim()
+  return { name, kind, label: names[0] === '_' ? undefined : names[0], type, required: defaultIndex < 0, defaultValue }
 }
 
 function parameterMetadata(parameters: InitParameter[]): string {
-  return `[${parameters.map(parameter => `{ kind: '${parameter.kind}', label: ${parameter.label ? `'${parameter.label}'` : 'undefined'}, required: true }`).join(', ')}]`
+  return `[${parameters.map(parameter => `{ kind: '${parameter.kind}', label: ${parameter.label ? `'${parameter.label}'` : 'undefined'}, type: ${parameter.type ? JSON.stringify(parameter.type) : 'undefined'}, required: ${parameter.required}${parameter.defaultValue ? `, defaultValue: ${JSON.stringify(parameter.defaultValue)}` : ''} }`).join(', ')}]`
 }
 
 function initializerAccepts(parameters: InitParameter[]): string {
   const checks = parameters.map((parameter, index) => {
-    if (parameter.kind === 'viewBuilder' || parameter.kind === 'action') return `typeof args[${index}] === 'function'`
+    if (parameter.kind === 'viewBuilder' || parameter.kind === 'action') {
+      return parameter.required
+        ? `typeof args[${index}] === 'function'`
+        : `(args[${index}] === undefined || typeof args[${index}] === 'function')`
+    }
     return 'true'
   })
-  return `args.length === ${parameters.length}${checks.length ? ` && ${checks.join(' && ')}` : ''}`
+  const required = parameters.filter(parameter => parameter.required).length
+  return `args.length >= ${required} && args.length <= ${parameters.length}${checks.length ? ` && ${checks.join(' && ')}` : ''}`
 }
 
-function buildBody(parameters: InitParameter[], fields: string[], assignments: Map<string, string>, stateFields: Set<string>): string {
-  const locals = parameters.map((parameter, index) => `const ${parameter.name} = args[${index}] as any`).join('; ')
+function buildBody(
+  parameters: InitParameter[],
+  fields: string[],
+  assignments: Map<string, string>,
+  stateFields: Set<string>,
+  defaults: Map<string, string | undefined> = new Map(),
+): string {
+  const locals = parameters.map((parameter, index) => {
+    const expression = parameter.defaultValue
+      ? `(args[${index}] === undefined ? (${parameter.defaultValue}) : args[${index}])`
+      : `args[${index}]`
+    return `const ${parameter.name} = ${expression} as any`
+  }).join('; ')
   const values = fields.filter(field => !stateFields.has(field)).map(field => {
     const assignment = assignments.get(field)
     if (assignment) {
@@ -137,7 +127,9 @@ function buildBody(parameters: InitParameter[], fields: string[], assignments: M
     }
     const parameter = parameters.find(item => item.name === field)
     if (parameter?.kind === 'viewBuilder') return `${field}: resolveBuilderClosure(${field})`
-    return parameter ? `${field}: ${field}` : `${field}: undefined`
+    if (parameter) return `${field}: ${field}`
+    const defaultValue = defaults.get(field)
+    return `${field}: ${defaultValue ?? 'undefined'}`
   })
   return `args => { ${locals}; return { ${values.join(', ')} } }`
 }
@@ -149,38 +141,62 @@ function findAssignments(initBody: string): Map<string, string> {
   return assignments
 }
 
-function transformOne(name: string, body: string, bodyExpression: string): string {
-  const fields = [...body.matchAll(/(?:^|\n)\s*(?:@(?:State|Binding)\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^\n;]+)?/g)]
-    .map(match => match[1])
-    .filter(field => field !== 'body')
-  const stateValues = new Map([...body.matchAll(/@State\s+var\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:=[ \t]*([^\n;]+))?/g)]
-    .map(match => [match[1], match[2]?.trim() ?? 'undefined'] as const))
+function lowerBindingShorthand(source: string): string {
+  let output = ''
+  for (let index = 0; index < source.length;) {
+    const char = source[index]
+    if (char === "'" || char === '"') {
+      const end = skipQuoted(source, index, char)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '`') {
+      const end = skipTemplate(source, index)
+      output += source.slice(index, end)
+      index = end
+      continue
+    }
+    if (char === '$') {
+      const match = /^\$([A-Za-z_$][A-Za-z0-9_$]*)/.exec(source.slice(index))
+      if (match) {
+        output += `Binding(${match[1]})`
+        index += match[0].length
+        continue
+      }
+    }
+    output += char
+    index += 1
+  }
+  return output
+}
+
+function transformOne(declaration: MuseStructDeclaration): string {
+  const { name, bodyExpressionSource: bodyExpression } = declaration
+  const fields = declaration.fields.map(field => field.name)
+  const stateValues = new Map(declaration.fields
+    .filter(field => field.kind === 'state')
+    .map(field => [field.name, field.initializer?.trim() ?? 'undefined'] as const))
   const stateFields = new Set(stateValues.keys())
+  const defaults = new Map(declaration.fields.map(field => [field.name, field.initializer] as const))
   const initializers: string[] = []
-  const assignments = new Map<string, string>()
-  const initPattern = /\binit\s*(?=\()/g
-  for (const match of body.matchAll(initPattern)) {
-    const open = body.indexOf('(', match.index! + match[0].length - 1)
-    const close = findMatching(body, open, '(')
-    const blockOpen = trivia(body, close + 1)
-    if (body[blockOpen] !== '{') continue
-    const blockClose = findMatching(body, blockOpen, '{')
-    const parameters = splitArguments(body.slice(open + 1, close)).map(parseParameter)
-    const initializerBody = body.slice(blockOpen + 1, blockClose)
-    for (const [field, value] of findAssignments(initializerBody)) assignments.set(field, value)
+  for (const syntax of declaration.initializers) {
+    const parameters = splitArguments(syntax.parametersSource).map(parameter => parseParameter(parameter, syntax.parametersRange.start))
+    const initializerBody = syntax.bodySource
+    const assignments = findAssignments(initializerBody)
     const signature = `${name}(${parameters.map(parameter => `${parameter.kind === 'viewBuilder' ? '@ViewBuilder ' : parameter.kind === 'action' ? '@Action ' : ''}${parameter.label ?? parameter.name}`).join(', ')})`
-    initializers.push(`initializer(${JSON.stringify(signature)}, args => ${initializerAccepts(parameters)}, ${buildBody(parameters, fields, assignments, stateFields)}, ${parameterMetadata(parameters)})`)
+    initializers.push(`initializer(${JSON.stringify(signature)}, args => ${initializerAccepts(parameters)}, ${buildBody(parameters, fields, assignments, stateFields, defaults)}, ${parameterMetadata(parameters)})`)
   }
 
   if (initializers.length === 0) {
-    const parameters = fields.filter(field => !stateFields.has(field)).map(field => ({ name: field, kind: 'value' as const, label: field }))
-    initializers.push(`initializer(${JSON.stringify(`${name}(${parameters.map(parameter => parameter.name).join(', ')})`)}, args => args.length === ${parameters.length}, ${buildBody(parameters, fields, assignments, stateFields)}, ${parameterMetadata(parameters)})`)
+    const parameters = fields.filter(field => !stateFields.has(field)).map(field => ({ name: field, kind: 'value' as const, label: field, required: true }))
+    initializers.push(`initializer(${JSON.stringify(`${name}(${parameters.map(parameter => parameter.name).join(', ')})`)}, args => args.length === ${parameters.length}, ${buildBody(parameters, fields, new Map(), stateFields, defaults)}, ${parameterMetadata(parameters)})`)
   }
 
   const destructure = fields.length > 0 ? `const { ${fields.join(', ')} } = props; ` : ''
   const sourceBody = bodyExpression.trim()
   const result = /^return\b([\s\S]*)/.exec(sourceBody)
-  const bodyCode = result ? result[1].replace(/;\s*$/, '') : sourceBody
+  const bodyCode = lowerBindingShorthand(result ? result[1].replace(/;\s*$/, '') : sourceBody)
   const state = stateValues.size > 0
     ? `, state: (_props: any) => ({ ${[...stateValues.entries()].map(([field, value]) => `${field}: State(${value})`).join(', ')} })`
     : ''
@@ -189,54 +205,47 @@ function transformOne(name: string, body: string, bodyExpression: string): strin
 
 /** Transform `struct Name: View { ... }` declarations into defineView calls. */
 export function transformMuseStructSyntax(source: string): string {
+  const declarations = parseMuseStructs(source)
+  if (declarations.length === 0) return source
   let output = ''
   let cursor = 0
-  let changed = false
-
-  while (cursor < source.length) {
-    const index = source.indexOf('struct', cursor)
-    if (index < 0) { output += source.slice(cursor); break }
-    const before = source[index - 1]
-    const after = source[index + 6]
-    if ((before && /[A-Za-z0-9_$]/.test(before)) || (after && /[A-Za-z0-9_$]/.test(after))) {
-      output += source.slice(cursor, index + 6)
-      cursor = index + 6
-      continue
-    }
-    const nameStart = trivia(source, index + 6)
-    const identifier = identifierAt(source, nameStart)
-    if (!identifier) { output += source.slice(cursor, index + 6); cursor = index + 6; continue }
-    let headerEnd = trivia(source, identifier.end)
-    if (source[headerEnd] === '<') {
-      const genericEnd = source.indexOf('>', headerEnd + 1)
-      if (genericEnd < 0) throw new SyntaxError(`Unclosed generic parameter list for ${identifier.name}`)
-      headerEnd = trivia(source, genericEnd + 1)
-    }
-    const brace = source.indexOf('{', headerEnd)
-    if (brace < 0) throw new SyntaxError(`Missing body for struct ${identifier.name}`)
-    const close = findMatching(source, brace, '{')
-    const structBody = source.slice(brace + 1, close)
-    const bodyMatch = /\bvar\s+body\s*:[^{]+\{/.exec(structBody)
-    if (!bodyMatch) throw new SyntaxError(`struct ${identifier.name} must declare var body`)
-    const bodyOpen = structBody.indexOf('{', bodyMatch.index! + bodyMatch[0].length - 1)
-    const bodyClose = findMatching(structBody, bodyOpen, '{')
-    const bodyExpression = structBody.slice(bodyOpen + 1, bodyClose)
-    const transformedBody = transformOne(identifier.name, structBody, transformMuseBuilderSyntax(bodyExpression))
-    let prefix = source.slice(cursor, index)
+  for (const declaration of declarations) {
+    const transformedBody = transformOne({
+      ...declaration,
+      bodyExpressionSource: transformMuseBuilderSyntax(declaration.bodyExpressionSource),
+    })
+    let prefix = source.slice(cursor, declaration.range.start)
     const exported = /export\s*$/.test(prefix)
     if (exported) prefix = prefix.replace(/export\s*$/, '') + 'export '
-    output += prefix + `const ${identifier.name} = ${transformedBody}`
-    cursor = close + 1
-    changed = true
+    output += prefix + `const ${declaration.name} = ${transformedBody}`
+    cursor = declaration.range.end
   }
-
-  if (!changed) return source
+  output += source.slice(cursor)
   const runtimeImports = stateValuesInSource(output)
-    ? 'State, defineView, initializer, resolveBuilderClosure'
-    : 'defineView, initializer, resolveBuilderClosure'
-  return `import { ${runtimeImports} } from 'react-muse-ui'\n${output}`
+    ? (output.includes('Binding(')
+      ? 'Binding, State, defineView, initializer, resolveBuilderClosure'
+      : 'State, defineView, initializer, resolveBuilderClosure')
+    : (output.includes('Binding(')
+      ? 'Binding, defineView, initializer, resolveBuilderClosure'
+      : 'defineView, initializer, resolveBuilderClosure')
+  const names = runtimeImports.split(',').map(name => name.trim()).filter(Boolean)
+  if (output.includes('namedArguments(') && !names.includes('namedArguments')) names.push('namedArguments')
+  if (output.includes('overloadClosure(') && !names.includes('overloadClosure')) names.push('overloadClosure')
+  return injectRuntimeImports(output, names.join(', '))
 }
 
 function stateValuesInSource(source: string): boolean {
   return /\bstate:\s*\(/.test(source)
+}
+
+function injectRuntimeImports(source: string, names: string): string {
+  const required = names.split(',').map(name => name.trim()).filter(Boolean)
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${required.join(', ')} } from 'react-muse-ui'\n${source}`
+
+  const imported = existing[1].split(',').map(name => name.trim()).filter(Boolean)
+  const merged = [...imported]
+  for (const name of required) if (!merged.includes(name)) merged.push(name)
+  const replacement = `import { ${merged.join(', ')} } from 'react-muse-ui'`
+  return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }

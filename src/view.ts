@@ -1,12 +1,6 @@
-import {
-  Fragment,
-  createElement,
-  useRef,
-  type ComponentType,
-  type ReactNode,
-} from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import { layoutChild } from './layout.js'
-import { useReactiveValue } from './state.js'
+import { defineView, initializer, type ViewConstructor } from './view-system.js'
 
 export type ViewContent<Props extends object = {}> = ReactNode | ((props: Props) => ReactNode)
 
@@ -32,40 +26,41 @@ function isViewDefinition<
     && typeof (value as ViewDefinition<State, Props>).body === 'function'
 }
 
+type RuntimeViewProps<State extends Record<string, unknown>, Props extends object> = {
+  inputProps: Props
+  instanceState?: State
+}
+
 export function view<
   State extends Record<string, unknown>,
   Props extends object = {},
->(definition: ViewDefinition<State, Props>): ComponentType<Props>
-export function view<Props extends object = {}>(content: ViewContent<Props>): ComponentType<Props>
+>(definition: ViewDefinition<State, Props>): ComponentType<Props> & Pick<ViewConstructor<RuntimeViewProps<State, Props>>, 'viewType'>
+export function view<Props extends object = {}>(content: ViewContent<Props>): ComponentType<Props> & Pick<ViewConstructor<RuntimeViewProps<Record<string, unknown>, Props>>, 'viewType'>
 export function view<
   State extends Record<string, unknown>,
   Props extends object = {},
 >(
   input: ViewContent<Props> | ViewDefinition<State, Props>,
-): ComponentType<Props> {
-  function MuseView(props: Props) {
-    const instance = useRef<{ initialized: boolean; state: State | null }>({
-      initialized: false,
-      state: null,
-    })
-
-    const definition = isViewDefinition(input) ? input : null
-    if (definition && !instance.current.initialized) {
-      instance.current.state = definition.state(props)
-      instance.current.initialized = true
-    }
-
-    const node = useReactiveValue<ReactNode>(() => {
-      if (definition) return definition.body(instance.current.state as State, props)
-      const content = input as ViewContent<Props>
-      return typeof content === 'function'
-        ? (content as (props: Props) => ReactNode)(props)
-        : content
-    })
-
-    return createElement(Fragment, null, layoutChild(node))
-  }
-
-  MuseView.displayName = 'MuseView'
-  return MuseView
+): ComponentType<Props> & Pick<ViewConstructor<RuntimeViewProps<State, Props>>, 'viewType'> {
+  const definition = isViewDefinition(input) ? input : null
+  const View = defineView<RuntimeViewProps<State, Props>>('MuseView', {
+    name: 'MuseView',
+    initializers: [initializer(
+      'MuseView(props?)',
+      args => args.length <= 1 && (args.length === 0 || args[0] === null || typeof args[0] === 'object'),
+      args => ({ inputProps: (args[0] ?? {}) as Props }),
+    )],
+    state: definition
+      ? props => ({ instanceState: definition.state(props.inputProps) })
+      : undefined,
+    body: props => {
+      const result = definition
+        ? definition.body(props.instanceState as State, props.inputProps)
+        : typeof input === 'function'
+          ? (input as (props: Props) => ReactNode)(props.inputProps)
+          : input as ReactNode
+      return layoutChild(result)
+    },
+  })
+  return View as unknown as ComponentType<Props> & Pick<ViewConstructor<RuntimeViewProps<State, Props>>, 'viewType'>
 }

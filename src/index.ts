@@ -52,27 +52,51 @@ export {
 } from './presentation.js'
 
 export { Action, Binding, State } from './state.js'
+export {
+  actionClosure,
+  closureForKind,
+  closureKindOf,
+  closureVariantsOf,
+  markMuseClosure,
+  museClosureKind,
+  museClosureVariants,
+  overloadClosure,
+  valueClosure,
+  viewBuilderClosure,
+} from './closures.js'
+export type { MuseClosure, MuseClosureKind, MuseClosureVariants } from './closures.js'
 export { modifierGraphOf, styled } from './modifiers.js'
 export type { ModifierRecord } from './modifiers.js'
-export { materializeViewNode, reactRenderer } from './runtime/renderer.js'
+export { materializeViewNode, reactRenderer, renderViewNode } from './runtime/renderer.js'
+export type { MuseRenderer, RendererChild } from './runtime/renderer.js'
+export { createViewIdentityStore } from './runtime/view-storage.js'
+export type { ViewIdentityStore } from './runtime/view-storage.js'
 export {
   isViewNode,
   markViewNode,
   viewElement,
   viewFragment,
+  viewGraphChild,
+  viewGraphChildren,
+  viewHost,
   viewNodeOf,
 } from './runtime/view-graph.js'
 export type { MuseBuilder } from './builder.js'
 export { view } from './view.js'
 export {
   ViewBuilder,
+  ViewType,
   defineView,
   defineBuiltinView,
+  createViewNode,
   initializersOf,
   initializer,
+  initializerKinds,
   MuseInitializerError,
+  museNamedArguments,
   museInitializers,
   museView,
+  namedArguments,
   registerInitializers,
   renderViewTree,
   resolveBuilderClosure,
@@ -86,9 +110,10 @@ export type {
   View,
   ViewObject,
   ViewBuilderResult,
+  ViewCallable,
   ViewConstructor,
 } from './view-system.js'
-export type { ViewNode } from './runtime/view-graph.js'
+export type { ModifiedContent, ViewGraphChild, ViewGraphLeaf, ViewGraphValue, ViewHostNode, ViewModifierNode, ViewNode } from './runtime/view-graph.js'
 export type { ViewDefinition as StructViewDefinition } from './view-system.js'
 
 export type {

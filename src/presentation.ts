@@ -16,10 +16,10 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
-import { finalize } from './modifiers.js'
 import { isStateRef, resolveValue } from './state.js'
-import { assertInitializerCall, initializer, initializerKinds, registerInitializers } from './view-system.js'
+import { defineView, initializer, initializerKinds, type ViewCallable } from './view-system.js'
 import { collectChildren, type MuseBuilder } from './builder.js'
+import { viewElement, viewGraphChild, viewGraphChildren, viewHost, type ViewNode } from './runtime/view-graph.js'
 import type { StateRef, StyledElement, Value } from './types.js'
 
 export interface RouterLike {
@@ -28,6 +28,8 @@ export interface RouterLike {
 }
 
 const NavigationContext = createContext<RouterLike | null>(null)
+
+type PresentationViewCallable<Call extends (...args: any[]) => any> = ViewCallable<Call>
 
 function flatten(children: ReactNode[]): ReactNode[] {
   const result: ReactNode[] = []
@@ -44,6 +46,33 @@ function content(value: ReactNode | Value<string | number>): ReactNode {
     return String(resolveValue(value as Value<string | number>))
   }
   return value as ReactNode
+}
+
+const noTrailingFunction = (args: readonly unknown[]) => args.length > 0
+  && !args.slice(1).some(value => typeof value === 'function')
+
+interface NavigationStackHostProps {
+  router: RouterLike
+  children: ReactNode[]
+}
+
+function NavigationStackHost({ router, children }: NavigationStackHostProps) {
+  return createElement(
+    'div',
+    { 'data-muse-navigation-stack': '' },
+    createElement(
+      NavigationContext.Provider,
+      { value: router },
+      ...layoutChildren(flatten(children)),
+    ),
+  )
+}
+
+function navigationStackGraph(props: object): ViewNode {
+  const { children } = props as NavigationStackHostProps
+  return viewElement('div', { 'data-muse-navigation-stack': '' }, viewGraphChildren(
+    layoutChildren(flatten(children)),
+  ))
 }
 
 interface NavigationLinkHostProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
@@ -74,32 +103,68 @@ function NavigationLinkHost({ destination, children, onClick, ...props }: Naviga
   }, children)
 }
 
-export function NavigationStack(router: RouterLike, ...children: Array<ReactNode | MuseBuilder>): StyledElement {
-  assertInitializerCall(NavigationStack, [router, ...children])
-  const resolvedChildren = children.length === 1 && typeof children[0] === 'function'
-    ? collectChildren(children)
-    : children as ReactNode[]
-  return finalize(createElement(
-    'div',
-    { 'data-muse-navigation-stack': '' },
-    createElement(
-      NavigationContext.Provider,
-      { value: router },
-      ...layoutChildren(flatten(resolvedChildren)),
+const NavigationStackView = defineView('NavigationStack', {
+  name: 'NavigationStack',
+  initializers: [
+    initializer(
+      'NavigationStack(router, @ViewBuilder content)',
+      args => args.length === 2 && typeof args[1] === 'function',
+      args => ({
+        router: args[0],
+        children: flatten(collectChildren([args[1]]) as ReactNode[]),
+      }),
+      [initializerKinds.value(true, 'router'), initializerKinds.viewBuilder(true, 'content')],
     ),
-  ))
-}
+    initializer('NavigationStack(router, ...children)', noTrailingFunction, args => ({
+      router: args[0],
+      children: flatten(args.slice(1) as ReactNode[]),
+    })),
+  ],
+  body(props: NavigationStackHostProps) {
+    return viewHost('NavigationStack', NavigationStackHost, props, navigationStackGraph)
+  },
+}) as unknown as PresentationViewCallable<{
+  (router: RouterLike, ...children: Array<ReactNode | MuseBuilder>): StyledElement
+}>
+
+export const NavigationStack = NavigationStackView
 
 export type NavigationLinkProps = Omit<NavigationLinkHostProps, 'destination' | 'children'>
 
-export function NavigationLink(
-  destination: unknown,
-  label: ReactNode | Value<string | number>,
-  props: NavigationLinkProps = {},
-): StyledElement {
-  assertInitializerCall(NavigationLink, arguments.length === 2 ? [destination, label] : [destination, label, props])
-  return finalize(createElement(NavigationLinkHost, { ...props, destination }, content(label)))
-}
+const NavigationLinkView = defineView('NavigationLink', {
+  name: 'NavigationLink',
+  initializers: [initializer(
+    'NavigationLink(destination, label, props?)',
+    args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'),
+    args => ({
+      ...(args[2] as NavigationLinkProps | undefined ?? {}),
+      destination: args[0],
+      children: content(args[1] as ReactNode | Value<string | number>),
+    }),
+    [initializerKinds.value(true, 'destination'), initializerKinds.value(true, 'label'), initializerKinds.value(false, 'props')],
+  )],
+  body(props: NavigationLinkHostProps & { children: ReactNode }) {
+    return viewHost('NavigationLink', NavigationLinkHost, props, value => {
+      const { destination: fallbackTarget, children: fallbackChildren, ...fallbackProps } = value as NavigationLinkHostProps & { children: ReactNode }
+      return viewElement('a', {
+        ...fallbackProps,
+        href: fallbackProps.href ?? (typeof fallbackTarget === 'string' ? fallbackTarget : undefined),
+        style: {
+          color: 'inherit',
+          textDecoration: 'inherit',
+          display: 'block',
+          width: '100%',
+          height: '100%',
+          ...fallbackProps.style,
+        },
+      }, [viewGraphChild(fallbackChildren)])
+    })
+  },
+}) as unknown as PresentationViewCallable<{
+  (destination: unknown, label: ReactNode | Value<string | number>, props?: NavigationLinkProps): StyledElement
+}>
+
+export const NavigationLink = NavigationLinkView
 
 export interface SheetOptions {
   target?: string
@@ -221,15 +286,60 @@ function SheetHost({ isPresented, sheetContent, options }: SheetHostProps) {
 
 markIntrinsic(SheetHost)
 
-export function Sheet(
-  isPresented: StateRef<boolean>,
-  sheetContent: ReactNode,
-  options: SheetOptions = {},
-): ReactNode {
-  assertInitializerCall(Sheet, arguments.length === 2 ? [isPresented, sheetContent] : [isPresented, sheetContent, options])
-  if (!isPresented.value) return null
-  return createElement(SheetHost, { isPresented, sheetContent, options })
+function sheetGraph(props: object): ViewNode {
+  const { sheetContent, options } = props as SheetHostProps
+  const panelRadius = options.placement === 'center' ? '16px' : '16px 16px 0 0'
+  return viewElement('div', {
+    'data-muse-sheet-backdrop': '',
+    role: 'presentation',
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 1000,
+      display: 'grid',
+      ...(options.placement === 'center' ? { placeItems: 'center' } : { alignItems: 'end' }),
+      background: 'rgba(0, 0, 0, 0.32)',
+    },
+  }, [viewElement('div', {
+    'data-muse-sheet': '',
+    role: options.role ?? 'dialog',
+    'aria-modal': true,
+    'aria-label': options.ariaLabel,
+    'aria-labelledby': options.ariaLabelledBy,
+    'aria-describedby': options.ariaDescribedBy,
+    tabIndex: -1,
+    style: {
+      minWidth: 0,
+      maxHeight: '90vh',
+      overflow: 'auto',
+      background: 'Canvas',
+      color: 'CanvasText',
+      borderRadius: panelRadius,
+    },
+  }, [viewGraphChild(layoutChild(sheetContent))])])
 }
+
+const SheetView = defineView('Sheet', {
+  name: 'Sheet',
+  initializers: [initializer(
+    'Sheet(isPresented, @ViewBuilder content, options?)',
+    args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'),
+    args => ({
+      isPresented: args[0],
+      sheetContent: typeof args[1] === 'function' ? collectChildren([args[1]]) : args[1],
+      options: (args[2] as SheetOptions | undefined) ?? {},
+    }),
+    [initializerKinds.value(true, 'isPresented'), initializerKinds.viewBuilder(true, 'content'), initializerKinds.value(false, 'options', ['target', 'dismissOnBackdrop', 'ariaLabel', 'ariaLabelledBy', 'ariaDescribedBy', 'role', 'placement'])],
+  )],
+  body(props: SheetHostProps) {
+    if (!props.isPresented.value) return null
+    return viewHost('Sheet', SheetHost, props, sheetGraph)
+  },
+}) as unknown as PresentationViewCallable<{
+  (isPresented: StateRef<boolean>, sheetContent: ReactNode, options?: SheetOptions): ReactNode
+}>
+
+export const Sheet = SheetView
 
 export interface AlertAction {
   label: string
@@ -290,11 +400,43 @@ function AlertHost({ isPresented, options }: AlertHostProps): ReactNode {
 
 markIntrinsic(AlertHost)
 
-export function Alert(isPresented: StateRef<boolean>, options: AlertOptions): ReactNode {
-  assertInitializerCall(Alert, [isPresented, options])
-  if (!isPresented.value) return null
-  return createElement(AlertHost, { isPresented, options })
+function alertGraph(props: object): ViewNode {
+  const { options } = props as AlertHostProps
+  const actions = options.actions?.length ? options.actions : [{ label: 'OK', role: 'cancel' as const }]
+  return viewElement('div', {
+    role: 'alertdialog',
+    'aria-modal': true,
+    'aria-label': options.title,
+  }, [
+    viewElement('strong', null, [options.title]),
+    options.message === undefined ? null : viewElement('p', null, [options.message]),
+    viewElement('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, actions.map(action =>
+      viewElement('button', {
+        type: 'button',
+        'data-role': action.role ?? 'default',
+        onClick: action.action,
+      }, [action.label]),
+    )),
+  ])
 }
+
+const AlertView = defineView('Alert', {
+  name: 'Alert',
+  initializers: [initializer(
+    'Alert(isPresented, options)',
+    args => args.length === 2 && typeof args[1] === 'object',
+    args => ({ isPresented: args[0], options: args[1] }),
+    [initializerKinds.value(true, 'isPresented'), initializerKinds.value(true, 'options', ['title', 'message', 'actions', 'target'])],
+  )],
+  body(props: AlertHostProps) {
+    if (!props.isPresented.value) return null
+    return viewHost('Alert', AlertHost, props, alertGraph)
+  },
+}) as unknown as PresentationViewCallable<{
+  (isPresented: StateRef<boolean>, options: AlertOptions): ReactNode
+}>
+
+export const Alert = AlertView
 
 interface MenuHostProps {
   label: ReactNode | Value<string | number>
@@ -408,28 +550,41 @@ function MenuHost({ label, items }: MenuHostProps) {
   )
 }
 
-export function Menu(
-  label: ReactNode | Value<string | number>,
-  ...items: Array<ReactNode | MuseBuilder>
-): StyledElement {
-  assertInitializerCall(Menu, [label, ...items])
-  const resolvedItems = items.length === 1 && typeof items[0] === 'function'
-    ? collectChildren(items)
-    : items as ReactNode[]
-  return finalize(createElement(MenuHost, { label, items: flatten(resolvedItems) }))
+function menuGraph(props: object): ViewNode {
+  const { label, items } = props as MenuHostProps
+  return viewElement('details', { 'data-muse-menu': '' }, [
+    viewElement('summary', { 'aria-haspopup': 'menu', style: { cursor: 'pointer' } }, [
+      viewGraphChild(content(label)),
+    ]),
+    viewElement('div', {
+      role: 'menu',
+      style: { display: 'flex', flexDirection: 'column', minWidth: 'max-content' },
+    }, viewGraphChildren(layoutChildren(items))),
+  ])
 }
 
-const noTrailingFunction = (args: readonly unknown[]) => args.length > 0
-  && !args.slice(1).some(value => typeof value === 'function')
+const MenuView = defineView('Menu', {
+  name: 'Menu',
+  initializers: [
+    initializer(
+      'Menu(label, @ViewBuilder content)',
+      args => args.length === 2 && typeof args[1] === 'function',
+      args => ({
+        label: args[0],
+        items: flatten(collectChildren([args[1]]) as ReactNode[]),
+      }),
+      [initializerKinds.value(true, 'label'), initializerKinds.viewBuilder(true, 'content')],
+    ),
+    initializer('Menu(label, ...items)', noTrailingFunction, args => ({
+      label: args[0],
+      items: flatten(args.slice(1) as ReactNode[]),
+    })),
+  ],
+  body(props: MenuHostProps) {
+    return viewHost('Menu', MenuHost, props, menuGraph)
+  },
+}) as unknown as PresentationViewCallable<{
+  (label: ReactNode | Value<string | number>, ...items: Array<ReactNode | MuseBuilder>): StyledElement
+}>
 
-registerInitializers(NavigationStack, [
-  initializer('NavigationStack(router, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', undefined, [initializerKinds.value(), initializerKinds.viewBuilder()]),
-  initializer('NavigationStack(router, ...children)', noTrailingFunction),
-])
-registerInitializers(NavigationLink, [initializer('NavigationLink(destination, label, props?)', args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'))])
-registerInitializers(Sheet, [initializer('Sheet(isPresented, content, options?)', args => args.length >= 2 && args.length <= 3 && (args.length < 3 || typeof args[2] === 'object'))])
-registerInitializers(Alert, [initializer('Alert(isPresented, options)', args => args.length === 2 && typeof args[1] === 'object')])
-registerInitializers(Menu, [
-  initializer('Menu(label, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', undefined, [initializerKinds.value(), initializerKinds.viewBuilder()]),
-  initializer('Menu(label, ...items)', noTrailingFunction),
-])
+export const Menu = MenuView

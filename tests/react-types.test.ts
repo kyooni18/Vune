@@ -3,6 +3,7 @@ import {
   Action,
   Button,
   Component,
+  createViewNode,
   Grid,
   Group,
   HStack,
@@ -11,8 +12,15 @@ import {
   Text,
   VStack,
   view,
+  renderViewNode,
+  type MuseRenderer,
   type StyledElement,
 } from '../src/index.js'
+
+Text.viewType.name
+VStack.viewType.name
+Button.viewType.name
+Group.viewType.name
 
 function Badge(props: { label: string }) {
   return createElement('strong', null, props.label)
@@ -37,6 +45,13 @@ Grid(Text('One'), Text('Two'))
 Grid(2, () => Text('Builder'))
 VStack({ spacing: 8 }, () => Text('Optioned builder'))
 Group(() => [Text('Grouped one'), Text('Grouped two')])
+
+const graphRenderer: MuseRenderer<{ kind: 'node'; type: unknown; children: unknown[] }> = {
+  element(type, _props, ...children) { return { kind: 'node', type, children } },
+  fragment(children) { return { kind: 'node', type: 'fragment', children: [...children] } },
+  render(value) { return renderViewNode(value, graphRenderer) },
+}
+renderViewNode(createViewNode(Text, ['typed graph']), graphRenderer)
 
 export const ScopedView = view({
   state: () => ({ count: State(0) }),

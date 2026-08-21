@@ -16,12 +16,16 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   composition;
 - `State` and `Binding` remain reactive while modifier chains retain value
   semantics and an inspectable graph;
-- the builder compiler has labeled arguments, struct lowering, diagnostics,
-  formatter hooks, and source-map output without a component-name registry.
+- the builder compiler has a source-ranged builder/struct AST, labeled
+  arguments, struct lowering, diagnostics, formatter hooks, source-map output,
+  and an original-source language-service adapter without a component-name
+  registry.
 
-The remaining work is to move more built-in rendering primitives behind the
-renderer interface and to connect the compiler diagnostics to a full editor
-language service rather than the current formatter/diagnostic hooks.
+All public view constructors now share the `ViewType`/initializer boundary,
+including native elements, collections, and presentation hosts. The remaining
+work is deeper host integration: a packaged VS Code extension can build on the
+TypeScript language-service adapter, and React-specific portal/context behavior
+can acquire first-class hooks in additional renderers.
 
 ## Correctness release
 

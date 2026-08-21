@@ -160,6 +160,43 @@ test('Vite macro returns a source map while keeping the helper string-compatible
   assert.equal(hasColumnMapping, true)
 })
 
+test('museMacro lowers View builders before TypeScript macro analysis', () => {
+  const source = `
+const enabled = true
+export default view(
+  VStack(alignment: .leading, spacing: 12) {
+    Text("Header")
+    if (enabled) {
+      Text("Enabled")
+    } else {
+      Text("Disabled")
+    }
+  }
+)
+`
+  const plugin = museMacro()
+  const result = plugin.transform(source, '/src/Builder.ts')
+  assert.ok(result)
+  assert.match(result.code, /VStack\(namedArguments\(\{ alignment: 'leading', spacing: 12 \}\), (?:\(\) => \[|overloadClosure\(\(\) => \[)/)
+  assert.match(result.code, /enabled \? \[Text\("Enabled"\)\] : \[Text\("Disabled"\)\]/)
+  const parsed = ts.createSourceFile('Builder.ts', result.code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  assert.equal(parsed.parseDiagnostics.length, 0)
+})
+
+test('museMacro lowers Binding shorthand and merges the runtime import', () => {
+  const source = `
+import { State, Toggle, view } from 'react-muse-ui'
+const wifi = State(false)
+export default view(Toggle('Wi-Fi', isOn: $wifi))
+`
+  const output = transformMuseMacros(source, '/src/Binding.ts')
+  assert.ok(output)
+  assert.match(output, /import \{ State, Toggle, view, Binding, namedArguments \} from 'react-muse-ui'/)
+  assert.match(output, /Toggle\('Wi-Fi', namedArguments\(\{ isOn: Binding\(wifi\) \}\)\)/)
+  const parsed = ts.createSourceFile('Binding.ts', output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  assert.equal(parsed.parseDiagnostics.length, 0)
+})
+
 test('reports State declarations that cannot become instance-local', () => {
   const source = `
 export const exported = State(0)

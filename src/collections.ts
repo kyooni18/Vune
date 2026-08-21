@@ -11,8 +11,8 @@ import { collectChildren, type MuseBuilder } from './builder.js'
 import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
 import { styled } from './modifiers.js'
 import { resolveValue, useReactiveValue } from './state.js'
-import { defineBuiltinView, initializer, initializerKinds } from './view-system.js'
-import { viewElement, type ViewNode } from './runtime/view-graph.js'
+import { defineBuiltinView, initializer, initializerKinds, type ViewCallable } from './view-system.js'
+import { viewElement, viewFragment, viewGraphChild, viewGraphChildren, viewHost, type ViewGraphChild, type ViewNode } from './runtime/view-graph.js'
 import type {
   GridOptions,
   HStackOptions,
@@ -38,6 +38,8 @@ function cssLength(value: Length): string {
   return typeof value === 'number' ? `${value}px` : value
 }
 
+type BuiltinViewCallable<Call extends (...args: any[]) => any> = ViewCallable<Call, { args: readonly unknown[] }>
+
 const noFunction = (args: readonly unknown[]) => !args.some(value => typeof value === 'function')
 const optionsBuilder = (args: readonly unknown[]) => args.length === 2
   && typeof args[0] === 'object' && args[0] !== null && typeof args[1] === 'function'
@@ -52,7 +54,7 @@ function buildList(args: readonly unknown[]): ViewNode {
   const options: ListOptions = isOptions(args[0]) ? args[0] as ListOptions : {}
   const children = (isOptions(args[0]) ? args.slice(1) : args) as ReactNode[]
   const flat = flatten(children)
-  const rows = flat.map((child, index) => createElement(
+  const rows = flat.map((child, index) => viewElement(
     'div',
     {
       role: 'listitem',
@@ -65,7 +67,7 @@ function buildList(args: readonly unknown[]): ViewNode {
           : { borderTop: '1px solid rgba(127, 127, 127, 0.22)' }),
       },
     },
-    layoutChild(child),
+    [viewGraphChild(layoutChild(child))],
   ))
 
   return viewElement('div', {
@@ -80,10 +82,10 @@ function buildList(args: readonly unknown[]): ViewNode {
 
 export const List = defineBuiltinView<{ args: readonly unknown[] }>('List', [
   initializer('List(options, ...children)', args => !args.some(value => typeof value === 'function'), args => ({ args: [...args] })),
-], ({ args }) => buildList(args)) as unknown as {
+], ({ args }) => buildList(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (options: ListOptions, ...children: ReactNode[]): StyledElement
-}
+}>
 
 export interface SectionOptions {
   header?: ReactNode | string
@@ -118,15 +120,28 @@ export const ForEach = defineBuiltinView<ForEachBuiltinProps>('ForEach', [
   const content = args[1] as (item: unknown, index: number) => ReactNode
   const keyOf = args[2] as ((item: unknown, index: number) => Key) | undefined
   if (typeof content !== 'function') throw new TypeError('ForEach requires a trailing @ViewBuilder closure')
-  return createElement(ForEachHost as any, { items, content, keyOf })
-}) as unknown as {
+  const props = { items, content, keyOf }
+  return viewHost(
+    'ForEach',
+    ForEachHost,
+    props,
+    value => {
+      const { items: source, content: builder, keyOf: key } = value as ForEachHostProps<unknown>
+      const values = resolveValue(source) ?? []
+      return viewFragment(values.map((item, index) => {
+        const rendered = builder(item, index)
+        return viewGraphChild(rendered as ReactNode | ViewNode)
+      }))
+    },
+  )
+}) as unknown as BuiltinViewCallable<{
   <Item>(items: import('./types.js').Value<readonly Item[]>, content: (item: Item, index: number) => ReactNode, keyOf?: (item: Item, index: number) => Key): StyledElement
-}
+}>
 
-function sectionPart(value: ReactNode | string | undefined, role: 'heading' | 'note'): ReactNode {
+function sectionPart(value: ReactNode | string | undefined, role: 'heading' | 'note'): ViewGraphChild {
   if (value === undefined) return null
   const child = typeof value === 'string' ? Text(value) : value
-  return createElement('div', { role }, layoutChild(child))
+  return viewElement('div', { role }, [viewGraphChild(layoutChild(child))])
 }
 
 function buildSection(args: readonly unknown[]): ViewNode {
@@ -143,18 +158,18 @@ function buildSection(args: readonly unknown[]): ViewNode {
 
   return viewElement('section', { style: { display: 'flex', flexDirection: 'column', gap: cssLength(options.spacing ?? 8) } }, [
     sectionPart(options.header, 'heading'),
-    createElement('div', { role: 'group' }, ...layoutChildren(flatten(children))),
+    viewElement('div', { role: 'group' }, viewGraphChildren(layoutChildren(flatten(children)))),
     sectionPart(options.footer, 'note'),
   ])
 }
 
 export const Section = defineBuiltinView<{ args: readonly unknown[] }>('Section', [
   initializer('Section(options, ...children)', args => !args.some(value => typeof value === 'function'), args => ({ args: [...args] })),
-], ({ args }) => buildSection(args)) as unknown as {
+], ({ args }) => buildSection(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (title: string, ...children: ReactNode[]): StyledElement
   (options: SectionOptions, ...children: ReactNode[]): StyledElement
-}
+}>
 
 export interface LazyOptions { estimatedItemSize?: Length }
 export type LazyVStackOptions = VStackOptions & LazyOptions
@@ -184,12 +199,12 @@ export const LazyVStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyV
   initializer('LazyVStack(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
   initializer('LazyVStack(options, @ViewBuilder content)', optionsBuilder, args => ({ args: [...args] }), [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
   initializer('LazyVStack(...children)', noFunction, args => ({ args: [...args] })),
-], ({ args }) => buildLazyVStack(args)) as unknown as {
+], ({ args }) => buildLazyVStack(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
   (builder: MuseBuilder): StyledElement
   (options: LazyVStackOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 function buildLazyHStack(args: readonly unknown[]): ReactNode {
   const options: LazyHStackOptions = isOptions(args[0]) ? args[0] as LazyHStackOptions : {}
@@ -202,12 +217,12 @@ export const LazyHStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyH
   initializer('LazyHStack(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
   initializer('LazyHStack(options, @ViewBuilder content)', optionsBuilder, args => ({ args: [...args] }), [initializerKinds.value(true, 'options'), initializerKinds.viewBuilder(true, 'content')]),
   initializer('LazyHStack(...children)', noFunction, args => ({ args: [...args] })),
-], ({ args }) => buildLazyHStack(args)) as unknown as {
+], ({ args }) => buildLazyHStack(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
   (builder: MuseBuilder): StyledElement
   (options: LazyHStackOptions, builder: MuseBuilder): StyledElement
-}
+}>
 
 function buildLazyGrid(args: readonly unknown[]): ReactNode {
   const columnsOrOptions = (args[0] ?? 1) as number | string | LazyGridOptions | MuseBuilder
@@ -225,7 +240,7 @@ export const LazyGrid = defineBuiltinView<{ args: readonly unknown[] }>('LazyGri
   initializer('LazyGrid(@ViewBuilder content)', args => args.length === 1 && typeof args[0] === 'function', args => ({ args: [...args] }), [initializerKinds.viewBuilder()]),
   initializer('LazyGrid(columns, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', args => ({ args: [...args] }), [initializerKinds.value(true, 'columns'), initializerKinds.viewBuilder(true, 'content')]),
   initializer('LazyGrid(...children)', noFunction, args => ({ args: [...args] })),
-], ({ args }) => buildLazyGrid(args)) as unknown as {
+], ({ args }) => buildLazyGrid(args)) as unknown as BuiltinViewCallable<{
   (builder: MuseBuilder): StyledElement
   (columnsOrOptions: number | string | LazyGridOptions, builder: MuseBuilder): StyledElement
-}
+}>
