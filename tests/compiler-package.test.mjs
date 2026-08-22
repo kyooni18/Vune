@@ -9,11 +9,11 @@ import { readFileSync } from "node:fs"
 test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax", () => {
   const source = `VStack(spacing: 12) {\n  Text("Header")\n  if (enabled) { Text("On") } else { Text("Off") }\n  ForEach(items) { item in Row(item) }\n  Each(items) { item in Row(item) }\n}`
   const output = transformMuseSource(source, "Counter.muse.ts")
-  assert.match(output, /VStack\(namedArguments\(\{ spacing: 12 \}\), overloadClosure\(/)
+  assert.match(output, /VStack\(namedArguments\(\{ spacing: 12 \}\), \(\) => \[/)
   assert.match(output, /enabled \? \[Text\("On"\)\] : \[Text\("Off"\)\]/)
   assert.match(output, /ForEach\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /Each\(items, \(item\) => \[Row\(item\)\]\)/)
-  assert.match(output, /import \{ namedArguments, overloadClosure \} from "@muse\/core"/)
+  assert.match(output, /import \{ namedArguments \} from "@muse\/core"/)
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
@@ -110,16 +110,45 @@ test("@muse/compiler preserves empty, optional, and array builder results", () =
 })
 
 test("@muse/compiler keeps statement-bearing action closures out of ViewBuilder arrays", () => {
-  const output = transformMuseSource("Button() { const value = 1; save(value) }", "Action.muse.ts")
-  assert.match(output, /overloadClosure\(\(\) => \[\], \(\) => \{/)
+  const output = transformMuseSource("Button(\"Save\") { const value = 1; save(value) }", "Action.muse.ts")
+  assert.match(output, /Button\("Save", \(\) => \{ const value = 1; save\(value\) \}\)/)
+  assert.doesNotMatch(output, /overloadClosure\(/)
   assert.doesNotMatch(output, /\[const value/)
   assert.equal(ts.createSourceFile("Action.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("@muse/compiler preserves async action closures", () => {
-  const output = transformMuseSource("Button() { await save() }", "AsyncAction.muse.ts")
-  assert.match(output, /overloadClosure\(\(\) => \[\], async \(\) => \{\s*await save\(\)\s*\}\)/)
+  const output = transformMuseSource("Button(\"Save\") { await save() }", "AsyncAction.muse.ts")
+  assert.match(output, /Button\("Save", async \(\) => \{\s*await save\(\)\s*\}\)/)
+  assert.doesNotMatch(output, /overloadClosure\(/)
   assert.equal(ts.createSourceFile("AsyncAction.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("the compiler enforces Button's two source forms and declaration order", () => {
+  const canonicalAction = transformMuseSource('Button("Save") { save() }', "Button.muse.ts")
+  assert.match(canonicalAction, /Button\("Save", \(\) => \{ save\(\) \}\)/)
+  assert.doesNotMatch(canonicalAction, /overloadClosure\(/)
+
+  const canonicalLabel = transformMuseSource('Button(action: { save() }, label: { HStack() { Text("Save") } })', "Button.muse.ts")
+  assert.match(canonicalLabel, /Button\(namedArguments\(\{ action: \(\) => \{save\(\)\}, label: \(\) => \[HStack\(/)
+  assert.doesNotMatch(canonicalLabel, /overloadClosure\(/)
+
+  const service = createMuseLanguageService()
+  assert.deepEqual(service.diagnose('Button() { save() }'), [{
+    severity: "error",
+    code: "MUSE_INITIALIZER",
+    message: 'Button requires a text label before its trailing action.\nUse:\nButton("Save") { ... }',
+    line: 1,
+    column: 1,
+  }])
+  assert.deepEqual(service.diagnose('Button(label: { Text("Save") }, action: { save() })'), [{
+    severity: "error",
+    code: "MUSE_INITIALIZER",
+    message: "Button arguments must follow declaration order: action:, label:.",
+    line: 1,
+    column: 1,
+  }])
+  assert.match(service.diagnose('Button(action: { save() }) { Text("Save") }')[0].message, /custom-label initializer requires/)
 })
 
 test("@muse/compiler exposes source-ranged builder and struct ASTs", () => {
@@ -162,8 +191,8 @@ test("compiler parsing preserves nested template expressions and comment-separat
   alignment: /* declaration-owned label */ \`leading-\${theme(\`nested-\${mode}\`)}\`
 ) /* trailing builder */ {
   Text(\`Hello \${user.name}\`)
-  Button(action: { save(\`item-\${item.id}\`) }) /* trailing label */ {
-    Text("Save")
+  Button("Save") /* trailing action */ {
+    save(\`item-\${item.id}\`)
   }
 }`
   const ast = parseMuseBuilder(source)
@@ -175,7 +204,8 @@ test("compiler parsing preserves nested template expressions and comment-separat
   const output = transformMuseSource(source, "NestedTemplates.muse.ts")
   assert.match(output, /namedArguments\(\{ alignment:/)
   assert.match(output, /nested-\$\{mode\}/)
-  assert.match(output, /Button\(namedArguments\(\{ action:/)
+  assert.match(output, /Button\("Save", \(\) => \{\s*save\(/)
+  assert.doesNotMatch(output, /Button\(namedArguments\(\{ action:/)
   assert.equal(ts.createSourceFile("NestedTemplates.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
@@ -191,7 +221,7 @@ test("@muse/compiler exposes source maps, diagnostics, language service, and Vit
   const vitePlugin = musePlugin()
   assert.equal(vitePlugin.name, "muse-compiler")
   const dependencyScan = vitePlugin.config().optimizeDeps.rolldownOptions.plugins[0]
-  assert.match(dependencyScan.transform("VStack() { Text(\"Hi\") }", "virtual-module:/src/Counter.vue?id=0")?.code ?? "", /overloadClosure/)
+  assert.match(dependencyScan.transform("VStack() { Text(\"Hi\") }", "virtual-module:/src/Counter.vue?id=0")?.code ?? "", /VStack\(\(\) =>/)
 })
 
 test("compiler source maps keep real tokens anchored after synthesized imports", () => {
@@ -232,12 +262,12 @@ VStack() { Text("Hello from Muse") }
   const transformed = plugin.transform(sfc, "/src/Counter.vue")
   assert.ok(transformed)
   assert.match(transformed.code, /<template><VStack \/><\/template>/)
-  assert.match(transformed.code, /overloadClosure\(/)
+  assert.match(transformed.code, /VStack\(\(\) =>/)
   assert.equal(plugin.transform("<template><VStack /></template>", "/src/Counter.vue?vue&type=template"), null)
   assert.equal(plugin.transform(".card { color: red }", "/src/Counter.vue?vue&type=style&index=0&lang.css"), null)
   const script = plugin.transform('VStack() { Text("Query script") }', "/src/Counter.vue?vue&type=script&setup=true&lang.ts")
   assert.ok(script)
-  assert.match(script.code, /overloadClosure\(/)
+  assert.match(script.code, /VStack\(\(\) =>/)
   assert.equal(plugin.transform(`import { defineComponent as _defineComponent } from "vue"
 import { openBlock as _openBlock, createBlock as _createBlock } from "vue"
 export default _defineComponent({ setup(__props, { expose }) {
@@ -246,7 +276,7 @@ export default _defineComponent({ setup(__props, { expose }) {
 } })`, "/src/Counter.vue?vue&type=script&setup=true&lang.ts"), null)
   const virtualScript = plugin.transform('const graph = () => VStack() { Text("Virtual script") }', "/src/Counter.vue?id=virtual")
   assert.ok(virtualScript)
-  assert.match(virtualScript.code, /overloadClosure\(/)
+  assert.match(virtualScript.code, /VStack\(\(\) =>/)
 })
 
 test("Vue component adapters use the generic labeled-argument compiler path", () => {
@@ -314,7 +344,7 @@ test("the checked-in .muse.ts example passes through the compiler pipeline", () 
   const source = readFileSync(new URL("../examples/Counter.muse.ts", import.meta.url), "utf8")
   const output = transformMuseSource(source, "Counter.muse.ts")
   assert.doesNotMatch(output, /VStack\([^\n]*\)\s*\{/)
-  assert.match(output, /overloadClosure\(/)
+  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(1, \[namedArguments\(\{ spacing: 12 \}\), \(\) =>/)
   assert.match(output, /from "@muse\/react"/)
   assert.match(output, /view\(\{ state: \(\) => \{ const count = State\(0\)/)
   assert.doesNotMatch(output, /^const count = State/m)
@@ -361,7 +391,7 @@ test("compiler specializes a resolved imported ViewBuilder overload by declarati
   const source = `import { Text, VStack } from "@muse/core"
 const value = VStack() { Text("Hello") }`
   const output = transformMuseSource(source, "ImportedVStack.muse.ts")
-  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(0, \[overloadClosure\(/)
+  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(0, \[\(\) =>/)
   assert.match(output, /Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\)/)
 })
 
@@ -387,7 +417,7 @@ const ordinary = { padding(value: number) { return value } }.padding(8)`
   assert.match(output, /const ordinary = .*\.padding\(8\)/)
 })
 
-test("compiler keeps ambiguous declaration overloads on the dynamic resolver", () => {
+test("compiler keeps unresolved declaration calls on the dynamic resolver", () => {
   const source = `struct Card: View {
   let value: any
   init(_ value: string) { self.value = value }
@@ -398,6 +428,20 @@ const card = Card(valueFromRuntime)`
   const output = transformMuseSource(source, "DynamicCard.muse.ts")
   assert.match(output, /const card = Card\(valueFromRuntime\)/)
   assert.doesNotMatch(output, /createNodeSpecialized/)
+})
+
+test("compiler rejects ambiguous statically typed declaration overloads", () => {
+  const source = `struct Card: View {
+  let value: string
+  init(_ value: string) { self.value = value }
+  init(_ value: string) { self.value = value }
+  var body: some View { Text(value) }
+}
+const card = Card("runtime")`
+  assert.throws(
+    () => transformMuseSource(source, "AmbiguousCard.muse.ts"),
+    error => error?.code === "MUSE_INITIALIZER" && /Ambiguous initializer for Card/.test(error.message),
+  )
 })
 
 test("compiled generic ViewBuilder initializers enforce View results", () => {
@@ -438,6 +482,7 @@ test("compiled structs resolve unlabeled values, labeled actions, and trailing b
 const card = MixedCard("Title", action: { save() }) { Text("Body") }`
   const output = transformMuseSource(source, "MixedCard.muse.ts")
   assert.match(output, /MixedCard\.viewType\.createNodeSpecialized\(0, \["Title", namedArguments\(\{ action:/)
+  assert.doesNotMatch(output, /overloadClosure\(/)
   assert.equal(ts.createSourceFile("MixedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/, "").replace(/: any\b/g, "")
   let saves = 0
@@ -460,6 +505,29 @@ const card = MixedCard("Title", action: { save() }) { Text("Body") }`
   })
   assert.deepEqual(rendered.children.map(child => child.children[0]), ["Title", "Body"])
   assert.equal(saves, 0)
+})
+
+test("custom View trailing roles and invalid initializer shapes use compiler metadata", () => {
+  const valid = `struct ActionCard: View {
+  let action: () => void
+  init(@Action action: () => void) { self.action = action }
+  var body: some View { Text("Action") }
+}
+const card = ActionCard() { save() }`
+  const output = transformMuseSource(valid, "ActionCard.muse.ts")
+  assert.doesNotMatch(output, /overloadClosure\(/)
+  assert.match(output, /ActionCard\.viewType\.createNodeSpecialized\(0, \[\(\) => \{ save\(\) \}\]\)/)
+
+  const invalid = `struct LabelCard: View {
+  let label: any
+  init(@ViewBuilder label: () => View) { self.label = label() }
+  var body: some View { Text("Label") }
+}
+const card = LabelCard(action: { save() }) { Text("Label") }`
+  assert.throws(
+    () => transformMuseSource(invalid, "InvalidLabelCard.muse.ts"),
+    error => error?.code === "MUSE_INITIALIZER" && /No matching initializer for LabelCard/.test(error.message),
+  )
 })
 
 test("struct AST keeps stored fields declared after an initializer and ignores initializer locals", () => {

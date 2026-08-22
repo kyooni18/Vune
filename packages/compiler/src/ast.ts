@@ -221,7 +221,8 @@ function topLevelColon(source: string): number {
 function parseArgument(slice: Slice): MuseArgument {
   const value = trimSlice(slice)
   const colon = topLevelColon(value.source)
-  const label = colon < 0 ? undefined : value.source.slice(0, colon).trim()
+  const labelStart = skipTrivia(value.source, 0)
+  const label = colon < 0 ? undefined : value.source.slice(labelStart, colon).trim()
   if (label && !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(label)) return { value: raw(value), range: { start: value.start, end: value.end } }
   const valueSlice: Slice = colon < 0
     ? value
@@ -489,16 +490,36 @@ export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseS
 
 export interface MuseAstLowering {
   readonly transformRaw: (source: string) => string
-  readonly closure: (bodySource: string, parameter?: string) => string
+  readonly closure: (bodySource: string, parameter?: string, role?: "value" | "viewBuilder" | "action") => string
+  readonly closureRole?: (
+    call: MuseCallExpression,
+    context: { readonly position: "argument" | "trailing"; readonly argumentIndex?: number; readonly label?: string },
+  ) => "value" | "viewBuilder" | "action" | undefined
 }
 
 function lowerProgram(program: MuseBuilderProgram, lowering: MuseAstLowering): string[] {
   return program.statements.map(node => {
     if (node.kind === "raw") return lowering.transformRaw(node.source)
     if (node.kind === "call") {
-      const positional = node.arguments.filter(argument => !argument.label).map(argument => argument.value.kind === "closure" ? lowering.closure(argument.value.bodySource, argument.value.parameter) : lowering.transformRaw(argument.value.source))
-      const named = node.arguments.filter(argument => argument.label).map(argument => `${argument.label}: ${argument.value.kind === "closure" ? lowering.closure(argument.value.bodySource, argument.value.parameter) : lowering.transformRaw(argument.value.source)}`)
-      const args = [...positional, ...(named.length ? [`namedArguments({ ${named.join(", ")} })`] : []), ...(node.trailing ? [lowering.closure(node.trailing.bodySource, node.trailing.parameter)] : [])]
+      const positional = node.arguments.filter(argument => !argument.label).map((argument, argumentIndex) => argument.value.kind === "closure"
+        ? lowering.closure(
+            argument.value.bodySource,
+            argument.value.parameter,
+            lowering.closureRole?.(node, { position: "argument", argumentIndex, label: argument.label }),
+          )
+        : lowering.transformRaw(argument.value.source))
+      const named = node.arguments.filter(argument => argument.label).map((argument, argumentIndex) => `${argument.label}: ${argument.value.kind === "closure"
+        ? lowering.closure(
+            argument.value.bodySource,
+            argument.value.parameter,
+            lowering.closureRole?.(node, { position: "argument", argumentIndex, label: argument.label }),
+          )
+        : lowering.transformRaw(argument.value.source)}`)
+      const args = [...positional, ...(named.length ? [`namedArguments({ ${named.join(", ")} })`] : []), ...(node.trailing ? [lowering.closure(
+        node.trailing.bodySource,
+        node.trailing.parameter,
+        lowering.closureRole?.(node, { position: "trailing" }),
+      )] : [])]
       return `${node.callee}(${args.join(", ")})`
     }
     const thenBranch = lowerProgram(node.then, lowering).join(", ")

@@ -132,6 +132,16 @@ overloads retain the normal runtime resolver.
 
 The same source syntax can be used with built-in and custom Views:
 
+`Button` intentionally has only these two Muse forms:
+
+```ts
+Button('Save') { save() }
+Button(action: { save() }, label: { Text('Save') })
+```
+
+The custom-label form is declaration-ordered; `label:` before `action:` and
+unlabeled closure pairs are compiler errors.
+
 ```ts
 VStack(alignment: .leading, spacing: 12) {
   Text('Header').font(.title)
@@ -142,9 +152,9 @@ VStack(alignment: .leading, spacing: 12) {
   }
 }
 
-Button(action: { save() }) {
+Button(action: { save() }, label: {
   Text('Save')
-}
+})
 ```
 
 `musePlugin()` lowers these builder, labeled-argument, shorthand-modifier, and

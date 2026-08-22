@@ -185,7 +185,7 @@ function topLevelCharacter(source: string, expected: string): number {
 }
 
 function semanticInitializerParameters(source: string): readonly SemanticInitializerParameter[] {
-  return splitParameterSource(source).map(parameterSource => {
+  const parsed = splitParameterSource(source).map(parameterSource => {
     const kind = parameterSource.includes("@ViewBuilder")
       ? "viewBuilder" as const
       : parameterSource.includes("@Action")
@@ -207,6 +207,14 @@ function semanticInitializerParameters(source: string): readonly SemanticInitial
       kind,
       required: defaultValue === undefined,
       type: colon < 0 ? undefined : declaration.slice(colon + 1).trim(),
+    }
+  })
+  return parsed.map((parameter, index) => {
+    const trailing = index === parsed.length - 1 && (parameter.kind === "viewBuilder" || parameter.kind === "action")
+    return {
+      ...parameter,
+      trailing,
+      labelRequired: parameter.label !== undefined && !trailing,
     }
   })
 }

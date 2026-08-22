@@ -1,0 +1,4 @@
+body { margin: 0; font-family: system-ui, sans-serif; }
+[data-testid="parity-root"] { width: 320px; padding: 16px; }
+[data-row] { display: block; min-height: 20px; }
+[data-testid="custom-element"] { display: block; min-height: 20px; }

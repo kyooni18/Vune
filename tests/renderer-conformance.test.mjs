@@ -16,7 +16,7 @@ const Card = defineView("Card", {
 test("the shared Text/VStack/Button/Card graph has renderer-conformant SSR semantics", async () => {
   const value = VStack(
     Text("Title"),
-    Button(() => {}, () => Text("Save")),
+    Button("Save", () => {}),
     Card(),
   ).padding(8)
   const outputs = [

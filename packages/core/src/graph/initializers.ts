@@ -75,10 +75,14 @@ export interface InitializerParameter {
   /** Source field/property populated by a declared initializer, when known. */
   readonly name?: string
   readonly label?: string
+  /** The source call must provide this parameter with its declaration label. */
+  readonly labelRequired?: boolean
   readonly kind: InitializerParameterKind
   readonly required?: boolean
   /** The final parameter accepts additional positional values. */
   readonly variadic?: boolean
+  /** The source call may provide this closure as the trailing closure. */
+  readonly trailing?: boolean
   readonly type?: string
   readonly properties?: readonly string[]
 }
@@ -193,30 +197,6 @@ function sharedRuntimeResolution(target: unknown, candidates: readonly Initializ
   const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
   const result = resolveSemanticInitializer(symbols, runtimeArguments, genericParameters)
   if (!result.ok) {
-    // Unmarked JavaScript functions cannot carry contextual closure roles. For
-    // legacy positional APIs such as Button(action, label), preserve the
-    // declaration's first distinct closure ordering at runtime; duplicate
-    // signatures still produce the required ambiguity error.
-    const roleShapes = result.failure.candidates.map(candidate => candidate.parameters.map(parameter => parameter.kind).join("/"))
-    const unmarkedClosureOverloads = supplied.length > 0
-      && supplied.every(value => typeof value === "function")
-      && new Set(roleShapes).size === roleShapes.length
-    if (result.failure.kind === "ambiguous" && unmarkedClosureOverloads) {
-      const chosen = candidates.find(candidate => result.failure.candidates.some(item => item.signature === candidate.signature))
-      const chosenIndex = chosen ? candidates.indexOf(chosen) : -1
-      const chosenSymbol = chosenIndex < 0 ? undefined : symbols[chosenIndex]
-      const fallback = chosenSymbol ? resolveSemanticInitializer([chosenSymbol], runtimeArguments, genericParameters) : undefined
-      if (fallback?.ok && chosen) {
-        const normalized = fallback.resolution.arguments.map(argument => argument.value)
-        const typed = normalized.map((item, index) => {
-          const parameter = chosen.parameters?.[index]
-          return typeof item === "function" && parameter && parameter.kind !== "binding"
-            ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
-            : item
-        })
-        return { initializer: chosen, args: typed }
-      }
-    }
     const signatures = result.failure.candidates.map(candidate => candidate.signature)
     if (result.failure.kind === "ambiguous") throw new MuseInitializerAmbiguityError(displayNameOf(target), supplied, signatures)
     throw new MuseInitializerError(displayNameOf(target), supplied, signatures)
@@ -256,9 +236,13 @@ export function initializersOf(target: unknown): readonly InitializerMatch[] {
   return metadataOf(target)
 }
 
-export function namedArguments<T extends Record<string, unknown>>(value: T): T {
+export type NamedArguments<T extends object> = T & {
+  readonly [museNamedArguments]: true
+}
+
+export function namedArguments<T extends Record<string, unknown>>(value: T): NamedArguments<T> {
   Object.defineProperty(value, museNamedArguments, { configurable: false, enumerable: false, value: true })
-  return value
+  return value as NamedArguments<T>
 }
 
 function isNamedObject(value: unknown): value is Record<string, unknown> {
@@ -707,15 +691,16 @@ export function initializer(signature: string, accepts: (args: readonly unknown[
 }
 
 export const initializerKinds = Object.freeze({
-  value: (required = true, label?: string, properties?: readonly string[], type?: string, variadic = false): InitializerParameter => ({
+  value: (required = true, label?: string, properties?: readonly string[], type?: string, variadic = false, name?: string): InitializerParameter => ({
     kind: "value",
     required,
+    name,
     label,
     properties,
     type,
     ...(variadic ? { variadic: true } : {}),
   }),
-  binding: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "binding", required, label, type }),
-  viewBuilder: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "viewBuilder", required, label, type }),
-  action: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "action", required, label, type }),
+  binding: (required = true, label?: string, type?: string, name?: string): InitializerParameter => ({ kind: "binding", required, name, label, type }),
+  viewBuilder: (required = true, label?: string, type?: string, trailing = true, name?: string): InitializerParameter => ({ kind: "viewBuilder", required, name, label, trailing, type }),
+  action: (required = true, label?: string, type?: string, trailing = false, name?: string): InitializerParameter => ({ kind: "action", required, name, label, trailing, type }),
 })

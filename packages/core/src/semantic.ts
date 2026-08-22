@@ -11,9 +11,13 @@ export type SemanticInitializerParameterKind = "value" | "binding" | "viewBuilde
 export interface SemanticInitializerParameter {
   readonly name?: string
   readonly label?: string
+  /** The source call must provide this parameter with its declaration label. */
+  readonly labelRequired?: boolean
   readonly kind: SemanticInitializerParameterKind
   readonly required?: boolean
   readonly variadic?: boolean
+  /** The source call may provide this closure as the trailing closure. */
+  readonly trailing?: boolean
   readonly type?: string
   readonly properties?: readonly string[]
 }
@@ -279,6 +283,8 @@ export type SemanticArgumentKind = "value" | "binding" | "viewBuilder" | "action
 /** A syntax/type-checker description of a call argument. */
 export interface SemanticArgument {
   readonly label?: string
+  /** True only for the closure written after the closing parenthesis. */
+  readonly trailing?: boolean
   /** Runtime value, when resolution is happening after compilation. */
   readonly value?: unknown
   /** TypeScript type text, when resolution is happening before runtime. */
@@ -366,6 +372,12 @@ function typeMatch(type: string | undefined, argument: SemanticArgument, generic
   if (!type) return undefined
   const expected = normalizedType(type)
   if (!expected || expected === "unknown" || expected === "any") return undefined
+  const alternatives = splitTypeAlternatives(expected)
+  if (alternatives.length > 1) {
+    const results = alternatives.map(alternative => typeMatch(alternative, argument, genericParameters))
+    if (results.some(result => result === true)) return true
+    return results.some(result => result === undefined) ? undefined : false
+  }
   const actual = argument.type ?? runtimeType(argument.value)
   const valueType = argument.underlyingType ?? actual
   const comparableType = argument.kind === "binding" && !/^Binding(?:Ref)?\s*</.test(expected) ? valueType : actual
@@ -409,14 +421,29 @@ function normalizeArguments(
   const normalized: SemanticArgument[] = []
   const used = new Set<number>()
   let nextPositional = 0
+  let sawLabel = false
+  let lastLabeledIndex = -1
   for (const argument of input) {
-    let index = argument.label === undefined
-      ? (() => {
+    let index = argument.label === undefined && argument.trailing
+      ? parameters.findIndex((parameter, parameterIndex) => parameter.trailing && parameterIndex === parameters.length - 1 && !used.has(parameterIndex))
+      : argument.label === undefined
+        ? (() => {
+          // A trailing closure is allowed after labeled arguments; an
+          // ordinary positional argument is not.
           while (used.has(nextPositional)) nextPositional += 1
+          if (sawLabel && !argument.trailing && !(parameterAt(parameters, nextPositional)?.trailing && argument.type === "function")) return -1
           return nextPositional
         })()
       : parameters.findIndex(parameter => parameterIndexForArgument(parameter, argument))
     if (index < 0 || index >= parameters.length || used.has(index)) return undefined
+    const parameter = parameters[index]
+    if (argument.label === undefined && parameter.labelRequired) return undefined
+    if (argument.label !== undefined) {
+      if (index < lastLabeledIndex) return undefined
+      sawLabel = true
+      lastLabeledIndex = index
+    }
+    if (argument.trailing && (!parameter.trailing || index !== parameters.length - 1)) return undefined
     if (argument.label === undefined) nextPositional = index + 1
     used.add(index)
     normalized[index] = argument
@@ -432,6 +459,10 @@ function normalizeArguments(
     return input.length === parameters.length ? normalized : input
   }
   return normalized
+}
+
+function parameterAt(parameters: readonly SemanticInitializerParameter[], index: number): SemanticInitializerParameter | undefined {
+  return parameters[index]
 }
 
 function candidateScore(

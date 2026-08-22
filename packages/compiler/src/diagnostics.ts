@@ -45,8 +45,11 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const offset = typeof error === "object" && error !== null && "offset" in error && typeof error.offset === "number" ? error.offset : 0
+    const code = typeof error === "object" && error !== null && "code" in error && error.code === "MUSE_INITIALIZER"
+      ? "MUSE_INITIALIZER" as const
+      : "MUSE_SYNTAX" as const
     const before = source.slice(0, offset)
-    return [{ severity: "error", code: "MUSE_SYNTAX", message, line: before.split("\n").length, column: offset - before.lastIndexOf("\n") }]
+    return [{ severity: "error", code, message, line: before.split("\n").length, column: offset - before.lastIndexOf("\n") }]
   }
 }
 

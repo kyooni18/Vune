@@ -22,7 +22,7 @@ const VIEW_SIGNATURES = Object.freeze({
   SafeArea: ['SafeArea(@ViewBuilder content)', 'SafeArea(edges, @ViewBuilder content)'],
   GeometryReader: ['GeometryReader(@ViewBuilder content)'],
   Spacer: ['Spacer(minLength?)'],
-  Button: ['Button(@Action action)', 'Button(value, @Action action)', 'Button(@Action action, @ViewBuilder label)', 'Button(@ViewBuilder label, @Action action)'],
+  Button: ['Button(_ title: string | number, @Action action)', 'Button(@Action action, @ViewBuilder label)'],
   ForEach: ['ForEach(items, content)'],
   Element: ['Element(tag, props?, ...children)'],
 })

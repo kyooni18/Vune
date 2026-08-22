@@ -141,14 +141,17 @@ Initializer metadata is attached to a callable View and selected from the
 actual arguments. Closure roles are marked as `value`, `viewBuilder`, or
 `action`, so the compiler does not need a `Button`-specific syntax branch.
 
-The core tests cover the same rule for the four Button shapes:
+Canonical `.muse.ts` source exposes exactly two Button shapes:
 
 ```ts
-Button() { save() }
 Button("Save") { save() }
-Button(action: { save() }) { Text("Save") }
-Button(label: { Text("Save") }, action: { save() })
+Button(action: { save() }, label: { Text("Save") })
 ```
+
+Missing titles, unlabeled closure pairs, trailing custom labels, and reversed
+`label:`/`action:` order are compiler diagnostics. The historical React DSL
+forms remain available only through the explicit `react-muse-ui` compatibility
+entry point; they are not part of the canonical compiler or editor surface.
 
 At the React boundary, call `render(viewValue)` or use `MuseView`; do not pass a
 core graph object directly to `react-dom`.

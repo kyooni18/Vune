@@ -28,6 +28,7 @@ import {
   Toggle,
   VStack,
   ZStack,
+  namedArguments,
   type BindingRef,
   type ViewBuilderClosure,
 } from '../packages/core/src/index.js'
@@ -50,9 +51,8 @@ Element('button', { onPointerMove: event => event.preventDefault?.(), onKeyDown:
 // @ts-expect-error standard HTML event names are checked
 Element('button', { onClic: () => undefined })
 Element('muse-chart', { onAnything: () => undefined, 'data-series': 'revenue', 'aria-label': 'Chart' })
-Button(() => undefined)
 Button('Save', () => undefined)
-Button(() => undefined, () => Text('Label'))
+Button(namedArguments({ action: () => undefined, label: () => Text('Label') }))
 const count = State(0)
 const countBinding = Binding(count)
 const enabled = State(false)

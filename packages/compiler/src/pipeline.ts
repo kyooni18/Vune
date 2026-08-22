@@ -1,5 +1,5 @@
 import * as ts from "typescript"
-import { parseMuseBuilder, parseMuseStructs, lowerMuseBuilderAst } from "./ast.js"
+import { parseMuseBuilder, parseMuseStructs, lowerMuseBuilderAst, type MuseBuilderNode, type MuseBuilderProgram, type MuseCallExpression } from "./ast.js"
 import {
   findBuilder,
   findRawHtml,
@@ -16,12 +16,141 @@ import {
   topLevelColon,
   type BuilderCall,
 } from "./scanner.js"
+import * as Core from "@muse/core"
 import { resolveSemanticInitializer, type SemanticArgument, type SemanticInitializerSymbol } from "@muse/core"
 import { lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
 
 const nonBindingDollarNames = new Set([
   "attrs", "data", "emit", "el", "forceUpdate", "nextTick", "options", "parent", "props", "refs", "root", "slots", "watch",
 ])
+
+/** Compiler-facing view metadata is read from the same ViewType as runtime. */
+const canonicalInitializerSymbols = new Map<string, readonly SemanticInitializerSymbol[]>()
+for (const [name, value] of Object.entries(Core)) {
+  if (typeof value !== "function") continue
+  const viewType = (value as { readonly viewType?: { readonly name?: string; readonly semanticSymbol?: { readonly initializers: readonly SemanticInitializerSymbol[] } } }).viewType
+  if (viewType?.name && viewType.semanticSymbol) canonicalInitializerSymbols.set(name, viewType.semanticSymbol.initializers)
+}
+
+type InitializerSymbolRegistry = ReadonlyMap<string, readonly SemanticInitializerSymbol[]>
+
+function symbolsForCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): readonly SemanticInitializerSymbol[] | undefined {
+  return registry.get(call.callee)
+}
+
+class MuseInitializerSyntaxError extends SyntaxError {
+  readonly code = "MUSE_INITIALIZER" as const
+  readonly offset: number
+
+  constructor(message: string, offset: number) {
+    super(message)
+    this.name = "MuseInitializerSyntaxError"
+    this.offset = offset
+  }
+}
+
+function buttonInitializerMessage(call: MuseCallExpression): string {
+  const labels = call.arguments.flatMap(argument => argument.label ? [argument.label] : [])
+  if (labels.includes("label") && labels.includes("action") && labels.indexOf("label") < labels.indexOf("action")) {
+    return "Button arguments must follow declaration order: action:, label:."
+  }
+  if (call.trailing && call.arguments[0]?.label === "action") {
+    return "Button's custom-label initializer requires:\nButton(action: { ... }, label: { ... })"
+  }
+  return "Button requires a text label before its trailing action.\nUse:\nButton(\"Save\") { ... }"
+}
+
+function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument[] {
+  const arguments_ = call.arguments.flatMap(argument => {
+    if (argument.value.kind === "closure") return [{ label: argument.label, type: "function" }]
+    const named = /^namedArguments\s*\(\s*\{([\s\S]*)\}\s*\)$/.exec(argument.value.source.trim())
+    if (named) return splitTopLevel(named[1]).map(value => compilerSemanticArgument(value))
+    return [compilerSemanticArgument(argument.label ? `${argument.label}: ${argument.value.source}` : argument.value.source)]
+  })
+  return call.trailing ? [...arguments_, { type: "function", trailing: true }] : arguments_
+}
+
+function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): {
+  readonly symbols: readonly SemanticInitializerSymbol[]
+  readonly initializerIndex: number
+} | undefined {
+  const symbols = symbolsForCall(call, registry)
+  if (!symbols) return undefined
+  const result = resolveSemanticInitializer(symbols, knownCallArguments(call))
+  if (!result.ok) {
+    if (call.callee === "Button") throw new MuseInitializerSyntaxError(buttonInitializerMessage(call), call.range.start)
+    if (call.trailing && canonicalInitializerSymbols.get(call.callee) !== symbols) {
+      const signatures = result.failure.candidates.map(candidate => candidate.signature).join("; ")
+      throw new MuseInitializerSyntaxError(
+        `No matching initializer for ${call.callee}.${signatures ? ` Available initializers: ${signatures}.` : ""}`,
+        call.range.start,
+      )
+    }
+    return undefined
+  }
+  return { symbols, initializerIndex: result.resolution.initializerIndex }
+}
+
+function validateKnownCalls(program: MuseBuilderProgram, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
+  const visit = (node: MuseBuilderNode): void => {
+    if (node.kind === "call") {
+      if (node.callee === "Button" || node.trailing) resolveKnownCall(node, registry)
+      for (const argument of node.arguments) if (argument.value.kind === "closure") validateKnownCalls(argument.value.body, registry)
+      if (node.trailing) validateKnownCalls(node.trailing.body, registry)
+      return
+    }
+    if (node.kind === "conditional") {
+      validateKnownCalls(node.then, registry)
+      if (node.otherwise) {
+        if (node.otherwise.kind === "conditional") validateKnownCalls({ ...node.then, statements: [node.otherwise] }, registry)
+        else validateKnownCalls(node.otherwise, registry)
+      }
+    }
+  }
+  for (const node of program.statements) visit(node)
+}
+
+function validateKnownTypeScriptCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
+  const file = ts.createSourceFile("muse-call-validation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && registry.has(node.expression.text)) {
+      // The Muse scanner owns trailing closures. TypeScript sees the call
+      // prefix as a complete call, so leave that shape to validateKnownCalls.
+      const callText = source.slice(node.expression.end, node.end)
+      const hasMuseLabels = /(?:^|,)\s*[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(callText)
+      if (!hasMuseLabels && source[skipTrivia(source, node.end)] !== "{" && node.expression.text === "Button") {
+        const callSource = `${node.expression.text}(${node.arguments.map(argument => argument.getText(file)).join(", ")})`
+        const parsed = parseMuseBuilder(callSource, node.expression.getStart(file)).statements[0]
+        if (parsed?.kind === "call") resolveKnownCall(parsed, registry)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+}
+
+function closureRoleForKnownCall(
+  call: MuseCallExpression,
+  context: { readonly position: "argument" | "trailing"; readonly argumentIndex?: number; readonly label?: string },
+  registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
+): "value" | "viewBuilder" | "action" | undefined {
+  const resolved = resolveKnownCall(call, registry)
+  const symbols = resolved?.symbols ?? symbolsForCall(call, registry) ?? []
+  const parameters = resolved?.symbols[resolved.initializerIndex]?.parameters
+    ?? (context.position === "trailing"
+      ? symbols.find(symbol => symbol.parameters.at(-1)?.trailing)?.parameters
+      : context.label
+        ? symbols.find(symbol => symbol.parameters.some(parameter => parameter.label === context.label))?.parameters
+        : undefined)
+    ?? []
+  const role = (kind: SemanticInitializerSymbol["parameters"][number]["kind"] | undefined): "value" | "viewBuilder" | "action" | undefined => kind === "binding" ? undefined : kind
+  if (context.position === "trailing") return role(parameters.at(-1)?.kind)
+  if (context.label) return role(parameters.find(parameter => parameter.label === context.label)?.kind)
+  const index = context.argumentIndex ?? 0
+  let positional = 0
+  for (const argument of call.arguments.slice(0, index)) if (!argument.label) positional += 1
+  return role(parameters[positional]?.kind)
+}
 
 function isIdentifierDeclaration(node: ts.Identifier): boolean {
   const parent = node.parent
@@ -89,40 +218,48 @@ function containsAwaitKeyword(source: string): boolean {
   return false
 }
 
-function lowerClosure(value: string): string {
+function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const source = value.trim()
-  if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source)
+  if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source, registry)
   const body = source.slice(1, -1).trim()
-  const lowered = lowerStatements(body)
+  const lowered = lowerStatements(body, registry)
   const asynchronous = containsAwaitKeyword(body)
+  if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
+  if (role === "viewBuilder") return `() => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
-  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body)}})`
+  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
 }
 
-function lowerArguments(source: string): string {
+function lowerArguments(source: string, calleeName?: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
+  const parsed = calleeName ? parseMuseBuilder(`${calleeName}(${source})`).statements[0] : undefined
+  const call = parsed?.kind === "call" ? parsed : undefined
+  if (call && (call.callee === "Button" || call.trailing)) resolveKnownCall(call, registry)
   const positional: string[] = []
   const named: string[] = []
-  for (const argument of splitTopLevel(source)) {
+  for (const [argumentIndex, argument] of splitTopLevel(source).entries()) {
     const colon = topLevelColon(argument)
-    if (colon >= 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(argument.slice(0, colon).trim())) {
-      const label = argument.slice(0, colon).trim()
-      named.push(`${label}: ${lowerClosureOrExpression(argument.slice(colon + 1))}`)
+    const labelStart = skipTrivia(argument, 0)
+    if (colon >= 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(argument.slice(labelStart, colon).trim())) {
+      const label = argument.slice(labelStart, colon).trim()
+      const role = call ? closureRoleForKnownCall(call, { position: "argument", argumentIndex, label }, registry) : undefined
+      named.push(`${label}: ${lowerClosureOrExpression(argument.slice(colon + 1), role, registry)}`)
     } else {
-      positional.push(lowerClosureOrExpression(argument))
+      const role = call ? closureRoleForKnownCall(call, { position: "argument", argumentIndex }, registry) : undefined
+      positional.push(lowerClosureOrExpression(argument, role, registry))
     }
   }
   if (named.length === 0) return positional.join(", ")
   return [...positional, `namedArguments({ ${named.join(", ")} })`].join(", ")
 }
 
-function lowerClosureOrExpression(source: string): string {
+function lowerClosureOrExpression(source: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const value = source.trim()
-  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1) return lowerClosure(value)
-  return lowerShorthand(lowerRange(value))
+  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1) return lowerClosure(value, role, registry)
+  return lowerShorthand(lowerRange(value, registry))
 }
 
-function lowerConditional(source: string): string | undefined {
+function lowerConditional(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string | undefined {
   const match = /^if\s*\(/.exec(source)
   if (!match) return undefined
   const open = source.indexOf("(", match.index + match[0].length - 1)
@@ -132,56 +269,60 @@ function lowerConditional(source: string): string | undefined {
   const thenClose = matching(source, thenOpen, "{", "}")
   const afterThen = skipTrivia(source, thenClose + 1)
   const condition = source.slice(open + 1, close).trim()
-  const thenValue = `[${lowerStatements(source.slice(thenOpen + 1, thenClose))}]`
+  const thenValue = `[${lowerStatements(source.slice(thenOpen + 1, thenClose), registry)}]`
   if (source.slice(afterThen, afterThen + 4) !== "else") return `(${lowerShorthand(condition)} ? ${thenValue} : [])`
   const elseOpen = skipTrivia(source, afterThen + 4)
   if (source[elseOpen] !== "{") return undefined
   const elseClose = matching(source, elseOpen, "{", "}")
-  return `(${lowerShorthand(condition)} ? ${thenValue} : [${lowerStatements(source.slice(elseOpen + 1, elseClose))}])`
+  return `(${lowerShorthand(condition)} ? ${thenValue} : [${lowerStatements(source.slice(elseOpen + 1, elseClose), registry)}])`
 }
 
-function lowerStatements(source: string): string {
+function lowerStatements(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const values: string[] = []
   for (const statement of splitStatements(source)) {
-    const conditional = lowerConditional(statement)
+    const conditional = lowerConditional(statement, registry)
     if (conditional) values.push(conditional)
     else if (/^\s*(const|let|var|return|throw)\b/.test(statement)) continue
-    else values.push(lowerRange(statement))
+    else values.push(lowerRange(statement, registry))
   }
   return values.join(", ")
 }
 
-function lowerAstClosure(body: string, parameter?: string): string {
+function lowerAstClosure(body: string, parameter?: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const parsed = parseMuseBuilder(body)
   const lowered = lowerMuseBuilderAst(parsed, {
-    transformRaw: value => lowerRange(value),
-    closure: (nestedBody, nestedParameter) => lowerAstClosure(nestedBody, nestedParameter),
+    transformRaw: value => lowerRange(value, registry),
+    closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
+    closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
   }).join(", ")
   if (parameter) return `(${parameter}) => [${lowered}]`
   const asynchronous = containsAwaitKeyword(body)
+  if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
+  if (role === "viewBuilder") return `() => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
-  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body)}})`
+  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
 }
 
-function lowerBuilder(call: BuilderCall, source: string): string {
+function lowerBuilder(call: BuilderCall, source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const parsed = parseMuseBuilder(source.slice(call.start, call.end), call.start)
   const lowered = lowerMuseBuilderAst(parsed, {
-    transformRaw: value => lowerRange(value),
-    closure: (body, parameter) => lowerAstClosure(body, parameter),
+    transformRaw: value => lowerRange(value, registry),
+    closure: (body, parameter, role) => lowerAstClosure(body, parameter, role, registry),
+    closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
   })
   if (lowered.length === 1) return lowered[0]
-  return `${call.name}(${lowerArguments(call.argumentSource)})`
+  return `${call.name}(${lowerArguments(call.argumentSource, call.name, registry)})`
 }
 
-function lowerRange(source: string): string {
+function lowerRange(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   let output = ""
   let cursor = 0
   let iterations = 0
   while (cursor < source.length) {
     if (++iterations > source.length + 1) throw syntaxError("Muse lowering did not advance past a builder expression", cursor)
     const call = findBuilder(source, cursor)
-    const html = findRawHtml(source, cursor, lowerRange)
+    const html = findRawHtml(source, cursor, value => lowerRange(value, registry))
     if (!call && !html) break
     if (html && (!call || html.start < call.start)) {
       output += lowerShorthand(source.slice(cursor, html.start))
@@ -190,7 +331,7 @@ function lowerRange(source: string): string {
       continue
     }
     output += lowerShorthand(source.slice(cursor, call!.start))
-    output += lowerBuilder(call!, source)
+    output += lowerBuilder(call!, source, registry)
     cursor = call!.end
   }
   output += lowerShorthand(source.slice(cursor))
@@ -200,8 +341,10 @@ function lowerRange(source: string): string {
 interface StructParameter {
   readonly name: string
   readonly label?: string
+  readonly labelRequired?: boolean
   readonly kind: "value" | "binding" | "viewBuilder" | "action"
   readonly required: boolean
+  readonly trailing?: boolean
   readonly defaultValue?: string
   readonly type?: string
 }
@@ -273,7 +416,12 @@ function structInitializerPlans(declaration: MuseStruct): readonly StructInitial
 }
 
 function structInitializerPlan(parameterSource: string, bodySource: string): StructInitializerPlan {
-  const parameters = splitTopLevel(parameterSource).filter(Boolean).map(structParameter)
+  const parsedParameters = splitTopLevel(parameterSource).filter(Boolean).map(structParameter)
+  const parameters = parsedParameters.map((parameter, index) => ({
+    ...parameter,
+    trailing: index === parsedParameters.length - 1 && (parameter.kind === "viewBuilder" || parameter.kind === "action"),
+    labelRequired: parameter.label !== undefined && !(index === parsedParameters.length - 1 && (parameter.kind === "viewBuilder" || parameter.kind === "action")),
+  }))
   const assignments = new Map<string, string>()
   for (const match of bodySource.matchAll(/self\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)) assignments.set(match[1], match[2].trim())
   const delegationMatch = /\bself\.init\s*\(/.exec(bodySource)
@@ -344,7 +492,7 @@ function semanticInitializerSymbol(name: string, plan: StructInitializerPlan, in
   }
 }
 
-function staticInitializerIndex(declaration: MuseStruct, argumentSource: string): number | undefined {
+function staticInitializerIndex(declaration: MuseStruct, argumentSource: string, offset = 0): number | undefined {
   const plans = structInitializerPlans(declaration)
   const arguments_ = compilerInitializerArguments(argumentSource).map(compilerSemanticArgument)
   const result = resolveSemanticInitializer(
@@ -352,7 +500,13 @@ function staticInitializerIndex(declaration: MuseStruct, argumentSource: string)
     arguments_,
     declaration.genericParameters,
   )
-  return result.ok ? result.resolution.initializerIndex : undefined
+  if (result.ok) return result.resolution.initializerIndex
+  if (result.failure.kind !== "ambiguous" && arguments_.some(argument => argument.type === "unknown")) return undefined
+  const signatures = result.failure.candidates.map(candidate => candidate.signature).join("; ")
+  const message = result.failure.kind === "ambiguous"
+    ? `Ambiguous initializer for ${declaration.name}. Candidates: ${signatures}.`
+    : `No matching initializer for ${declaration.name}.${signatures ? ` Available initializers: ${signatures}.` : ""}`
+  throw new MuseInitializerSyntaxError(message, offset)
 }
 
 function findDelegatedInitializer(plans: readonly StructInitializerPlan[], arguments_: readonly string[], excludedIndex: number): { plan: StructInitializerPlan; values: Map<string, string> } | undefined {
@@ -425,13 +579,13 @@ function delegatedStructInitializer(
     return `${field.name}: ${resolved}`
   })
   const signature = `${name}(${parameters.map(parameter => `${parameter.kind === "viewBuilder" ? "@ViewBuilder " : parameter.kind === "action" ? "@Action " : parameter.kind === "binding" ? "@Binding " : ""}${parameter.label ?? parameter.name}${parameter.defaultValue === undefined ? "" : ` = ${parameter.defaultValue}`}`).join(", ")})`
-  const metadata = `[${parameters.map(parameter => `{ name: ${JSON.stringify(parameter.name)}, kind: ${JSON.stringify(parameter.kind)}, label: ${parameter.label ? JSON.stringify(parameter.label) : "undefined"}, required: ${parameter.required}, type: ${parameter.type ? JSON.stringify(parameter.type) : "undefined"} }`).join(", ")}]`
+  const metadata = `[${parameters.map(parameter => `{ name: ${JSON.stringify(parameter.name)}, kind: ${JSON.stringify(parameter.kind)}, label: ${parameter.label ? JSON.stringify(parameter.label) : "undefined"}, labelRequired: ${parameter.labelRequired === true}, required: ${parameter.required}, trailing: ${parameter.trailing === true}, type: ${parameter.type ? JSON.stringify(parameter.type) : "undefined"} }`).join(", ")}]`
   const required = parameters.filter(parameter => parameter.required).length
   const maximum = parameters.length
   return `initializer(${JSON.stringify(signature)}, args => args.length >= ${required} && args.length <= ${maximum}${checks.length ? ` && ${checks.join(" && ")}` : ""}, args => { ${parameters.map((parameter, parameterIndex) => `const ${parameter.name} = args[${parameterIndex}]${parameter.defaultValue ? ` === undefined ? (${parameter.defaultValue}) : args[${parameterIndex}]` : ""}` ).join("; ")}; return { ${values.join(", ")} } }, ${metadata})`
 }
 
-function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[number]): string {
+function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[number], registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
     const fields: StructField[] = declaration.fields.map(field => ({
       name: field.name,
       kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
@@ -450,15 +604,15 @@ function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[
       declaration.genericParameters === undefined ? undefined : `genericParameters: ${JSON.stringify(declaration.genericParameters)}`,
       fieldMetadata,
     ].filter((item): item is string => item !== undefined).join(", ")
-    return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${lowerRange(bodySource)} } })`
+    return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${lowerRange(bodySource, registry)} } })`
 }
 
-function lowerStructs(source: string): string {
+function lowerStructs(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const declarations = parseMuseStructs(source)
   if (declarations.length === 0) return source
   let output = source
   for (const declaration of [...declarations].sort((left, right) => right.range.start - left.range.start)) {
-    const definition = lowerStructDefinition(declaration)
+    const definition = lowerStructDefinition(declaration, registry)
     const nested = declaration.nested ?? []
     const replacement = nested.length === 0
       ? `const ${declaration.name} = ${definition}`
@@ -482,7 +636,7 @@ function lowerStaticStructCalls(source: string, declarations: readonly MuseStruc
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const declaration = known.get(node.expression.text)
-      const initializerIndex = declaration && staticInitializerIndex(declaration, node.arguments.map(argument => argument.getText(file)).join(", "))
+      const initializerIndex = declaration && staticInitializerIndex(declaration, node.arguments.map(argument => argument.getText(file)).join(", "), node.expression.getStart(file))
       if (initializerIndex !== undefined) {
         const argumentsSource = node.arguments.map(argument => argument.getText(file)).join(", ")
         edits.push({
@@ -546,9 +700,11 @@ function ensureImports(source: string): string {
   return result
 }
 
-function lowerNamedMuseCalls(source: string): string {
+function lowerNamedMuseCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   let output = source
+  let iterations = 0
   while (true) {
+    if (++iterations > output.length + 1) throw syntaxError("Muse named-argument lowering did not advance", output.length)
     const calls = [...output.matchAll(/\b[A-Z][A-Za-z0-9_$]*\s*\(/g)]
     let replacement: { start: number; end: number; value: string } | undefined
     for (const match of calls.reverse()) {
@@ -561,12 +717,25 @@ function lowerNamedMuseCalls(source: string): string {
       const close = matching(output, open, "(", ")")
       const argumentSource = output.slice(open + 1, close)
       if (!splitTopLevel(argumentSource).some(argument => topLevelColon(argument) >= 0)) continue
-      replacement = { start, end: close + 1, value: `${name}(${lowerArguments(argumentSource)})` }
+      replacement = { start, end: close + 1, value: `${name}(${lowerArguments(argumentSource, name, registry)})` }
       break
     }
     if (!replacement) return output
     output = output.slice(0, replacement.start) + replacement.value + output.slice(replacement.end)
   }
+}
+
+function initializerRegistryFor(declarations: readonly MuseStruct[]): Map<string, readonly SemanticInitializerSymbol[]> {
+  const registry = new Map(canonicalInitializerSymbols)
+  const add = (declaration: MuseStruct): void => {
+    registry.set(
+      declaration.name,
+      structInitializerPlans(declaration).map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index)),
+    )
+    for (const nested of declaration.nested ?? []) add(nested)
+  }
+  for (const declaration of declarations) add(declaration)
+  return registry
 }
 
 function lowerVueComponentImports(source: string): string {
@@ -609,7 +778,13 @@ function lowerVueComponentImports(source: string): string {
 export function transformMuseSource(source: string, fileName = "muse-source.ts"): string {
   const withVueImports = lowerVueComponentImports(source)
   const declarations = parseMuseStructs(withVueImports)
-  const lowered = lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(withVueImports))))
+  const registry = initializerRegistryFor(declarations)
+  validateKnownCalls(parseMuseBuilder(withVueImports), registry)
+  validateKnownTypeScriptCalls(withVueImports, registry)
+  for (const declaration of declarations) {
+    validateKnownCalls(parseMuseBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
+  }
+  const lowered = lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(withVueImports), registry), registry), registry)
   const withStaticStructCalls = lowerStaticStructCalls(lowered, declarations)
   const withStaticModifiers = lowerStaticModifierChains(withStaticStructCalls, fileName)
   return ensureImports(lowerStaticImportedCalls(withStaticModifiers, fileName))

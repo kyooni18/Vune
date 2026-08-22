@@ -267,6 +267,22 @@ test("@muse/core resolves declared union value types without overload-order bias
   assert.doesNotThrow(() => CoreButton(42, () => undefined))
 })
 
+test("@muse/core routes a trailing closure past omitted optional parameters", () => {
+  const result = resolveSemanticInitializer([
+    {
+      kind: "initializer",
+      index: 0,
+      signature: "OptionalBuilder(options?, @ViewBuilder content)",
+      parameters: [
+        { kind: "value", label: "options", required: false, type: "object" },
+        { kind: "viewBuilder", label: "content", required: true, trailing: true, type: "function" },
+      ],
+    },
+  ], [{ type: "function", trailing: true }])
+  assert.equal(result.ok, true)
+  assert.equal(result.ok && result.resolution.arguments[1]?.trailing, true)
+})
+
 test("@muse/core applies Content: View constraints to built-in stack builders", () => {
   assert.doesNotThrow(() => CoreVStack(() => [CoreText("valid")]))
   assert.throws(() => CoreVStack(() => ["not a View"]), /No matching initializer for VStack/)

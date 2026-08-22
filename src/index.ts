@@ -1,6 +1,2 @@
-/**
- * Backward-compatible root entry point. The implementation lives in the
- * React renderer package; the root package intentionally contains no React
- * runtime code.
- */
+/** Compatibility facade for the old `react-muse-ui` package name. Canonical Muse consumers should use @muse/core and @muse/react. */
 export * from "@muse/react/legacy"

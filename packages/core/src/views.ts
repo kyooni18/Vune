@@ -8,6 +8,7 @@ import {
   lazyView,
   modifier,
   resolveBuilderClosure,
+  type NamedArguments,
   type ViewValue,
   type ViewBuilderClosure,
   type ViewBuilderContent,
@@ -303,30 +304,46 @@ export function Element(tag: string, props: object | null = null, ...children: V
 }
 
 interface ButtonProps {
-  readonly label?: ViewValue[]
+  readonly label: ViewValue[]
   readonly action: () => unknown
 }
 
 type ButtonAction = () => unknown
-interface ButtonCall {
-  (action: ButtonAction): ReturnType<typeof viewElement>
-  (title: string | number, action: ButtonAction): ReturnType<typeof viewElement>
-  (action: ButtonAction, label: ViewBuilderClosure): ReturnType<typeof viewElement>
-  (label: ViewBuilderClosure, action: ButtonAction): ReturnType<typeof viewElement>
+interface ButtonCustomLabelArguments {
+  readonly action: ButtonAction
+  readonly label: ViewBuilderClosure
 }
 
-const actionParameter = initializerKinds.action(true, "action")
-const labelParameter = initializerKinds.viewBuilder(true, "label")
+interface ButtonCall {
+  (title: string | number, action: ButtonAction): ReturnType<typeof viewElement>
+  (configuration: NamedArguments<ButtonCustomLabelArguments>): ReturnType<typeof viewElement>
+}
+
+const titleParameter = initializerKinds.value(true, undefined, undefined, "string | number", false, "title")
+const trailingActionParameter = initializerKinds.action(true, undefined, "function", true, "action")
+const labeledActionParameter = initializerKinds.action(true, "action", "function", false, "action")
+const labeledLabelParameter = initializerKinds.viewBuilder(true, "label", undefined, false, "label")
 
 export const Button = defineBuiltinView<ButtonProps>(
   "Button",
   [
-    initializer("Button(@Action action)", args => args.length === 1 && typeof args[0] === "function", args => ({ action: args[0] as () => unknown }), [actionParameter]),
-    initializer("Button(value, @Action action)", args => args.length === 2 && typeof args[0] !== "function" && typeof args[1] === "function", args => ({ label: [Text(args[0] as string | number)], action: args[1] as () => unknown }), [initializerKinds.value(true, "title", undefined, "string | number"), actionParameter]),
-    initializer("Button(@Action action, @ViewBuilder label)", args => args.length === 2 && typeof args[0] === "function" && typeof args[1] === "function", args => ({ action: args[0] as () => unknown, label: resolveBuilderClosure(args[1] as () => ViewValue) }), [actionParameter, labelParameter]),
-    initializer("Button(@ViewBuilder label, @Action action)", args => args.length === 2 && typeof args[0] === "function" && typeof args[1] === "function", args => ({ label: resolveBuilderClosure(args[0] as () => ViewValue), action: args[1] as () => unknown }), [labelParameter, actionParameter]),
+    initializer(
+      "Button(_ title: string | number, @Action action)",
+      args => args.length === 2 && (typeof args[0] === "string" || typeof args[0] === "number") && typeof args[1] === "function",
+      args => ({ label: [Text(args[0] as string | number)], action: args[1] as () => unknown }),
+      [titleParameter, trailingActionParameter],
+    ),
+    initializer(
+      "Button(@Action action, @ViewBuilder label)",
+      args => args.length === 2 && typeof args[0] === "function" && typeof args[1] === "function",
+      args => ({ action: args[0] as () => unknown, label: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      [
+        { ...labeledActionParameter, labelRequired: true },
+        { ...labeledLabelParameter, labelRequired: true },
+      ],
+    ),
   ],
-  ({ label = [Text("Button")], action }) => viewElement("button", { type: "button", onClick: action }, label),
+  ({ label, action }) => viewElement("button", { type: "button", onClick: action }, label),
 ) as TypedViewConstructor<ButtonProps, ButtonCall>
 
 const objectIdentityKeys = new WeakMap<object, number>()
