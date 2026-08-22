@@ -369,9 +369,11 @@ function resolvedCalls(
   const declaredTypes = new Map<string, string>()
   for (const view of views) for (const field of view.fields) if (field.type) declaredTypes.set(field.name, field.type)
   return calls.map(call => {
-    const arguments_: SemanticArgument[] = call.arguments.map(argument => argument.kind === "closure"
+    const arguments_: SemanticArgument[] = call.arguments.map((argument, argumentIndex) => argument.kind === "closure"
       ? { label: argument.label, type: "function" }
-      : compilerSemanticArgument(argument.source, argument.label, checker, sourceFile, declaredTypes))
+      : call.callee === "ForEach" && argumentIndex === 1 && /^\{\s*(?:id|key)\s*:/.test(argument.source) && /=>/.test(argument.source)
+        ? { label: "key", type: "function" }
+        : compilerSemanticArgument(argument.source, argument.label, checker, sourceFile, declaredTypes))
     if (call.trailingClosure) arguments_.push({ type: "function", trailing: true })
     return {
       ...call,

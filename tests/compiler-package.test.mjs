@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import ts from "typescript"
-import { compileMuseFile, createMuseLanguageService, createMuseSemanticModel, createMuseVitePlugin, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
+import { compileMuseFile, createMuseLanguageService, createMuseSemanticModel, createMuseVitePlugin, diagnoseMuseSource, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
 import { musePlugin } from "../packages/vite/dist/index.js"
 import { Text, VStack, defineView, initializer, modifiedContent, modifierGraphOf, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
 import { readFileSync } from "node:fs"
@@ -15,6 +15,92 @@ test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax
   assert.match(output, /Each\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /import \{ namedArguments \} from "@muse\/core"/)
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("@muse/compiler keeps TypeScript lexical syntax separate from Muse HTML and blocks", () => {
+  const source = `type Bar = number
+declare const foo: <T>(value: T) => T
+declare const a: number
+declare const b: number
+function matches(value: string) {
+  return /\\{/.test(value)
+}
+const generic = foo<Bar>(1)
+const result = a < b && b > a`
+  const output = transformMuseSource(source, "LexicalBoundaries.muse.ts")
+  assert.match(output, /foo<Bar>\(1\)/)
+  assert.match(output, /a < b && b > a/)
+  assert.ok(output.includes(String.raw`return /\{/.test(value)`))
+  assert.deepEqual(diagnoseMuseSource(source).filter(diagnostic => diagnostic.code === "MUSE_SYNTAX"), [])
+  assert.equal(ts.createSourceFile("LexicalBoundaries.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("@muse/compiler lowers ViewBuilder statements and children in one executable closure", () => {
+  const source = `VStack() {
+  const title = "Hello"
+  const enabled = count > 0
+  Text(title)
+  if (enabled) {
+    Text("Enabled")
+  }
+}`
+  const output = transformMuseSource(source, "StatementBody.muse.ts")
+  assert.match(output, /const __museChildren = \[\]/)
+  assert.match(output, /const title = "Hello"/)
+  assert.match(output, /__museChildren\.push\(Text\(title\)\)/)
+  assert.match(output, /if \(enabled\) \{ __museChildren\.push\(Text\("Enabled"\)\); \}/)
+  assert.doesNotMatch(output, /\[const title/)
+  assert.equal(ts.createSourceFile("StatementBody.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+
+  const controlFlow = transformMuseSource(`VStack() {
+  switch (mode) {
+    case "enabled":
+      Text("Enabled")
+      break
+    default:
+      if (fallback) {
+        return Text("Fallback")
+      }
+  }
+}`, "StatementControlFlow.muse.ts")
+  assert.match(controlFlow, /switch \(mode\)/)
+  assert.match(controlFlow, /case "enabled": __museChildren\.push\(Text\("Enabled"\)\); break;/)
+  assert.match(controlFlow, /if \(fallback\) \{ return Text\("Fallback"\); \}/)
+  assert.equal(ts.createSourceFile("StatementControlFlow.ts", controlFlow, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("@muse/compiler preserves State call shape, generic arguments, and object initializers", () => {
+  const source = `type Foo = { readonly value: string }
+import { State, Text } from "muse"
+import { view } from "@muse/react"
+const count = State(
+  0
+)
+const value = State<Foo | null>(null)
+const state = State({
+  count: 0,
+  text: ""
+})
+export default view(() => Text(String(count.value)))`
+  const output = transformMuseSource(source, "StateShapes.muse.ts")
+  assert.match(output, /state: \(\) => \{[\s\S]*const count = State\(\n  0\n\);[\s\S]*const value = State<Foo \| null>\(null\);[\s\S]*const state = State\(\{\n  count: 0,\n  text: ""\n\}\);/)
+  assert.doesNotMatch(output, /^const count = State/m)
+  assert.doesNotMatch(output, /^const value = State/m)
+  assert.equal(ts.createSourceFile("StateShapes.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("@muse/compiler preserves meaningful raw HTML whitespace and explicit ForEach identity", () => {
+  const html = transformMuseSource(`<p>Hello <strong>world</strong> !</p>`, "Whitespace.muse.ts")
+  assert.match(html, /Element\("p", null, "Hello ", Element\("strong", null, "world"\), " !"\)/)
+  assert.doesNotMatch(html, /"Hello".*"world".*"!"/)
+
+  const each = transformMuseSource(`const items = [{ id: "a" }]
+ForEach(items, { id: item => item.id }) {
+  Row(item)
+}`, "ForEachIdentity.muse.ts")
+  assert.match(each, /ForEach\(items, namedArguments\(\{ key: item => item\.id \}\), \(\) => \[Row\(item\)\]\)/)
+  assert.deepEqual(diagnoseMuseSource(`const items = [{ id: "a" }]
+ForEach(items, { id: item => item.id }) { Row(item) }`), [])
 })
 
 test("binding shorthand uses AST identifiers and preserves host dollar syntax", () => {

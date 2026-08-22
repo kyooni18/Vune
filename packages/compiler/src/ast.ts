@@ -202,6 +202,9 @@ function parseClosure(slice: Slice): MuseClosureExpression | undefined {
   if (close !== value.source.length - 1) return undefined
   const inner = value.source.slice(1, close)
   const parameter = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+/.exec(inner)
+  // A direct object argument is not a Muse closure. Check the first member
+  // rather than any colon: closure bodies legitimately contain ternaries.
+  if (!parameter && /^(?:\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|["'][^"']*["']|-?\d+(?:\.\d+)?)\s*:)/.test(inner)) return undefined
   const bodySource = parameter ? inner.slice(parameter[0].length) : inner
   const bodyOffset = value.start + 1 + (parameter ? parameter[0].length : 0)
   return {
@@ -490,6 +493,7 @@ export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseS
 
 export interface MuseAstLowering {
   readonly transformRaw: (source: string) => string
+  readonly transformArgument?: (source: string, call: MuseCallExpression, argumentIndex: number, label?: string) => string
   readonly closure: (bodySource: string, parameter?: string, role?: "value" | "viewBuilder" | "action") => string
   readonly closureRole?: (
     call: MuseCallExpression,
@@ -507,14 +511,14 @@ function lowerProgram(program: MuseBuilderProgram, lowering: MuseAstLowering): s
             argument.value.parameter,
             lowering.closureRole?.(node, { position: "argument", argumentIndex, label: argument.label }),
           )
-        : lowering.transformRaw(argument.value.source))
+        : lowering.transformArgument?.(argument.value.source, node, argumentIndex, argument.label) ?? lowering.transformRaw(argument.value.source))
       const named = node.arguments.filter(argument => argument.label).map((argument, argumentIndex) => `${argument.label}: ${argument.value.kind === "closure"
         ? lowering.closure(
             argument.value.bodySource,
             argument.value.parameter,
             lowering.closureRole?.(node, { position: "argument", argumentIndex, label: argument.label }),
           )
-        : lowering.transformRaw(argument.value.source)}`)
+        : lowering.transformArgument?.(argument.value.source, node, argumentIndex, argument.label) ?? lowering.transformRaw(argument.value.source)}`)
       const args = [...positional, ...(named.length ? [`namedArguments({ ${named.join(", ")} })`] : []), ...(node.trailing ? [lowering.closure(
         node.trailing.bodySource,
         node.trailing.parameter,

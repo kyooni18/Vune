@@ -57,7 +57,14 @@ function skipComment(source: string, index: number): number {
 function regexCanStart(source: string, index: number): boolean {
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (/\s/.test(source[cursor])) continue
-    return "([{=,:;!?&|+-*%^~<>".includes(source[cursor])
+    if ("([{=,:;!?&|+-*%^~<>".includes(source[cursor])) return true
+    if (/[A-Za-z_$]/.test(source[cursor])) {
+      const end = cursor + 1
+      while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
+      const word = source.slice(cursor + 1, end)
+      return new Set(["case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw", "typeof", "void", "yield", "await"]).has(word)
+    }
+    return false
   }
   return true
 }
@@ -112,6 +119,37 @@ function matching(source: string, open: number, left: string, right: string): nu
 function identifierAt(source: string, start: number): { name: string; end: number } | undefined {
   const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(start))
   return match ? { name: match[0], end: start + match[0].length } : undefined
+}
+
+/**
+ * A less-than token is only a raw HTML opener in an expression-start
+ * position. Keeping this decision here prevents generic calls and ordinary
+ * comparisons from leaking into the HTML parser.
+ */
+function isRawHtmlCandidate(source: string, start: number): boolean {
+  if (source[start] !== "<" || source[start + 1] === "/" || source[start + 1] === "!") return false
+  if (!/^[A-Za-z]/.test(source[start + 1] ?? "")) return false
+  // `<T>(value)` and `<T extends U>(value)` are TypeScript generic calls or
+  // assertions. A real opening element continues with attributes/text or a
+  // closing tag, not an immediately following call parenthesis.
+  const possibleGenericClose = source.indexOf(">", start + 1)
+  if (possibleGenericClose >= 0) {
+    let afterClose = possibleGenericClose + 1
+    while (afterClose < source.length && /\s/.test(source[afterClose])) afterClose += 1
+    if (source[afterClose] === "(") return false
+  }
+  let cursor = start - 1
+  while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
+  if (cursor < 0) return true
+  // A tag at the beginning of a new statement may follow a completed call,
+  // array, or object expression on the previous line.
+  if (source.slice(cursor + 1, start).includes("\n") && new Set([")", "]", "}"]).has(source[cursor])) return true
+  if ("([{=,:;!?&|+-*%^~;".includes(source[cursor])) return true
+  if (!/[A-Za-z0-9_$.)\]]/.test(source[cursor])) return true
+  const end = cursor + 1
+  while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
+  const word = source.slice(cursor + 1, end)
+  return new Set(["await", "case", "else", "return", "throw", "yield"]).has(word)
 }
 
 function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCall | undefined {
@@ -213,8 +251,8 @@ function htmlAttributes(source: string, baseOffset = 0, lower: ExpressionLowerer
 
 const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
 
-function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = identityExpression): RawHtmlCall | undefined {
-  if (source[start] !== "<" || source[start + 1] === "/" || source[start + 1] === "!") return undefined
+function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = identityExpression, nested = false): RawHtmlCall | undefined {
+  if (!nested && !isRawHtmlCandidate(source, start)) return undefined
   const openingName = htmlNameAt(source, start + 1)
   if (!openingName) return undefined
   let cursor = openingName.end
@@ -263,10 +301,10 @@ function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = ide
       }
     }
     if (source[cursor] === "<") {
-      const nested = rawHtmlAt(source, cursor, lower)
-      if (!nested) return undefined
-      children.push(nested.code)
-      cursor = nested.end
+      const nestedHtml = rawHtmlAt(source, cursor, lower, true)
+      if (!nestedHtml) return undefined
+      children.push(nestedHtml.code)
+      cursor = nestedHtml.end
       continue
     }
     if (source[cursor] === "{") {
@@ -279,8 +317,8 @@ function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = ide
     const nextTag = source.indexOf("<", cursor)
     const nextExpression = source.indexOf("{", cursor)
     const end = [nextTag, nextExpression].filter(value => value >= 0).sort((left, right) => left - right)[0] ?? source.length
-    const text = source.slice(cursor, end).trim()
-    if (text) children.push(JSON.stringify(text))
+    const text = source.slice(cursor, end)
+    if (text.length > 0) children.push(JSON.stringify(text))
     cursor = end
   }
   return undefined
@@ -289,6 +327,8 @@ function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = ide
 function findRawHtml(source: string, from = 0, lower: ExpressionLowerer = identityExpression): RawHtmlCall | undefined {
   for (let cursor = from; cursor < source.length; cursor += 1) {
     if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (source[cursor] === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (source[cursor] === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (source[cursor] !== "<") continue
     const call = rawHtmlAt(source, cursor, lower)
     if (call) return call
@@ -302,7 +342,9 @@ function validateRawHtmlSyntax(source: string): void {
       cursor = skipString(source, cursor) - 1
       continue
     }
-    if (source[cursor] !== "<" || !/[A-Za-z]/.test(source[cursor + 1] ?? "")) continue
+    if (source[cursor] === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (source[cursor] === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (!isRawHtmlCandidate(source, cursor)) continue
     const html = rawHtmlAt(source, cursor)
     if (html) {
       cursor = html.end - 1
@@ -411,6 +453,7 @@ export {
   skipTrivia,
   matching,
   identifierAt,
+  isRawHtmlCandidate,
   findBuilder,
   skipHtmlTrivia,
   htmlNameAt,

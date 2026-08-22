@@ -61,8 +61,11 @@ function buttonInitializerMessage(call: MuseCallExpression): string {
 }
 
 function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument[] {
-  const arguments_ = call.arguments.flatMap(argument => {
+  const arguments_ = call.arguments.flatMap((argument, argumentIndex) => {
     if (argument.value.kind === "closure") return [{ label: argument.label, type: "function" }]
+    if (call.callee === "ForEach" && argumentIndex === 1 && /^\{\s*(?:id|key)\s*:/.test(argument.value.source) && /=>/.test(argument.value.source)) {
+      return [{ label: "key", type: "function" }]
+    }
     const named = /^namedArguments\s*\(\s*\{([\s\S]*)\}\s*\)$/.exec(argument.value.source.trim())
     if (named) return splitTopLevel(named[1]).map(value => compilerSemanticArgument(value))
     return [compilerSemanticArgument(argument.label ? `${argument.label}: ${argument.value.source}` : argument.value.source)]
@@ -232,14 +235,180 @@ function containsAwaitKeyword(source: string): boolean {
   return false
 }
 
+interface ConditionalStatementParts {
+  readonly condition: string
+  readonly thenSource: string
+  readonly elseSource?: string
+  readonly elseIf?: string
+}
+
+interface SwitchClause {
+  readonly label: "case" | "default"
+  readonly expression?: string
+  readonly body: string
+}
+
+function conditionalStatementParts(source: string): ConditionalStatementParts | undefined {
+  const value = source.trim()
+  if (!/^if\s*\(/.test(value)) return undefined
+  const open = value.indexOf("(")
+  const close = matching(value, open, "(", ")")
+  const thenOpen = skipTrivia(value, close + 1)
+  if (value[thenOpen] !== "{") return undefined
+  const thenClose = matching(value, thenOpen, "{", "}")
+  const afterThen = skipTrivia(value, thenClose + 1)
+  if (afterThen === value.length) return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose) }
+  if (value.slice(afterThen, afterThen + 4) !== "else") return undefined
+  const elseStart = skipTrivia(value, afterThen + 4)
+  const rest = value.slice(elseStart)
+  if (/^if\s*\(/.test(rest)) return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose), elseIf: rest }
+  if (rest[0] !== "{") return undefined
+  const elseClose = matching(rest, 0, "{", "}")
+  if (skipTrivia(rest, elseClose + 1) !== rest.length) return undefined
+  return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose), elseSource: rest.slice(1, elseClose) }
+}
+
+function switchClauses(source: string): readonly SwitchClause[] {
+  const starts: Array<{ label: "case" | "default"; start: number; colon: number; expression?: string }> = []
+  let parens = 0
+  let brackets = 0
+  let braces = 0
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (character === "(" ) { parens += 1; continue }
+    if (character === ")") { parens -= 1; continue }
+    if (character === "[") { brackets += 1; continue }
+    if (character === "]") { brackets -= 1; continue }
+    if (character === "{") { braces += 1; continue }
+    if (character === "}") { braces -= 1; continue }
+    if (parens !== 0 || brackets !== 0 || braces !== 0) continue
+    const label = /^(case|default)\b/.exec(source.slice(cursor))
+    if (!label || (cursor > 0 && /[A-Za-z0-9_$]/.test(source[cursor - 1]))) continue
+    const labelName = label[1] as "case" | "default"
+    const labelEnd = cursor + label[0].length
+    const relativeColon = labelName === "default" ? source.slice(labelEnd).search(/:/) : topLevelColon(source.slice(labelEnd))
+    if (relativeColon < 0) continue
+    const colon = labelEnd + relativeColon
+    starts.push({ label: labelName, start: cursor, colon, expression: labelName === "case" ? source.slice(labelEnd, colon).trim() : undefined })
+    cursor = colon
+  }
+  return starts.map((start, index) => ({
+    label: start.label,
+    expression: start.expression,
+    body: source.slice(start.colon + 1, starts[index + 1]?.start ?? source.length),
+  }))
+}
+
+function switchStatement(source: string, registry: InitializerSymbolRegistry, childrenName: string): string | undefined {
+  const value = source.trim()
+  if (!/^switch\s*\(/.test(value)) return undefined
+  const open = value.indexOf("(")
+  const close = matching(value, open, "(", ")")
+  const bodyOpen = skipTrivia(value, close + 1)
+  if (value[bodyOpen] !== "{") return undefined
+  const bodyClose = matching(value, bodyOpen, "{", "}")
+  if (skipTrivia(value, bodyClose + 1) !== value.length) return undefined
+  const clauses = switchClauses(value.slice(bodyOpen + 1, bodyClose))
+  if (clauses.length === 0) return undefined
+  const lowered = clauses.map(clause => `${clause.label}${clause.expression === undefined ? "" : ` ${lowerRange(clause.expression, registry)}`}: ${lowerViewBuilderStatements(clause.body, registry, childrenName)}`).join(" ")
+  return `switch (${lowerRange(value.slice(open + 1, close), registry)}) { ${lowered} }`
+}
+
+function isMuseChildExpression(source: string, registry: InitializerSymbolRegistry): boolean {
+  const value = source.trim()
+  if (!value) return false
+  if (value.startsWith("<")) return true
+  const parsed = parseMuseBuilder(value).statements[0]
+  if (parsed?.kind === "call") return /^[A-Z]/.test(parsed.callee) || registry.has(parsed.callee)
+  if (/^\[[\s\S]*\]$/.test(value) && /\b[A-Z][A-Za-z0-9_$]*\s*\(/.test(value)) return true
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(value)) return true
+  return false
+}
+
+function lowerViewBuilderStatements(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols, childrenName = "__museChildren"): string {
+  const statements: string[] = []
+  for (const statement of splitStatements(source)) {
+    const value = statement.trim()
+    if (!value) continue
+    const conditional = conditionalStatementParts(value)
+    if (conditional) {
+      const condition = lowerRange(conditional.condition, registry)
+      const thenBody = lowerViewBuilderStatements(conditional.thenSource, registry, childrenName)
+      if (conditional.elseIf) {
+        statements.push(`if (${condition}) { ${thenBody} } else ${lowerViewBuilderControlFlow(conditional.elseIf, registry, childrenName)}`)
+      } else if (conditional.elseSource !== undefined) {
+        statements.push(`if (${condition}) { ${thenBody} } else { ${lowerViewBuilderStatements(conditional.elseSource, registry, childrenName)} }`)
+      } else {
+        statements.push(`if (${condition}) { ${thenBody} }`)
+      }
+      continue
+    }
+    const switchBody = switchStatement(value, registry, childrenName)
+    if (switchBody) {
+      statements.push(switchBody)
+      continue
+    }
+    if (/^(?:const|let|var)\b/.test(value)) {
+      statements.push(`${lowerRange(value, registry)};`)
+      continue
+    }
+    if (/^return\b/.test(value)) {
+      const expression = value.slice("return".length).trim()
+      statements.push(expression ? `return ${lowerRange(expression, registry)};` : `return ${childrenName};`)
+      continue
+    }
+    if (/^(?:throw|break|continue|debugger)\b/.test(value)) {
+      statements.push(`${lowerRange(value, registry)};`)
+      continue
+    }
+    const lowered = lowerRange(value, registry)
+    statements.push(isMuseChildExpression(value, registry) ? `${childrenName}.push(${lowered});` : `${lowered};`)
+  }
+  return statements.join(" ")
+}
+
+function lowerViewBuilderControlFlow(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols, childrenName = "__museChildren"): string {
+  const conditional = conditionalStatementParts(source)
+  if (!conditional) return `{ ${lowerViewBuilderStatements(source, registry, childrenName)} }`
+  const condition = lowerRange(conditional.condition, registry)
+  const thenBody = lowerViewBuilderStatements(conditional.thenSource, registry, childrenName)
+  if (conditional.elseIf) return `if (${condition}) { ${thenBody} } else ${lowerViewBuilderControlFlow(conditional.elseIf, registry, childrenName)}`
+  if (conditional.elseSource !== undefined) return `if (${condition}) { ${thenBody} } else { ${lowerViewBuilderStatements(conditional.elseSource, registry, childrenName)} }`
+  return `if (${condition}) { ${thenBody} }`
+}
+
+function needsStatementAwareViewBody(source: string): boolean {
+  return /\b(?:const|let|var|return|throw|switch|for|while|try)\b/.test(source)
+}
+
+function lowerViewBuilderClosure(body: string, parameter: string | undefined, registry: InitializerSymbolRegistry): string {
+  if (!needsStatementAwareViewBody(body)) {
+    const lowered = lowerMuseBuilderAst(parseMuseBuilder(body), {
+      transformRaw: value => lowerRange(value, registry),
+      transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
+      closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
+      closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
+    }).join(", ")
+    return `${parameter ? `(${parameter})` : "()"} => [${lowered}]`
+  }
+  const prefix = parameter ? `(${parameter})` : "()"
+  let childrenName = "__museChildren"
+  let suffix = 0
+  while (new RegExp(`\\b${childrenName}\\b`).test(body)) childrenName = `__museChildren${++suffix}`
+  return `${prefix} => { const ${childrenName} = []; ${lowerViewBuilderStatements(body, registry, childrenName)} return ${childrenName}; }`
+}
+
 function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const source = value.trim()
   if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source, registry)
   const body = source.slice(1, -1).trim()
+  if (role === "viewBuilder") return lowerViewBuilderClosure(body, undefined, registry)
   const lowered = lowerStatements(body, registry)
   const asynchronous = containsAwaitKeyword(body)
   if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
-  if (role === "viewBuilder") return `() => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
   return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
@@ -269,8 +438,22 @@ function lowerArguments(source: string, calleeName?: string, registry: Initializ
 
 function lowerClosureOrExpression(source: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const value = source.trim()
-  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1) return lowerClosure(value, role, registry)
+  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1 && !/^(?:\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|["'][^"']*["']|-?\d+(?:\.\d+)?)\s*:)/.test(value.slice(1, -1))) return lowerClosure(value, role, registry)
   return lowerShorthand(lowerRange(value, registry))
+}
+
+function lowerForEachIdentityOptions(source: string, call: MuseCallExpression, argumentIndex: number, registry: InitializerSymbolRegistry): string {
+  const value = source.trim()
+  if (call.callee !== "ForEach" || argumentIndex !== 1 || !value.startsWith("{") || matching(value, 0, "{", "}") !== value.length - 1) {
+    return lowerRange(source, registry)
+  }
+  const entries = splitTopLevel(value.slice(1, -1)).map(entry => {
+    const colon = topLevelColon(entry)
+    return colon < 0 ? undefined : { name: entry.slice(0, colon).trim(), value: entry.slice(colon + 1).trim() }
+  }).filter((entry): entry is { name: string; value: string } => entry !== undefined)
+  const identity = entries.find(entry => entry.name === "id" || entry.name === "key")
+  if (!identity) return lowerRange(source, registry)
+  return `namedArguments({ key: ${lowerRange(identity.value, registry)} })`
 }
 
 function lowerConditional(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string | undefined {
@@ -303,16 +486,17 @@ function lowerStatements(source: string, registry: InitializerSymbolRegistry = c
 }
 
 function lowerAstClosure(body: string, parameter?: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
+  if (role === "viewBuilder") return lowerViewBuilderClosure(body, parameter, registry)
   const parsed = parseMuseBuilder(body)
   const lowered = lowerMuseBuilderAst(parsed, {
     transformRaw: value => lowerRange(value, registry),
+    transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
     closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
     closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
   }).join(", ")
   if (parameter) return `(${parameter}) => [${lowered}]`
   const asynchronous = containsAwaitKeyword(body)
   if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
-  if (role === "viewBuilder") return `() => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
   return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
@@ -322,6 +506,7 @@ function lowerBuilder(call: BuilderCall, source: string, registry: InitializerSy
   const parsed = parseMuseBuilder(source.slice(call.start, call.end), call.start)
   const lowered = lowerMuseBuilderAst(parsed, {
     transformRaw: value => lowerRange(value, registry),
+    transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
     closure: (body, parameter, role) => lowerAstClosure(body, parameter, role, registry),
     closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
   })
@@ -676,16 +861,35 @@ function lowerStaticStructCalls(source: string, declarations: readonly MuseStruc
 }
 
 function lowerTopLevelState(source: string): string {
-  const declarations: Array<{ name: string; statement: string; start: number; end: number }> = []
-  const pattern = /^const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*State(?:<[^()\n]*>)?\(([^\n;]*)\)\s*;?\s*$/gm
-  for (const match of source.matchAll(pattern)) {
-    const start = match.index ?? 0
-    declarations.push({ name: match[1], statement: `const ${match[1]} = State(${match[2].trim()});`, start, end: start + match[0].length })
+  const file = ts.createSourceFile("muse-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const declarations: Array<{ name: string; statement: string }> = []
+  const edits: Array<{ start: number; end: number; replacement: string }> = []
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    const stateDeclarations = statement.declarationList.declarations.filter(declaration => {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !ts.isCallExpression(declaration.initializer)) return false
+      return ts.isIdentifier(declaration.initializer.expression) && declaration.initializer.expression.text === "State"
+    })
+    if (stateDeclarations.length === 0) continue
+    const keyword = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0 ? "let" : (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 ? "const" : "var"
+    for (const declaration of stateDeclarations) {
+      declarations.push({
+        name: (declaration.name as ts.Identifier).text,
+        statement: `${keyword} ${(declaration.name as ts.Identifier).text} = ${declaration.initializer!.getText(file)};`,
+      })
+    }
+    const preserved = statement.declarationList.declarations.filter(declaration => !stateDeclarations.includes(declaration))
+    const prefix = source.slice(statement.getStart(file), statement.declarationList.getStart(file))
+    const semicolon = source.slice(statement.getStart(file), statement.end).trimEnd().endsWith(";") ? ";" : ""
+    const replacement = preserved.length === 0
+      ? ""
+      : `${prefix}${keyword} ${preserved.map(declaration => declaration.getText(file)).join(", ")}${semicolon}`
+    edits.push({ start: statement.getStart(file), end: statement.end, replacement })
   }
   if (declarations.length === 0) return source
   let stripped = source
-  for (const declaration of [...declarations].sort((left, right) => right.start - left.start)) {
-    stripped = stripped.slice(0, declaration.start) + stripped.slice(declaration.end)
+  for (const edit of [...edits].sort((left, right) => right.start - left.start)) {
+    stripped = stripped.slice(0, edit.start) + edit.replacement + stripped.slice(edit.end)
   }
   const viewIndex = stripped.search(/\bview\s*\(/)
   if (viewIndex < 0) return source
@@ -702,7 +906,7 @@ function lowerTopLevelState(source: string): string {
 
 function ensureImports(source: string): string {
   const required = ["defineView", "initializer", "resolveBuilderClosure", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent"]
-    .filter(name => source.includes(`${name}(`) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
+    .filter(name => new RegExp(`\\b${name}(?:<[^()\\n]*>)?\\s*\\(`).test(source) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
   let result = source
   if (required.length === 0) return result
   const imports = [...result.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*(["'])(muse|@muse\/core)\2[\t ]*;?/g)]
