@@ -16,6 +16,8 @@ const VIEW_SIGNATURES = Object.freeze({
 
 const HTML_TAGS = Object.freeze(['a', 'article', 'button', 'div', 'form', 'h1', 'h2', 'h3', 'header', 'img', 'input', 'label', 'main', 'nav', 'p', 'section', 'select', 'span', 'textarea', 'ul', 'li'])
 const HTML_ATTRIBUTES = Object.freeze(['class', 'for', 'id', 'style', 'title', 'role', 'onclick', 'onchange', 'oninput', 'onkeydown', 'disabled', 'name', 'placeholder', 'aria-label', 'aria-hidden', 'data-testid'])
+const SEMANTIC_TOKEN_TYPES = Object.freeze(['class', 'function', 'parameter', 'property', 'keyword', 'decorator'])
+const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(SEMANTIC_TOKEN_TYPES)
 
 function tokenAt(document, position) {
   const line = document.lineAt(position.line).text
@@ -32,17 +34,26 @@ function completionItem(label, detail, kind) {
   return item
 }
 
+function openMuseDocuments(document) {
+  const documents = [document, ...(vscode.workspace.textDocuments ?? [])]
+  return [...new Map(documents
+    .filter(candidate => candidate && (candidate.languageId === 'muse' || candidate.languageId === 'vue'))
+    .map(candidate => [String(candidate.uri), candidate])).values()]
+}
+
 function signatureMap(document) {
   const signatures = Object.fromEntries(Object.entries(VIEW_SIGNATURES))
-  const source = document.getText()
-  const structs = /\bstruct\s+([A-Za-z_$][A-Za-z0-9_$]*)[^{}]*\{([\s\S]*?)\}/g
-  let match
-  while ((match = structs.exec(source))) {
-    const initializers = []
-    const pattern = /\binit\s*\(([^)]*)\)/g
-    let initializer
-    while ((initializer = pattern.exec(match[2]))) initializers.push(`${match[1]}(${initializer[1].trim()})`)
-    if (initializers.length > 0) signatures[match[1]] = initializers
+  for (const candidate of openMuseDocuments(document)) {
+    const source = candidate.getText()
+    const structs = /\bstruct\s+([A-Za-z_$][A-Za-z0-9_$]*)[^{}]*\{([\s\S]*?)\}/g
+    let match
+    while ((match = structs.exec(source))) {
+      const initializers = []
+      const pattern = /\binit\s*\(([^)]*)\)/g
+      let initializer
+      while ((initializer = pattern.exec(match[2]))) initializers.push(`${match[1]}(${initializer[1].trim()})`)
+      if (initializers.length > 0) signatures[match[1]] = initializers
+    }
   }
   return signatures
 }
@@ -105,51 +116,175 @@ function declarations(document) {
   return result
 }
 
-function definition(document, position) {
-  const token = tokenAt(document, position)
-  return declarations(document).get(token.name)
+async function workspaceMuseDocuments(document) {
+  const documents = openMuseDocuments(document)
+  if (typeof vscode.workspace.findFiles !== 'function' || typeof vscode.workspace.openTextDocument !== 'function') return documents
+  const uris = await vscode.workspace.findFiles('**/*.{muse.ts,vue}', '**/{node_modules,dist,.git}/**', 200)
+  for (const uri of uris) {
+    if (documents.some(candidate => String(candidate.uri) === String(uri))) continue
+    try { documents.push(await vscode.workspace.openTextDocument(uri)) } catch { /* Ignore unreadable workspace files. */ }
+  }
+  return documents
 }
 
-function renameEdits(document, position, newName) {
+async function definition(document, position) {
   const token = tokenAt(document, position)
-  if (!token.name) return undefined
-  const edit = new vscode.WorkspaceEdit()
-  const pattern = new RegExp(`\\b${token.name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'g')
-  for (let line = 0; line < document.lineCount; line += 1) {
-    const text = document.lineAt(line).text
-    let match
-    while ((match = pattern.exec(text))) {
-      edit.replace(document.uri, new vscode.Range(new vscode.Position(line, match.index), new vscode.Position(line, match.index + token.name.length)), newName)
+  for (const candidate of await workspaceMuseDocuments(document)) {
+    const location = declarations(candidate).get(token.name)
+    if (location) return location
+  }
+  return undefined
+}
+
+function codeIdentifierRanges(document, expectedName) {
+  const source = document.getText()
+  const ranges = []
+  let state = 'code'
+  let quote = null
+  for (let index = 0; index < source.length;) {
+    const character = source[index]
+    const next = source[index + 1]
+    if (state === 'lineComment') {
+      if (character === '\n') state = 'code'
+      index += 1
+      continue
     }
+    if (state === 'blockComment') {
+      if (character === '*' && next === '/') { state = 'code'; index += 2 } else index += 1
+      continue
+    }
+    if (state === 'string') {
+      if (character === '\\') index += 2
+      else if (character === quote) { state = 'code'; quote = null; index += 1 }
+      else index += 1
+      continue
+    }
+    if (character === '/' && next === '/') { state = 'lineComment'; index += 2; continue }
+    if (character === '/' && next === '*') { state = 'blockComment'; index += 2; continue }
+    if (character === '"' || character === "'" || character === '`') { state = 'string'; quote = character; index += 1; continue }
+    if (/[A-Za-z_$]/.test(character)) {
+      const start = index
+      index += 1
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) index += 1
+      const name = source.slice(start, index)
+      if (name === expectedName) ranges.push(new vscode.Range(document.positionAt(start), document.positionAt(index)))
+      continue
+    }
+    index += 1
+  }
+  return ranges
+}
+
+async function renameEdits(document, position, newName) {
+  const token = tokenAt(document, position)
+  if (!token.name || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(newName)) return undefined
+  const edit = new vscode.WorkspaceEdit()
+  const documents = await workspaceMuseDocuments(document)
+  if (!documents.some(candidate => declarations(candidate).has(token.name))) return undefined
+  for (const candidate of documents) {
+    for (const range of codeIdentifierRanges(candidate, token.name)) edit.replace(candidate.uri, range, newName)
   }
   return edit
+}
+
+function semanticTokens(document) {
+  const builder = new vscode.SemanticTokensBuilder(SEMANTIC_LEGEND)
+  const source = document.getText()
+  const patterns = [
+    { expression: /\bstruct\s+([A-Za-z_$][A-Za-z0-9_$]*)/g, group: 1, type: 'class' },
+    { expression: /\binit\b/g, group: 0, type: 'keyword' },
+    { expression: /@(State|Binding|ViewBuilder|Action)\b/g, group: 0, type: 'decorator' },
+    { expression: /\b([A-Z][A-Za-z0-9_$]*)\s*(?=\()/g, group: 1, type: 'function' },
+    { expression: /<\/?([A-Za-z][A-Za-z0-9:._-]*)/g, group: 1, type: 'class' },
+    { expression: /\b((?:aria|data)-[A-Za-z0-9_-]+|on[A-Za-z]+|class|for|style|role)\s*(?==|\s|>)/g, group: 1, type: 'property' },
+  ]
+  for (const { expression, group, type } of patterns) {
+    let match
+    while ((match = expression.exec(source))) {
+      const value = match[group]
+      const startOffset = match.index + match[0].indexOf(value)
+      const start = document.positionAt(startOffset)
+      builder.push(start.line, start.character, value.length, type, [])
+    }
+  }
+  return builder.build()
 }
 
 function diagnosticsInSource(document, source, offset) {
   const diagnostics = []
   const stack = []
-  let quote = null
+  const templates = []
+  let mode = 'code'
+  let modeStart = 0
+  let regexClass = false
+  const report = (index, message) => {
+    const position = document.positionAt(offset + index)
+    diagnostics.push(new vscode.Diagnostic(new vscode.Range(position, position.translate(0, 1)), message, vscode.DiagnosticSeverity.Error))
+  }
+  const regexCanStart = index => {
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      if (/\s/.test(source[cursor])) continue
+      return '([{=,:;!?&|+-*%^~<>'.includes(source[cursor])
+    }
+    return true
+  }
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index]
-    if (quote) {
-      if (character === '\\') index += 1
-      else if (character === quote) quote = null
+    const next = source[index + 1]
+    if (mode === 'lineComment') {
+      if (character === '\n') mode = 'code'
       continue
     }
-    if (character === '"' || character === "'") { quote = character; continue }
+    if (mode === 'blockComment') {
+      if (character === '*' && next === '/') { mode = 'code'; index += 1 }
+      continue
+    }
+    if (mode === 'single' || mode === 'double') {
+      if (character === '\\') index += 1
+      else if ((mode === 'single' && character === "'") || (mode === 'double' && character === '"')) mode = 'code'
+      continue
+    }
+    if (mode === 'regex') {
+      if (character === '\\') index += 1
+      else if (character === '[') regexClass = true
+      else if (character === ']') regexClass = false
+      else if (character === '/' && !regexClass) {
+        mode = 'code'
+        while (/[a-z]/i.test(source[index + 1] ?? '')) index += 1
+      }
+      continue
+    }
+    if (mode === 'template') {
+      if (character === '\\') { index += 1; continue }
+      if (character === '`') { templates.pop(); mode = 'code'; continue }
+      if (character === '$' && next === '{') {
+        stack.push({ character: '{', index: index + 1, template: true })
+        mode = 'code'
+        index += 1
+      }
+      continue
+    }
+    if (character === '/' && next === '/') { mode = 'lineComment'; modeStart = index; index += 1; continue }
+    if (character === '/' && next === '*') { mode = 'blockComment'; modeStart = index; index += 1; continue }
+    if (character === '/' && regexCanStart(index)) { mode = 'regex'; modeStart = index; regexClass = false; continue }
+    if (character === '"') { mode = 'double'; modeStart = index; continue }
+    if (character === "'") { mode = 'single'; modeStart = index; continue }
+    if (character === '`') { templates.push(index); mode = 'template'; continue }
     if ('({['.includes(character)) stack.push({ character, index })
     if (')}]'.includes(character)) {
       const expected = { ')': '(', ']': '[', '}': '{' }[character]
       const opening = stack.pop()
       if (!opening || opening.character !== expected) {
-        const position = document.positionAt(offset + index)
-        diagnostics.push(new vscode.Diagnostic(new vscode.Range(position, position.translate(0, 1)), `Unexpected '${character}' in Muse source.`, vscode.DiagnosticSeverity.Error))
-      }
+        report(index, `Unexpected '${character}' in Muse source.`)
+      } else if (opening.template) mode = 'template'
     }
   }
+  if (mode === 'single' || mode === 'double') report(modeStart, `Unclosed ${mode === 'single' ? "'" : '"'} string in Muse source.`)
+  else if (mode === 'template' || templates.length > 0) report(templates.at(-1) ?? modeStart, 'Unclosed template literal in Muse source.')
+  else if (mode === 'blockComment') report(modeStart, 'Unclosed block comment in Muse source.')
+  else if (mode === 'regex') report(modeStart, 'Unclosed regular expression in Muse source.')
   for (const opening of stack) {
-    const position = document.positionAt(offset + opening.index)
-    diagnostics.push(new vscode.Diagnostic(new vscode.Range(position, position.translate(0, 1)), `Unclosed '${opening.character}' in Muse source.`, vscode.DiagnosticSeverity.Error))
+    report(opening.index, `Unclosed '${opening.character}' in Muse source.`)
   }
   return diagnostics
 }
@@ -216,9 +351,13 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(languages, { provideSignatureHelp: signatureHelp }, '(', ','))
   context.subscriptions.push(vscode.languages.registerDefinitionProvider(languages, { provideDefinition: definition }))
   context.subscriptions.push(vscode.languages.registerRenameProvider(languages, {
-    prepareRename(document, position) { return tokenAt(document, position).range },
+    async prepareRename(document, position) {
+      const token = tokenAt(document, position)
+      return await definition(document, position) ? token.range : undefined
+    },
     provideRenameEdits: renameEdits,
   }))
+  context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(languages, { provideDocumentSemanticTokens: semanticTokens }, SEMANTIC_LEGEND))
   context.subscriptions.push(vscode.commands.registerCommand('muse.formatDocument', () => vscode.commands.executeCommand('editor.action.formatDocument')))
   vscode.workspace.textDocuments.forEach(refresh)
 }

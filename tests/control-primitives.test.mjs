@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Binding, Image, Link, Slider, State, TextField, Toggle, render } from "../packages/react/dist/index.js"
+import { Binding, Image, Link, Slider, State, TextField, Toggle } from "../packages/core/dist/index.js"
+import { Image as ReactImage, Toggle as ReactToggle, render } from "../packages/react/dist/index.js"
 
 test("migrated controls expose native semantics and writable bindings", () => {
   const wifi = State(false)
@@ -32,4 +33,9 @@ test("Image and Link stay graph values until rendered", () => {
   const image = Image("/muse.png", { alt: "Muse" })
   assert.equal(image.kind, "element")
   assert.match(renderToStaticMarkup(render(Link("Docs", "/docs"))), /href="\/docs".*Docs/)
+})
+
+test("@muse/react controls are compatibility aliases of core controls", () => {
+  assert.equal(ReactImage, Image)
+  assert.equal(ReactToggle, Toggle)
 })

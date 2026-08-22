@@ -107,8 +107,8 @@ The following screen uses a `State` value, a coordinate-free layout, and an
 event action:
 
 ```ts
-import { Action, State, Text, VStack } from 'muse'
-import { Button, view } from '@muse/react'
+import { Action, Button, State, Text, VStack } from 'muse'
+import { view } from '@muse/react'
 
 export default view({
   state: () => ({ count: State(0) }),

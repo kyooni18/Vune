@@ -24,8 +24,10 @@ import {
   classNameOf,
   collectStateReads,
   edgeInsetsFromCss,
+  frameStyle,
   renderViewNode,
   subscribeState,
+  viewIdentityKey,
   zeroGeometry,
   type GeometryProxy,
   type BindingRef,
@@ -41,7 +43,20 @@ import {
 
 const museVueSlots = Symbol.for("muse.vue.slots")
 
-type MuseVueSlot = ViewValue | (() => ViewValue)
+export type MuseVueSlot = ViewValue | ((...args: any[]) => ViewValue)
+export type VueComponentProps<C> = C extends abstract new (...args: any[]) => { $props: infer Props }
+  ? Props
+  : C extends (props: infer Props, ...args: any[]) => any ? Props : Record<string, unknown>
+type RequiredVuePropKeys<Props> = {
+  [Key in keyof Props]-?: object extends Pick<Props, Key> ? never : Key
+}[keyof Props]
+type MuseVueComponentProps<C> = VueComponentProps<C> & { readonly slots?: Record<string, MuseVueSlot> }
+type VueComponentArguments<C> = [RequiredVuePropKeys<VueComponentProps<C>>] extends [never]
+  ? [props?: MuseVueComponentProps<C> | null, ...children: ViewValue[]]
+  : [props: MuseVueComponentProps<C>, ...children: ViewValue[]]
+export type VueComponentView<C extends VueComponentType> = ((...args: VueComponentArguments<C>) => ModifiableViewNode) & {
+  readonly component: C
+}
 
 function cssLength(value: unknown): string | number | undefined {
   return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
@@ -64,16 +79,7 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "keyed": return { key: value }
     case "elementRef": return { ref: value }
     case "frame": {
-      const frame = value && typeof value === "object" ? value as Record<string, unknown> : {}
-      return { style: {
-        boxSizing: "border-box",
-        width: cssLength(frame.width),
-        height: cssLength(frame.height),
-        minWidth: cssLength(frame.minWidth),
-        maxWidth: frame.maxWidth === "infinity" ? "100%" : cssLength(frame.maxWidth),
-        minHeight: cssLength(frame.minHeight),
-        maxHeight: frame.maxHeight === "infinity" ? "100%" : cssLength(frame.maxHeight),
-      } }
+      return { style: frameStyle(value && typeof value === "object" ? value : {}) }
     }
     default: return {}
   }
@@ -104,7 +110,7 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
   if (typeof type === "string") return h(type, normalizedProps, children)
   const slots = rawSlots
     ? {
-        ...Object.fromEntries(Object.entries(rawSlots).map(([name, slot]) => [name, () => render(typeof slot === "function" ? slot() : slot)])),
+        ...Object.fromEntries(Object.entries(rawSlots).map(([name, slot]) => [name, (...args: unknown[]) => render(typeof slot === "function" ? slot(...args) : slot)])),
         ...(children.length > 0 && !rawSlots.default ? { default: () => children } : {}),
       }
     : children.length > 0 ? { default: () => children } : undefined
@@ -126,8 +132,8 @@ const renderer: MuseRenderer<VNodeChild> = {
       ? cloneVNode(content as VNode, modifierProps(modifier))
       : h(Fragment, modifierProps(modifier), [content])
   },
-  view(node) {
-    return h(MuseViewHost, { node })
+  view(node, _render, identity) {
+    return h(MuseViewHost, { key: viewIdentityKey(identity), node })
   },
   geometry(_node, render) {
     return h(GeometryMuseValue, { render })
@@ -279,6 +285,8 @@ export function createVueView<Props extends Record<string, unknown> = Record<str
 }
 
 /** Place a Vue component or native HTML element in the same Muse graph. */
+export function Component<C extends VueComponentType>(type: C, ...args: VueComponentArguments<C>): ModifiableViewNode
+export function Component(type: string, props?: Record<string, unknown> | null, ...children: ViewValue[]): ModifiableViewNode
 export function Component(
   type: VueComponentType | string,
   props: (Record<string, unknown> & { readonly slots?: Record<string, MuseVueSlot> }) | null = null,
@@ -287,6 +295,13 @@ export function Component(
   if (!props?.slots) return viewElement(type, props, children)
   const { slots, ...componentProps } = props
   return viewElement(type, { ...componentProps, [museVueSlots]: slots }, children)
+}
+
+/** Adapt a Vue component definition into a Muse-callable, preserving its Vue prop surface. */
+export function vueComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
+  const View = ((...args: VueComponentArguments<C>) => Component(type, ...args)) as VueComponentView<C>
+  Object.defineProperty(View, "component", { configurable: false, enumerable: false, value: type })
+  return View
 }
 
 /** Bridge Muse State to a Vue Ref without making State a Vue primitive. */

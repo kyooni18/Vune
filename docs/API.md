@@ -5,6 +5,12 @@ should import graph values from `muse` and choose `@muse/react`, `@muse/vue`, or
 `@muse/web` as the renderer; `react-muse-ui` remains a facade for the legacy
 React-compatible API.
 
+The candidate 1.0 runtime export surface is pinned by
+`tests/api-surface.test.mjs`. Canonical export changes, renderer-only additions,
+or renderer API leakage through `muse` therefore require an explicit snapshot
+review. Type-level contracts are pinned separately by the TypeScript
+conformance suite.
+
 ## Stable entry points
 
 The canonical `muse` entry point is the renderer-independent graph surface:

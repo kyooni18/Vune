@@ -1,7 +1,7 @@
 {
   "name": "muse-language-support",
   "displayName": "Muse Language Support",
-  "description": "Muse and raw HTML syntax highlighting, diagnostics, formatting, completion, hover, signature help, and language tooling.",
+  "description": "Muse and raw HTML syntax and semantic highlighting, diagnostics, formatting, completion, hover, signature help, and language tooling.",
   "version": "0.1.0",
   "private": true,
   "publisher": "muse",
@@ -31,7 +31,7 @@
         "muse.languageTools.enableVue": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Muse formatting, completion, hover, signature help, definition, diagnostics, and rename support in Vue SFCs."
+          "description": "Enable Muse formatting, completion, hover, signature help, definition, diagnostics, rename, and semantic highlighting in Vue SFCs."
         }
       }
     }

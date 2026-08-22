@@ -13,9 +13,11 @@ import {
   collectStateReads,
   classNameOf,
   edgeInsetsFromCss,
+  frameStyle,
   renderViewNode,
   stateVersion,
   subscribeState,
+  viewIdentityKey,
   zeroGeometry,
   type GeometryProxy,
   type ModifiableViewNode,
@@ -47,16 +49,7 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "keyed": return { key: value }
     case "elementRef": return { ref: value }
     case "frame": {
-      const frame = value && typeof value === "object" ? value as Record<string, unknown> : {}
-      return { style: {
-        boxSizing: "border-box",
-        width: cssLength(frame.width),
-        height: cssLength(frame.height),
-        minWidth: cssLength(frame.minWidth),
-        maxWidth: frame.maxWidth === "infinity" ? "100%" : cssLength(frame.maxWidth),
-        minHeight: cssLength(frame.minHeight),
-        maxHeight: frame.maxHeight === "infinity" ? "100%" : cssLength(frame.maxHeight),
-      } }
+      return { style: frameStyle(value && typeof value === "object" ? value : {}) }
     }
     default: return {}
   }
@@ -91,6 +84,17 @@ function normalizeElementProps(props: Record<string, unknown> | null): Record<st
   if ("for" in next && !("htmlFor" in next)) {
     next.htmlFor = next.for
     delete next.for
+  }
+  if (typeof next.style === "string") {
+    next.style = Object.fromEntries(next.style.split(";").flatMap(declaration => {
+      const colon = declaration.indexOf(":")
+      if (colon < 0) return []
+      const rawName = declaration.slice(0, colon).trim()
+      const value = declaration.slice(colon + 1).trim()
+      if (!rawName || !value) return []
+      const name = rawName.startsWith("--") ? rawName : rawName.replace(/-([a-z])/g, (_match, character: string) => character.toUpperCase())
+      return [[name, value]]
+    }))
   }
   for (const [key, value] of Object.entries(next)) {
     if (typeof value === "function" && /^on[a-z]/.test(key)) {
@@ -173,11 +177,11 @@ function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNo
   return createElement("div", { ref: host, "data-muse": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value)
 }
 
-function renderStatefulView({ node }: { node: ViewHostNode }): ReactNode {
+function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } & Record<string, unknown>): ReactNode {
   const [state] = useState(() => node.state?.(node.props) ?? {})
   const resolvedProps = { ...node.props, ...state }
   const value = useReactiveGraph(() => node.render(resolvedProps))
-  return createElement(RenderValue, { value })
+  return applyProps(renderViewNode(value, renderer), forwardedProps)
 }
 
 const renderer: MuseRenderer<ReactNode> = {
@@ -193,8 +197,8 @@ const renderer: MuseRenderer<ReactNode> = {
   modifier(content, modifier) {
     return applyProps(content, modifierProps(modifier))
   },
-  view(node) {
-    return createElement(renderStatefulView, { node })
+  view(node, _render, identity) {
+    return createElement(renderStatefulView, { key: viewIdentityKey(identity), node })
   },
   geometry(_node, render) {
     return createElement(GeometryHost, { render })

@@ -76,13 +76,23 @@ function skipTemplate(source: string, index: number): number {
   for (let cursor = index + 1; cursor < source.length; cursor += 1) {
     if (source[cursor] === "\\") { cursor += 1; continue }
     if (source[cursor] === "`") return cursor + 1
+    if (source[cursor] !== "$" || source[cursor + 1] !== "{") continue
+    const close = findMatching(source, cursor + 1, "{")
+    cursor = close
   }
   throw syntaxError("Unclosed template literal in Muse source", index)
 }
 
 function skipTrivia(source: string, index: number): number {
   let cursor = index
-  while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1
+  while (cursor < source.length) {
+    if (/\s/.test(source[cursor])) { cursor += 1; continue }
+    if (source.startsWith("//", cursor) || source.startsWith("/*", cursor)) {
+      cursor = skipComment(source, cursor)
+      continue
+    }
+    break
+  }
   return cursor
 }
 

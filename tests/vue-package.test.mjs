@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createSSRApp, defineComponent, h, ref } from "vue"
+import { Suspense, createSSRApp, defineAsyncComponent, defineComponent, h, inject, provide, ref } from "vue"
 import { renderToString } from "@vue/server-renderer"
 import {
   Button,
@@ -16,6 +16,7 @@ import {
   fromVueRef,
   render,
   toVueRef,
+  vueComponent,
 } from "../packages/vue/dist/index.js"
 
 test("@muse/vue renders the renderer-independent graph as Vue VNodes", async () => {
@@ -36,6 +37,9 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   const value = VStack(Component(Badge, { label: "Vue component" }))
   const html = await renderToString(createSSRApp({ render: () => render(value) }))
   assert.match(html, /<strong>Vue component<\/strong>/)
+  const MuseBadge = vueComponent(Badge)
+  const adaptedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge({ label: "Adapted Vue" })) }))
+  assert.match(adaptedHtml, /<strong>Adapted Vue<\/strong>/)
 
   const Panel = defineComponent({
     setup(_props, { slots }) {
@@ -50,6 +54,39 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   const Greeting = createVueView(props => Text(`Hello ${props.name}`))
   const greetingHtml = await renderToString(createSSRApp({ render: () => h(Greeting, { name: "Muse" }) }))
   assert.match(greetingHtml, /Hello Muse/)
+})
+
+test("Vue scoped slots and provide/inject cross the Muse graph without losing Vue ownership", async () => {
+  const key = Symbol("muse-context")
+  const Provider = defineComponent({
+    setup(_props, { slots }) {
+      provide(key, "provided")
+      return () => h("section", null, slots.default?.())
+    },
+  })
+  const Consumer = defineComponent({ setup: () => () => h("strong", null, inject(key, "missing")) })
+  const Scoped = defineComponent({
+    setup(_props, { slots }) { return () => h("article", null, slots.row?.({ label: "Scoped" })) },
+  })
+  const value = Component(Provider, null,
+    Component(Consumer),
+    Component(Scoped, { slots: { row: ({ label }) => Text(`${label} slot`) } }),
+  )
+  const html = await renderToString(createSSRApp({ render: () => render(value) }))
+  assert.match(html, /<strong>provided<\/strong>/)
+  assert.match(html, /Scoped slot/)
+})
+
+test("Vue async components and Suspense retain native slot semantics inside Muse", async () => {
+  const AsyncBadge = defineAsyncComponent(async () => defineComponent({
+    setup: () => () => h("strong", null, "Async Vue"),
+  }))
+  const value = Component(Suspense, { slots: {
+    default: () => Component(AsyncBadge),
+    fallback: () => Text("Loading"),
+  } })
+  const html = await renderToString(createSSRApp({ render: () => render(value) }))
+  assert.match(html, /<strong>Async Vue<\/strong>/)
 })
 
 test("@muse/vue preserves component events, refs, and graph keys", () => {

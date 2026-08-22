@@ -19,15 +19,17 @@ test("VS Code extension declares Muse language, grammar, and formatter entry poi
   assert.match(extension, /registerSignatureHelpProvider/)
   assert.match(extension, /registerDefinitionProvider/)
   assert.match(extension, /registerRenameProvider/)
+  assert.match(extension, /registerDocumentSemanticTokensProvider/)
   assert.match(extension, /enableVue/)
   const grammar = JSON.parse(readFileSync(new URL("syntaxes/muse.tmLanguage.json", root), "utf8"))
   assert.ok(grammar.patterns.some(pattern => pattern.include === "#html"))
 })
 
-test("VS Code providers return Muse and HTML tooling results", () => {
-  const registrations = { formatting: [], completion: [], hover: [], signature: [], definition: [], rename: [] }
+test("VS Code providers return Muse and HTML tooling results", async () => {
+  const registrations = { formatting: [], completion: [], hover: [], signature: [], definition: [], rename: [], semantic: [] }
   let openDocument
   let diagnosticRuns = []
+  const workspaceDocuments = []
   class Position {
     constructor(line, character) { this.line = line; this.character = character }
     translate(lineDelta = 0, characterDelta = 0) { return new Position(this.line + lineDelta, this.character + characterDelta) }
@@ -46,6 +48,12 @@ test("VS Code providers return Muse and HTML tooling results", () => {
     constructor() { this.edits = [] }
     replace(uri, range, newText) { this.edits.push({ uri, range, newText }) }
   }
+  class SemanticTokensLegend { constructor(tokenTypes) { this.tokenTypes = tokenTypes } }
+  class SemanticTokensBuilder {
+    constructor(legend) { this.legend = legend; this.tokens = [] }
+    push(line, character, length, tokenType) { this.tokens.push({ line, character, length, tokenType }) }
+    build() { return { tokens: this.tokens } }
+  }
   const vscode = {
     Position,
     Range,
@@ -57,6 +65,8 @@ test("VS Code providers return Muse and HTML tooling results", () => {
     SignatureHelp,
     Location,
     WorkspaceEdit,
+    SemanticTokensLegend,
+    SemanticTokensBuilder,
     TextEdit: { replace: (range, newText) => ({ range, newText }) },
     Diagnostic: class Diagnostic { constructor(range, message, severity) { this.range = range; this.message = message; this.severity = severity } },
     DiagnosticSeverity: { Error: 0 },
@@ -68,9 +78,10 @@ test("VS Code providers return Muse and HTML tooling results", () => {
       registerSignatureHelpProvider: (_language, provider) => { registrations.signature.push(provider); return { dispose() {} } },
       registerDefinitionProvider: (_language, provider) => { registrations.definition.push(provider); return { dispose() {} } },
       registerRenameProvider: (_language, provider) => { registrations.rename.push(provider); return { dispose() {} } },
+      registerDocumentSemanticTokensProvider: (_language, provider, legend) => { registrations.semantic.push({ provider, legend }); return { dispose() {} } },
     },
     workspace: {
-      textDocuments: [],
+      textDocuments: workspaceDocuments,
       onDidOpenTextDocument: handler => { openDocument = handler; return { dispose() {} } },
       onDidChangeTextDocument: () => ({ dispose() {} }),
       getConfiguration: () => ({ get: (_key, fallback) => fallback }),
@@ -89,8 +100,8 @@ test("VS Code providers return Muse and HTML tooling results", () => {
     const extension = require(extensionPath)
     const context = { subscriptions: [] }
     extension.activate(context)
-    const lines = ["struct Card: View { init(title: string) { self.title = title } }", "VStack()", "<div class=\"card\" />", "Card()"]
-    const source = lines.join("\\n")
+    const lines = ["const local = true", "VStack()", "<div class=\"Card\" />", "Card()", "// Card must not be renamed"]
+    const source = lines.join("\n")
     const document = {
       uri: "file:///Card.muse.ts",
       languageId: "muse",
@@ -98,14 +109,24 @@ test("VS Code providers return Muse and HTML tooling results", () => {
       lineAt: line => ({ text: lines[line] }),
       getText: () => source,
       offsetAt(position) {
-        return source.split("\\n").slice(0, position.line).reduce((total, line) => total + line.length + 2, 0) + position.character
+        return source.split("\n").slice(0, position.line).reduce((total, line) => total + line.length + 1, 0) + position.character
       },
       positionAt(offset) {
         const before = source.slice(0, offset)
-        const split = before.split("\\n")
+        const split = before.split("\n")
         return new Position(split.length - 1, split.at(-1).length)
       },
     }
+    const declarationSource = "struct Card: View { init(title: string) { self.title = title } }"
+    const declarationDocument = {
+      ...document,
+      uri: "file:///CardDefinition.muse.ts",
+      lineCount: 1,
+      lineAt: () => ({ text: declarationSource }),
+      getText: () => declarationSource,
+      positionAt: offset => new Position(0, offset),
+    }
+    workspaceDocuments.push(document, declarationDocument)
     const musePosition = new Position(1, 3)
     const htmlPosition = new Position(2, 4)
     const completionProvider = registrations.completion[0]
@@ -121,11 +142,71 @@ test("VS Code providers return Muse and HTML tooling results", () => {
     assert.ok(signatureResult.signatures.some(item => /ViewBuilder/.test(item.label)))
     const customSignature = registrations.signature[0].provideSignatureHelp(document, new Position(3, 5))
     assert.equal(customSignature.signatures[0].label, "Card(title: string)")
-    const definitionResult = registrations.definition[0].provideDefinition(document, new Position(3, 2))
-    assert.equal(definitionResult.uri, document.uri)
+    const definitionResult = await registrations.definition[0].provideDefinition(document, new Position(3, 2))
+    assert.equal(definitionResult.uri, declarationDocument.uri)
     assert.equal(definitionResult.range.start.line, 0)
-    const renameResult = registrations.rename[0].provideRenameEdits(document, new Position(3, 2), "Panel")
+    const renameResult = await registrations.rename[0].provideRenameEdits(document, new Position(3, 2), "Panel")
     assert.equal(renameResult.edits.length, 2)
+    assert.equal(await registrations.rename[0].provideRenameEdits(document, new Position(3, 2), "not-valid!") , undefined)
+    const vueUsageSource = "<template><Card /></template>"
+    const vueUsageDocument = {
+      ...document,
+      uri: "file:///CardUsage.vue",
+      languageId: "vue",
+      lineCount: 1,
+      lineAt: () => ({ text: vueUsageSource }),
+      getText: () => vueUsageSource,
+      positionAt: offset => new Position(0, offset),
+    }
+    workspaceDocuments.push(vueUsageDocument)
+    const vueDefinition = await registrations.definition[0].provideDefinition(vueUsageDocument, new Position(0, 14))
+    assert.equal(vueDefinition.uri, declarationDocument.uri)
+    const workspaceRename = await registrations.rename[0].provideRenameEdits(vueUsageDocument, new Position(0, 14), "Panel")
+    assert.equal(workspaceRename.edits.length, 3)
+    const semanticResult = registrations.semantic[0].provider.provideDocumentSemanticTokens(document)
+    assert.ok(semanticResult.tokens.some(token => token.tokenType === "function" && token.line === 1))
+    assert.ok(semanticResult.tokens.some(token => token.tokenType === "property" && token.line === 2))
+    const declarationTokens = registrations.semantic[0].provider.provideDocumentSemanticTokens(declarationDocument)
+    assert.ok(declarationTokens.tokens.some(token => token.tokenType === "class" && token.line === 0))
+
+    const lexicalLines = [
+      "const pattern = /[{}]/g",
+      "const value = `nested ${format({ ready: true })}`",
+      "// unmatched } is comment trivia",
+      "/* unmatched { is also trivia */",
+    ]
+    const lexicalSource = lexicalLines.join("\n")
+    const lexicalDocument = {
+      ...document,
+      uri: "file:///Lexical.muse.ts",
+      lineCount: lexicalLines.length,
+      lineAt: line => ({ text: lexicalLines[line] }),
+      getText: () => lexicalSource,
+      positionAt(offset) {
+        const split = lexicalSource.slice(0, offset).split("\n")
+        return new Position(split.length - 1, split.at(-1).length)
+      },
+    }
+    openDocument(lexicalDocument)
+    assert.equal(diagnosticRuns.at(-1).diagnostics.length, 0)
+
+    const malformedSource = "Text('ok')\n/* unfinished"
+    const malformedDocument = {
+      ...document,
+      uri: "file:///Malformed.muse.ts",
+      lineCount: 2,
+      lineAt: line => ({ text: malformedSource.split("\n")[line] }),
+      getText: () => malformedSource,
+      positionAt(offset) {
+        const split = malformedSource.slice(0, offset).split("\n")
+        return new Position(split.length - 1, split.at(-1).length)
+      },
+    }
+    openDocument(malformedDocument)
+    const malformedDiagnostic = diagnosticRuns.at(-1).diagnostics[0]
+    assert.match(malformedDiagnostic.message, /Unclosed block comment/)
+    assert.equal(malformedDiagnostic.range.start.line, 1)
+    assert.equal(malformedDiagnostic.range.start.character, 0)
 
     const vueSource = `<template><div :class="{ active: enabled"></div></template>\n<script setup>\nconst count=State(0)\nif(count.value){\nText('ready')\n}\n</script>`
     const vueDocument = {

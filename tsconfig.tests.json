@@ -11,5 +11,5 @@
     "jsx": "react-jsx",
     "jsxImportSource": "../src"
   },
-  "files": ["tests/react-types.test.ts", "tests/jsx-types.test.tsx"]
+  "files": ["tests/core-types.test.ts", "tests/vue-types.test.ts", "tests/react-types.test.ts", "tests/jsx-types.test.tsx"]
 }

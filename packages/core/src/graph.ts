@@ -5,6 +5,9 @@ import {
   markMuseClosure,
   type MuseClosureKind,
 } from "./closures.js"
+import { keyedViewIdentity, type ViewIdentity } from "./identity.js"
+import type { FrameOptions } from "./layout.js"
+import type { MuseStyleProperties } from "./html.js"
 
 export const museView = Symbol.for("muse.view")
 export const museInitializers = Symbol.for("muse.initializers")
@@ -119,13 +122,13 @@ export interface Modifiers {
   padding(value?: Length): ModifiableViewNode
   margin(value?: Length): ModifiableViewNode
   gap(value: Length): ModifiableViewNode
-  frame(options: Record<string, unknown>): ModifiableViewNode
+  frame(options: FrameOptions): ModifiableViewNode
   font(value: string): ModifiableViewNode
   fontSize(value: Length): ModifiableViewNode
   bold(): ModifiableViewNode
-  foreground(value: unknown): ModifiableViewNode
-  background(value: unknown): ModifiableViewNode
-  style(value: Record<string, unknown>): ModifiableViewNode
+  foreground(value: string): ModifiableViewNode
+  background(value: string): ModifiableViewNode
+  style(value: MuseStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode
   withProps(value: Record<string, unknown>): ModifiableViewNode
   keyed(value: string | number): ModifiableViewNode
@@ -145,13 +148,13 @@ function decorate(node: ViewNode): ModifiableViewNode {
     padding: { value: (value: Length = 0) => modifier("padding", [value]) },
     margin: { value: (value: Length = 0) => modifier("margin", [value]) },
     gap: { value: (value: Length) => modifier("gap", [value]) },
-    frame: { value: (options: Record<string, unknown>) => modifier("frame", [options]) },
+    frame: { value: (options: FrameOptions) => modifier("frame", [options]) },
     font: { value: (value: string) => modifier("font", [value]) },
     fontSize: { value: (value: Length) => modifier("fontSize", [value]) },
     bold: { value: () => modifier("bold", []) },
-    foreground: { value: (value: unknown) => modifier("foreground", [value]) },
-    background: { value: (value: unknown) => modifier("background", [value]) },
-    style: { value: (value: Record<string, unknown>) => modifier("style", [value]) },
+    foreground: { value: (value: string) => modifier("foreground", [value]) },
+    background: { value: (value: string) => modifier("background", [value]) },
+    style: { value: (value: MuseStyleProperties) => modifier("style", [value]) },
     className: { value: (value: ClassValue) => modifier("className", [value]) },
     withProps: { value: (value: Record<string, unknown>) => modifier("withProps", [value]) },
     keyed: { value: (value: string | number) => modifier("keyed", [value]) },
@@ -223,32 +226,40 @@ export interface MuseRenderer<Output = unknown> {
   value?(value: unknown): Output
   modifier(content: Output, modifier: ViewModifierNode): Output
   /** Render a View host with an optional renderer-owned resolved prop set. */
-  view?(node: ViewHostNode, render: (props?: Record<string, unknown>) => Output): Output
+  view?(node: ViewHostNode, render: (props?: Record<string, unknown>) => Output, identity: ViewIdentity): Output
   /** Materialize a geometry boundary and feed its measured proxy to the body. */
   geometry?(node: GeometryViewNode, render: (geometry: GeometryProxy) => Output): Output
 }
 
 export function renderViewNode<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>): Output {
-  if (Array.isArray(value)) return renderer.fragment(value.map(item => renderViewNode(item, renderer)))
+  return renderViewNodeAt(value, renderer, ["root"])
+}
+
+function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>, identity: ViewIdentity): Output {
+  if (Array.isArray(value)) return renderer.fragment(value.map((item, index) => renderViewNodeAt(item, renderer, [...identity, "array", index])))
   if (!isViewNode(value)) return renderer.value ? renderer.value(value) : value as Output
   switch (value.kind) {
     case "element":
-      return renderer.element(value.type, value.props, ...value.children.map(child => renderViewNode(child, renderer)))
+      return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "element", index])))
     case "fragment":
-      return renderer.fragment(value.children.map(child => renderViewNode(child, renderer)))
+      return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "fragment", index])))
     case "modified":
-      return renderer.modifier(renderViewNode(value.content, renderer), value.modifier)
+      return renderer.modifier(renderViewNodeAt(
+        value.content,
+        renderer,
+        value.modifier.name === "keyed" ? keyedViewIdentity(identity, value.modifier.arguments[0] as string | number) : identity,
+      ), value.modifier)
     case "view":
       {
-        const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNode(value.render(props), renderer)
-        if (renderer.view) return renderer.view(value, renderWithProps)
+        const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeAt(value.render(props), renderer, [...identity, "body"])
+        if (renderer.view) return renderer.view(value, renderWithProps, identity)
         const state = value.state?.(value.props) ?? {}
         return renderWithProps({ ...value.props, ...state })
       }
     case "geometry":
       return renderer.geometry
-        ? renderer.geometry(value, geometry => renderViewNode(value.content(geometry), renderer))
-        : renderViewNode(value.content(zeroGeometry), renderer)
+        ? renderer.geometry(value, geometry => renderViewNodeAt(value.content(geometry), renderer, [...identity, "geometry"]))
+        : renderViewNodeAt(value.content(zeroGeometry), renderer, [...identity, "geometry"])
   }
 }
 
@@ -293,12 +304,23 @@ export interface ViewDefinition<Props extends object = Record<string, unknown>> 
   readonly body: (props: Props) => ViewValue
 }
 
-export type ViewConstructor<Props extends object = Record<string, unknown>> = ((...args: unknown[]) => ModifiableViewNode) & {
+export interface ViewConstructorMetadata<Props extends object = Record<string, unknown>> {
   readonly [museView]: true
   readonly [museInitializers]: readonly InitializerMatch[]
   readonly viewType: ViewType<Props>
   readonly displayName?: string
 }
+
+export type ViewConstructor<
+  Props extends object = Record<string, unknown>,
+  Args extends readonly unknown[] = readonly unknown[],
+> = ((...args: Args) => ModifiableViewNode) & ViewConstructorMetadata<Props>
+
+/** Attach Muse View metadata to an explicit overload surface without adding a catch-all call. */
+export type TypedViewConstructor<
+  Props extends object,
+  Call extends (...args: any[]) => ModifiableViewNode,
+> = Call & ViewConstructorMetadata<Props>
 
 export class MuseInitializerError extends TypeError {
   readonly typeName: string
@@ -351,20 +373,26 @@ function isNamedObject(value: unknown): value is Record<string, unknown> {
 
 function normalizeNamedArguments(candidate: InitializerMatch, args: readonly unknown[]): readonly unknown[] {
   const parameters = candidate.parameters
-  const first = args[0]
-  if (!parameters || !isNamedObject(first)) return args
+  if (!parameters) return args
   const labels = new Set(parameters.flatMap(parameter => parameter.label ? [parameter.label] : []))
   const properties = new Set(parameters.flatMap(parameter => parameter.properties ?? []))
-  const keys = Object.keys(first)
-  if (properties.size > 0 && keys.length > 0 && keys.every(key => properties.has(key))) return args
-  if (!keys.some(key => labels.has(key)) || keys.some(key => !labels.has(key))) return args
-  let trailing = 1
+  const carriers = args.flatMap((value, index) => {
+    if (!isNamedObject(value)) return []
+    const keys = Object.keys(value)
+    if (keys.length === 0 || keys.some(key => !labels.has(key))) return []
+    if (properties.size > 0 && keys.every(key => properties.has(key))) return []
+    return [{ index, value, keys }]
+  })
+  if (carriers.length !== 1) return args
+  const carrier = carriers[0]
+  const positional = args.filter((_, index) => index !== carrier.index)
+  let positionalIndex = 0
   const normalized = parameters.map(parameter => {
-    if (parameter.label && Object.prototype.hasOwnProperty.call(first, parameter.label)) return first[parameter.label]
-    if ((parameter.kind === "viewBuilder" || parameter.kind === "action") && typeof args[trailing] === "function") return args[trailing++]
+    if (parameter.label && Object.prototype.hasOwnProperty.call(carrier.value, parameter.label)) return carrier.value[parameter.label]
+    if (positionalIndex < positional.length) return positional[positionalIndex++]
     return undefined
   })
-  return trailing === args.length ? normalized : args
+  return positionalIndex === positional.length ? normalized : args
 }
 
 function genericConstraint(genericParameters: string | undefined, type: string): string | undefined {
@@ -481,8 +509,11 @@ export function assertInitializerCall(target: unknown, args: readonly unknown[])
   if (metadataOf(target).length > 0) resolveInitializer(target, args)
 }
 
+/** Statically valid result of a declared @ViewBuilder closure. */
+export type ViewBuilderContent = ModifiableViewNode | readonly ViewBuilderContent[] | null | undefined | false
+export type ViewBuilderClosure = () => ViewBuilderContent
+/** Runtime normalization input retained for renderer and compatibility boundaries. */
 export type ViewBuilderResult = ViewValue | readonly ViewBuilderResult[] | false
-export type ViewBuilderClosure = () => ViewBuilderResult
 
 export function flattenViewBuilder(value: ViewBuilderResult): ViewValue[] {
   if (value === null || value === undefined || value === false) return []
@@ -497,7 +528,7 @@ export const ViewBuilder = Object.freeze({
   buildArray: (values: readonly ViewBuilderResult[]) => values.flatMap(flattenViewBuilder),
 })
 
-export function resolveBuilderClosure(closure: ViewBuilderClosure): ViewValue[] {
+export function resolveBuilderClosure(closure: () => ViewBuilderResult): ViewValue[] {
   return ViewBuilder.buildBlock(markMuseClosure(closure, "viewBuilder")())
 }
 
@@ -532,9 +563,12 @@ export class ViewType<Props extends object = Record<string, unknown>> {
   }
 }
 
-export function defineView<Props extends object = Record<string, unknown>>(name: string, definition: ViewDefinition<Props>): ViewConstructor<Props> {
+export function defineView<
+  Props extends object = Record<string, unknown>,
+  Args extends readonly unknown[] = readonly unknown[],
+>(name: string, definition: ViewDefinition<Props>): ViewConstructor<Props, Args> {
   const viewType = new ViewType(name, definition)
-  const Type = ((...args: unknown[]) => viewType.createNode(args)) as ViewConstructor<Props>
+  const Type = ((...args: unknown[]) => viewType.createNode(args)) as unknown as ViewConstructor<Props, Args>
   Object.defineProperty(Type, museView, { configurable: false, value: true })
   Object.defineProperty(Type, "displayName", { configurable: true, value: name })
   Object.defineProperty(Type, "viewType", { configurable: false, value: viewType })

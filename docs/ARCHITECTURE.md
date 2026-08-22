@@ -17,9 +17,9 @@ Muse source (.muse.ts)
 
 | Package | Owns | Must not import |
 | --- | --- | --- |
-| `@muse/core` | `View`, `ViewType`, initializer resolution, `ViewBuilder`, `State`, `Binding`, `GeometryProxy`, closure roles, immutable `ModifiedContent` | React, React DOM, browser APIs |
+| `@muse/core` | `View`, `ViewType`, initializer resolution, `ViewBuilder`, `State`, `Binding`, native controls and layout primitives, `GeometryProxy`, closure roles, immutable `ModifiedContent` | React, React DOM, browser APIs |
 | `@muse/compiler` | `.muse.ts` builder lowering, labeled arguments, shorthand binding/modifiers, diagnostics, source-map contract | renderer implementations |
-| `@muse/react` | React materialization, React component identity, React external-store subscriptions, React built-ins | compiler internals |
+| `@muse/react` | React materialization, React component identity, React external-store subscriptions, React component interop and compatibility re-exports | compiler internals |
 | `@muse/vue` | Vue VNode materialization, Vue component/slot bridges, explicit State/Ref bridges | React |
 | `@muse/web` | HTML serialization, DOM materialization, events, refs, and State-driven mount invalidation | React |
 | `@muse/vite` | Vite plugin entry point for the compiler | View implementation details |

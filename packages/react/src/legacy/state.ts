@@ -6,6 +6,7 @@ import {
   stateVersion,
   subscribeState,
 } from "@muse/core"
+import type { StateRef as CoreStateRef } from "@muse/core"
 import type { BindingRef, StateRef, Value } from "./types.js"
 
 /** React is only the subscription adapter; storage and Binding live in core. */
@@ -26,7 +27,7 @@ export function resolveValue<T>(value: Value<T>): T {
 }
 
 export function useReactiveValue<T>(compute: () => T): T {
-  const dependencies = new Set<StateRef<unknown>>()
+  const dependencies = new Set<CoreStateRef<unknown>>()
   const value = collectStateReads(compute, state => dependencies.add(state))
   const getVersion = () => [...dependencies].reduce((version, state) => version + stateVersion(state), 0)
 

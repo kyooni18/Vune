@@ -46,6 +46,13 @@ Grid(2, () => Text('Builder'))
 VStack({ spacing: 8 }, () => Text('Optioned builder'))
 Group(() => [Text('Grouped one'), Text('Grouped two')])
 
+// @ts-expect-error Text initializer accepts only string or number values
+Text({ invalid: true })
+// @ts-expect-error Button requires a declared action closure form
+Button('Missing action')
+// @ts-expect-error Button titles cannot be arbitrary objects
+Button({ title: 'Invalid' }, () => undefined)
+
 const graphRenderer: MuseRenderer<{ kind: 'node'; type: unknown; children: unknown[] }> = {
   element(type, _props, ...children) { return { kind: 'node', type, children } },
   fragment(children) { return { kind: 'node', type: 'fragment', children: [...children] } },

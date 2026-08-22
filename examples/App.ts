@@ -2,12 +2,16 @@ import {
   Binding,
   Button,
   HStack,
+  ProgressView,
+  Slider,
   Spacer,
   State,
   Text,
+  TextField,
+  Toggle,
   VStack,
 } from 'muse'
-import { ProgressView, Slider, TextField, Toggle, view } from '@muse/react'
+import { view } from '@muse/react'
 import moduleStyles from './demo.module.css'
 
 const codeSample = `const count = State(0)

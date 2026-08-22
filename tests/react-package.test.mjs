@@ -51,6 +51,12 @@ test("@muse/react adapts raw HTML names to native React props at the boundary", 
   assert.equal(element.props.onClick, save)
 })
 
+test("@muse/react adapts real inline CSS strings at the renderer boundary", () => {
+  const element = render(Element("x-card", { style: "color: red; --accent: blue", "data-kind": "custom" }, "Card"))
+  assert.deepEqual(element.props.style, { color: "red", "--accent": "blue" })
+  assert.equal(element.props["data-kind"], "custom")
+})
+
 test("@muse/react shares core scroll and safe-area Views", () => {
   const value = SafeArea(() => [ScrollView("horizontal", () => [Element("span", null, "Items")])])
   const html = renderToStaticMarkup(render(value))

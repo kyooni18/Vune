@@ -3,7 +3,7 @@ import test from "node:test"
 import ts from "typescript"
 import { compileMuseFile, createMuseLanguageService, createMuseVitePlugin, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
 import { musePlugin } from "../packages/vite/dist/index.js"
-import { Text, VStack, defineView, initializer, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
+import { Text, VStack, defineView, initializer, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
 import { readFileSync } from "node:fs"
 
 test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax", () => {
@@ -72,6 +72,28 @@ test("@muse/compiler exposes source-ranged builder and struct ASTs", () => {
   assert.ok(structs[0].bodyExpressionRange.start > structs[0].bodyRange.start)
 })
 
+test("compiler parsing preserves nested template expressions and comment-separated trailing closures", () => {
+  const source = `VStack(
+  alignment: /* declaration-owned label */ \`leading-\${theme(\`nested-\${mode}\`)}\`
+) /* trailing builder */ {
+  Text(\`Hello \${user.name}\`)
+  Button(action: { save(\`item-\${item.id}\`) }) /* trailing label */ {
+    Text("Save")
+  }
+}`
+  const ast = parseMuseBuilder(source)
+  assert.equal(ast.statements.length, 1)
+  assert.equal(ast.statements[0].kind, "call")
+  assert.equal(ast.statements[0].arguments[0].label, "alignment")
+  assert.match(ast.statements[0].arguments[0].value.source, /nested-\$\{mode\}/)
+  assert.equal(ast.statements[0].trailing?.body.statements.length, 2)
+  const output = transformMuseSource(source, "NestedTemplates.muse.ts")
+  assert.match(output, /namedArguments\(\{ alignment:/)
+  assert.match(output, /nested-\$\{mode\}/)
+  assert.match(output, /Button\(namedArguments\(\{ action:/)
+  assert.equal(ts.createSourceFile("NestedTemplates.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("@muse/compiler exposes source maps, diagnostics, language service, and Vite adapter", () => {
   const result = compileMuseFile("Text(\"Hi\")", "/src/Counter.muse.ts")
   assert.equal(result.map.sources[0], "/src/Counter.muse.ts")
@@ -132,6 +154,15 @@ VStack() { Text("Hello from Muse") }
   assert.match(virtualScript.code, /overloadClosure\(/)
 })
 
+test("Vue component adapters use the generic labeled-argument compiler path", () => {
+  const source = `const MyVueComponent = vueComponent(Badge)
+MyVueComponent(value: data)`
+  const output = transformMuseSource(source, "VueInterop.muse.ts")
+  assert.match(output, /MyVueComponent\(namedArguments\(\{ value: data \}\)\)/)
+  assert.doesNotMatch(output, /VueComponent.*hack/i)
+  assert.equal(ts.createSourceFile("VueInterop.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("the canonical compiler preserves host stylesheet imports", () => {
   const source = `import styles from "./Card.module.css"
 import "./tokens.scss"
@@ -148,6 +179,10 @@ test("compiler diagnostics retain the original offset for raw HTML and delimiter
   assert.deepEqual(htmlDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed raw HTML element in Muse source", line: 2, column: 3 }])
   const delimiterDiagnostic = createMuseLanguageService().diagnose("  VStack() {")
   assert.deepEqual(delimiterDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed { block in Muse source", line: 1, column: 12 }])
+  const templateDiagnostic = createMuseLanguageService().diagnose("Text(\n  `value \${format(`nested`)}`\n")
+  assert.deepEqual(templateDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed ( block in Muse source", line: 1, column: 5 }])
+  const commentDiagnostic = createMuseLanguageService().diagnose("Text(\"ok\")\n/* unfinished")
+  assert.deepEqual(commentDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed block comment in Muse source", line: 2, column: 1 }])
 })
 
 test("the checked-in .muse.ts example passes through the compiler pipeline", () => {
@@ -194,6 +229,45 @@ struct GenericBox<Content: View>: View {
   )(defineView, initializer, resolveBuilderClosure, overloadClosure, Text, VStack)
   assert.doesNotThrow(() => GenericBox(() => Text("valid")))
   assert.throws(() => GenericBox(() => "not a View"), /No matching initializer for GenericBox/)
+})
+
+test("compiled structs resolve unlabeled values, labeled actions, and trailing builders through metadata", () => {
+  const source = `struct MixedCard<Content: View>: View {
+  let title: string
+  let action: () => void
+  let content: Content
+  init(_ title: string, @Action action: () => void, @ViewBuilder content: () => Content) {
+    self.title = title
+    self.action = action
+    self.content = content()
+  }
+  var body: some View { VStack() { Text(title); content } }
+}
+const card = MixedCard("Title", action: { save() }) { Text("Body") }`
+  const output = transformMuseSource(source, "MixedCard.muse.ts")
+  assert.match(output, /MixedCard\("Title", namedArguments\(\{ action:/)
+  assert.equal(ts.createSourceFile("MixedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+  const generated = output.replace(/^import [^\n]+\n/, "").replace(/: any\b/g, "")
+  let saves = 0
+  const card = Function(
+    "defineView",
+    "initializer",
+    "resolveBuilderClosure",
+    "namedArguments",
+    "overloadClosure",
+    "Text",
+    "VStack",
+    "save",
+    `${generated}; return card`,
+  )(defineView, initializer, resolveBuilderClosure, namedArguments, overloadClosure, Text, VStack, () => { saves += 1 })
+  const rendered = renderViewNode(card, {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { children } },
+    value(value) { return value },
+    modifier(content) { return content },
+  })
+  assert.deepEqual(rendered.children.map(child => child.children[0]), ["Title", "Body"])
+  assert.equal(saves, 0)
 })
 
 test("nested View structs keep the outer body and local View scope", () => {
@@ -304,4 +378,19 @@ VStack() {
   assert.match(output, /Element\("button", \{ "onclick": save, "aria-label": "Save" \}, "Save"\)/)
   assert.doesNotMatch(output, /<section|<h1|<button/)
   assert.equal(ts.createSourceFile("Card.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("raw HTML supports spread attributes, comments, void elements, custom elements, and inline CSS", () => {
+  const source = `const shared = { role: "group", "data-shared": true }
+<x-card {...shared} class="card" style="color: red; --accent: blue" aria-label="Card">
+  <!-- compiler-only comment -->
+  <input data-field="name" disabled>
+</x-card>`
+  const output = transformMuseSource(source, "RawCard.muse.ts")
+  assert.match(output, /Element\("x-card", \{ \.\.\.\(shared\), "class": "card", "style": "color: red; --accent: blue", "aria-label": "Card" \}/)
+  assert.match(output, /Element\("input", \{ "data-field": "name", "disabled": true \}\)/)
+  assert.doesNotMatch(output, /compiler-only comment|<input|<x-card/)
+  assert.equal(ts.createSourceFile("RawCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+  const invalid = createMuseLanguageService().diagnose("  <button {disabled}>Save</button>")
+  assert.deepEqual(invalid, [{ severity: "error", code: "MUSE_SYNTAX", message: "Raw HTML attribute expressions must use {...value}", line: 1, column: 11 }])
 })

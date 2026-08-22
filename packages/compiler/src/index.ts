@@ -76,7 +76,21 @@ function skipQuoted(source: string, index: number): number {
     if (source[cursor] === "\\") { cursor += 1; continue }
     if (source[cursor] === quote) return cursor + 1
   }
-  return source.length
+  throw syntaxError(`Unclosed ${quote} string in Muse source`, index)
+}
+
+function skipTemplate(source: string, index: number): number {
+  for (let cursor = index + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === "\\") { cursor += 1; continue }
+    if (source[cursor] === "`") return cursor + 1
+    if (source[cursor] !== "$" || source[cursor + 1] !== "{") continue
+    cursor = matching(source, cursor + 1, "{", "}")
+  }
+  throw syntaxError("Unclosed template literal in Muse source", index)
+}
+
+function skipString(source: string, index: number): number {
+  return source[index] === "`" ? skipTemplate(source, index) : skipQuoted(source, index)
 }
 
 function skipComment(source: string, index: number): number {
@@ -85,7 +99,8 @@ function skipComment(source: string, index: number): number {
     return end < 0 ? source.length : end
   }
   const end = source.indexOf("*/", index + 2)
-  return end < 0 ? source.length : end + 2
+  if (end < 0) throw syntaxError("Unclosed block comment in Muse source", index)
+  return end + 2
 }
 
 function regexCanStart(source: string, index: number): boolean {
@@ -114,7 +129,14 @@ function skipRegex(source: string, index: number): number {
 
 function skipTrivia(source: string, index: number): number {
   let cursor = index
-  while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1
+  while (cursor < source.length) {
+    if (/\s/.test(source[cursor])) { cursor += 1; continue }
+    if (source.startsWith("//", cursor) || source.startsWith("/*", cursor)) {
+      cursor = skipComment(source, cursor)
+      continue
+    }
+    break
+  }
   return cursor
 }
 
@@ -122,7 +144,8 @@ function matching(source: string, open: number, left: string, right: string): nu
   let depth = 0
   for (let cursor = open; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === left) depth += 1
     if (character === right) {
       depth -= 1
@@ -141,7 +164,8 @@ function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCa
   const excluded = new Set(["if", "for", "while", "switch", "catch", "function"])
   for (let cursor = from; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     const identifier = identifierAt(source, cursor)
     if (!identifier) continue
     cursor = identifier.end - 1
@@ -185,14 +209,24 @@ function htmlAttributeNameAt(source: string, start: number): { name: string; end
   return match ? { name: match[0], end: start + match[0].length } : undefined
 }
 
-function htmlAttributes(source: string): string {
+function htmlAttributes(source: string, baseOffset = 0): string {
   const attributes: string[] = []
   let cursor = 0
   while (cursor < source.length) {
     cursor = skipHtmlTrivia(source, cursor)
     if (cursor >= source.length) break
+    if (source[cursor] === "{") {
+      const end = matching(source, cursor, "{", "}")
+      const expression = source.slice(cursor + 1, end).trim()
+      if (!expression.startsWith("...") || expression.slice(3).trim().length === 0) {
+        throw syntaxError("Raw HTML attribute expressions must use {...value}", baseOffset + cursor)
+      }
+      attributes.push(`...(${lowerRange(expression.slice(3).trim())})`)
+      cursor = end + 1
+      continue
+    }
     const name = htmlAttributeNameAt(source, cursor)
-    if (!name) throw new SyntaxError("Invalid raw HTML attribute")
+    if (!name) throw syntaxError("Invalid raw HTML attribute", baseOffset + cursor)
     cursor = skipHtmlTrivia(source, name.end)
     let value = "true"
     if (source[cursor] === "=") {
@@ -207,7 +241,7 @@ function htmlAttributes(source: string): string {
         cursor = end + 1
       } else {
         const match = /^[^\s/>]+/.exec(source.slice(cursor))
-        if (!match) throw new SyntaxError(`Invalid value for raw HTML attribute ${name.name}`)
+        if (!match) throw syntaxError(`Invalid value for raw HTML attribute ${name.name}`, baseOffset + cursor)
         value = JSON.stringify(match[0])
         cursor += match[0].length
       }
@@ -216,6 +250,8 @@ function htmlAttributes(source: string): string {
   }
   return attributes.length === 0 ? "null" : `{ ${attributes.join(", ")} }`
 }
+
+const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
 
 function rawHtmlAt(source: string, start: number): RawHtmlCall | undefined {
   if (source[start] !== "<" || source[start + 1] === "/" || source[start + 1] === "!") return undefined
@@ -238,15 +274,22 @@ function rawHtmlAt(source: string, start: number): RawHtmlCall | undefined {
     if (character === ">" && braceDepth === 0) { close = cursor; break }
   }
   if (close < 0 || quote || braceDepth !== 0) return undefined
-  const opening = source.slice(openingName.end, close).trim()
-  const selfClosing = opening.endsWith("/")
-  const attributeSource = selfClosing ? opening.slice(0, -1).trim() : opening
-  const attributes = htmlAttributes(attributeSource)
-  if (selfClosing) return { start, end: close + 1, code: `Element(${JSON.stringify(openingName.name)}, ${attributes})` }
+  const opening = source.slice(openingName.end, close)
+  const trimmedOpening = opening.trimEnd()
+  const selfClosing = trimmedOpening.endsWith("/")
+  const attributeSource = selfClosing ? trimmedOpening.slice(0, -1) : opening
+  const attributes = htmlAttributes(attributeSource, openingName.end)
+  if (selfClosing || voidHtmlElements.has(openingName.name.toLowerCase())) return { start, end: close + 1, code: `Element(${JSON.stringify(openingName.name)}, ${attributes})` }
 
   const children: string[] = []
   cursor = close + 1
   while (cursor < source.length) {
+    if (source.startsWith("<!--", cursor)) {
+      const commentEnd = source.indexOf("-->", cursor + 4)
+      if (commentEnd < 0) throw syntaxError("Unclosed raw HTML comment in Muse source", cursor)
+      cursor = commentEnd + 3
+      continue
+    }
     if (source.startsWith(`</${openingName.name}`, cursor)) {
       const end = source.indexOf(">", cursor + openingName.name.length + 2)
       if (end < 0) return undefined
@@ -282,7 +325,7 @@ function rawHtmlAt(source: string, start: number): RawHtmlCall | undefined {
 
 function findRawHtml(source: string, from = 0): RawHtmlCall | undefined {
   for (let cursor = from; cursor < source.length; cursor += 1) {
-    if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (source[cursor] !== "<") continue
     const call = rawHtmlAt(source, cursor)
     if (call) return call
@@ -293,7 +336,7 @@ function findRawHtml(source: string, from = 0): RawHtmlCall | undefined {
 function validateRawHtmlSyntax(source: string): void {
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") {
-      cursor = skipQuoted(source, cursor) - 1
+      cursor = skipString(source, cursor) - 1
       continue
     }
     if (source[cursor] !== "<" || !/[A-Za-z]/.test(source[cursor + 1] ?? "")) continue
@@ -314,7 +357,8 @@ function splitTopLevel(source: string, separator = ","): string[] {
   let braces = 0
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "<") {
       const html = rawHtmlAt(source, cursor)
       if (html) { cursor = html.end - 1; continue }
@@ -343,7 +387,8 @@ function splitStatements(source: string): string[] {
   let braces = 0
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "<") {
       const html = rawHtmlAt(source, cursor)
       if (html) { cursor = html.end - 1; continue }
@@ -372,7 +417,8 @@ function topLevelColon(source: string): number {
   let braces = 0
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "(") parens += 1
     else if (character === ")") parens -= 1
     else if (character === "[") brackets += 1
@@ -389,7 +435,7 @@ function lowerShorthand(source: string): string {
   for (let cursor = 0; cursor < source.length;) {
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") {
-      const end = skipQuoted(source, cursor)
+      const end = skipString(source, cursor)
       result += source.slice(cursor, end)
       cursor = end
       continue
@@ -412,15 +458,14 @@ function lowerShorthand(source: string): string {
   return result
 }
 
-function lowerClosure(value: string, label?: string): string {
+function lowerClosure(value: string): string {
   const source = value.trim()
   if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source)
   const body = source.slice(1, -1).trim()
   const lowered = lowerStatements(body)
   const action = /\b(const|let|var|return|throw)\b/.test(body)
-  if (label && /^(action|handler|on[A-Z])/.test(label)) return `overloadClosure(() => [], () => {${lowerRange(body)}})`
-  if (action) return `overloadClosure(() => [], () => {${lowerRange(body)}})`
-  return `() => [${lowered}]`
+  const builder = action ? "() => []" : `() => [${lowered}]`
+  return `overloadClosure(${builder}, () => {${lowerRange(body)}})`
 }
 
 function lowerArguments(source: string): string {
@@ -430,7 +475,7 @@ function lowerArguments(source: string): string {
     const colon = topLevelColon(argument)
     if (colon >= 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(argument.slice(0, colon).trim())) {
       const label = argument.slice(0, colon).trim()
-      named.push(`${label}: ${lowerClosureOrExpression(argument.slice(colon + 1), label)}`)
+      named.push(`${label}: ${lowerClosureOrExpression(argument.slice(colon + 1))}`)
     } else {
       positional.push(lowerClosureOrExpression(argument))
     }
@@ -439,9 +484,9 @@ function lowerArguments(source: string): string {
   return [...positional, `namedArguments({ ${named.join(", ")} })`].join(", ")
 }
 
-function lowerClosureOrExpression(source: string, label?: string): string {
+function lowerClosureOrExpression(source: string): string {
   const value = source.trim()
-  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1) return lowerClosure(value, label)
+  if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1) return lowerClosure(value)
   return lowerShorthand(lowerRange(value))
 }
 
@@ -560,7 +605,7 @@ function topLevelEquals(source: string): number {
   let braces = 0
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "(") parens += 1
     else if (character === ")") parens -= 1
     else if (character === "[") brackets += 1
@@ -718,8 +763,31 @@ function ensureImports(source: string): string {
   return result
 }
 
+function lowerNamedMuseCalls(source: string): string {
+  let output = source
+  while (true) {
+    const calls = [...output.matchAll(/\b[A-Z][A-Za-z0-9_$]*\s*\(/g)]
+    let replacement: { start: number; end: number; value: string } | undefined
+    for (const match of calls.reverse()) {
+      const start = match.index ?? 0
+      const name = /^[A-Z][A-Za-z0-9_$]*/.exec(match[0])?.[0]
+      if (!name) continue
+      const preceding = output.slice(0, start).trimEnd()
+      if (/\b(?:function|class|interface|type|new)$/.test(preceding) || preceding.endsWith(".")) continue
+      const open = output.indexOf("(", start + name.length)
+      const close = matching(output, open, "(", ")")
+      const argumentSource = output.slice(open + 1, close)
+      if (!splitTopLevel(argumentSource).some(argument => topLevelColon(argument) >= 0)) continue
+      replacement = { start, end: close + 1, value: `${name}(${lowerArguments(argumentSource)})` }
+      break
+    }
+    if (!replacement) return output
+    output = output.slice(0, replacement.start) + replacement.value + output.slice(replacement.end)
+  }
+}
+
 export function transformMuseSource(source: string, _fileName = "muse-source.ts"): string {
-  return ensureImports(lowerRange(lowerStructs(lowerTopLevelState(source))))
+  return ensureImports(lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(source)))))
 }
 
 function hasNamedMuseArguments(source: string): boolean {
@@ -742,7 +810,7 @@ function hasBindingShorthand(source: string): boolean {
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
     const next = source[cursor + 1]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === "$" && /[A-Za-z_$]/.test(next ?? "") && !/[A-Za-z0-9_$]/.test(source[cursor - 1] ?? "")) return true
@@ -771,7 +839,8 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
   try {
     validateRawHtmlSyntax(source)
     for (let cursor = 0; cursor < source.length; cursor += 1) {
-      if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") cursor = skipQuoted(source, cursor) - 1
+      if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") cursor = skipString(source, cursor) - 1
+      else if (source[cursor] === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) cursor = skipComment(source, cursor) - 1
       else if (source[cursor] === "(") matching(source, cursor, "(", ")")
       else if (source[cursor] === "{") matching(source, cursor, "{", "}")
     }

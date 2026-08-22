@@ -1,8 +1,18 @@
 import { actionClosure } from "./closures.js"
 import { isViewNode } from "./graph.js"
 
-export interface StateRef<T> { value: T }
-export interface BindingRef<T> { value: T }
+declare const stateBrand: unique symbol
+declare const bindingBrand: unique symbol
+
+export interface StateRef<T> {
+  value: T
+  readonly [stateBrand]: true
+}
+
+export interface BindingRef<T> {
+  value: T
+  readonly [bindingBrand]: true
+}
 export type Value<T> = T | StateRef<T> | BindingRef<T> | (() => T)
 type Listener = () => void
 

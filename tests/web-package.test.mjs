@@ -3,6 +3,7 @@ import test from "node:test"
 import { JSDOM } from "jsdom"
 import {
   Element,
+  ForEach,
   GeometryReader,
   defineBuiltinView,
   defineView,
@@ -41,6 +42,7 @@ test("@muse/web preserves raw HTML attributes and object styles", () => {
   assert.match(html, /data-kind="hero"/)
   assert.match(html, /background-color:red;--accent:blue/)
   assert.match(html, />Name<\/span><\/label>$/)
+  assert.equal(renderToHTML(Element("input", { disabled: true, style: "color: red", "data-field": "name" })), '<input disabled style="color: red" data-field="name">')
 })
 
 test("@muse/web merges object styles and classes supplied by withProps", () => {
@@ -137,14 +139,47 @@ test("@muse/web DOM mount preserves events, refs, and State invalidation", async
   assert.equal(container.innerHTML, "")
 })
 
+test("@muse/web preserves keyed child State across reorder and resets it after remount", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a" }, { id: "b" }])
+  const Row = defineView("IdentityRow", {
+    initializers: [initializer("IdentityRow(id)", args => args.length === 1, args => ({ id: args[0] }))],
+    state: () => ({ count: State(0) }),
+    body: ({ id, count }) => Element("button", {
+      "data-row": id,
+      onclick: () => { count.value += 1 },
+    }, `${id}:${count.value}`),
+  })
+  const App = defineView("IdentityApp", {
+    initializers: [initializer("IdentityApp()", args => args.length === 0)],
+    body: () => Element("section", null, ForEach(items.value, item => Row(item.id))),
+  })
+  const unmount = mount(App(), container)
+  container.querySelector('[data-row="a"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="a"]')?.textContent, "a:1")
+  items.value = [items.value[1], items.value[0]]
+  await Promise.resolve()
+  assert.deepEqual([...container.querySelectorAll("button")].map(button => button.textContent), ["b:0", "a:1"])
+  items.value = items.value.filter(item => item.id !== "a")
+  await Promise.resolve()
+  items.value = [{ id: "a" }, ...items.value]
+  await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="a"]')?.textContent, "a:0")
+  unmount()
+  dom.window.close()
+})
+
 test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
-  const count = State(0)
   const Counter = defineView("HydratedCounter", {
     initializers: [initializer("HydratedCounter()", args => args.length === 0)],
-    body: () => Element("button", { onclick: () => { count.value += 1 } }, Element("span", null, String(count.value))),
+    state: () => ({ count: State(0) }),
+    body: ({ count }) => Element("button", { onclick: () => { count.value += 1 } }, Element("span", null, String(count.value))),
   })
   const value = Counter()
   container.innerHTML = renderToHTML(value)

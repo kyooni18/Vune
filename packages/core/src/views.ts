@@ -8,9 +8,13 @@ import {
   modifier,
   resolveBuilderClosure,
   type ViewValue,
+  type ViewBuilderClosure,
+  type ViewBuilderContent,
+  type TypedViewConstructor,
   viewElement,
   viewFragment,
 } from "./graph.js"
+import type { MuseCustomElementAttributes, MuseHtmlAttributes, MuseHtmlTagName } from "./html.js"
 import type { BindingRef, StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
 
@@ -32,7 +36,11 @@ const textValue = initializerKinds.value(true, "value", undefined, "string | num
 const stackContent = initializerKinds.viewBuilder(true, "content")
 const genericStackContent = initializerKinds.viewBuilder(true, "content", "Content")
 
-export const Text = defineBuiltinView<{ value: string | number }>(
+interface TextProps { readonly value: string | number }
+
+interface TextCall { (value: string | number): ReturnType<typeof viewElement> }
+
+export const Text = defineBuiltinView<TextProps>(
   "Text",
   [initializer(
     "Text(value)",
@@ -41,7 +49,7 @@ export const Text = defineBuiltinView<{ value: string | number }>(
     [textValue],
   )],
   ({ value }) => viewElement("span", null, [value]),
-)
+) as TypedViewConstructor<TextProps, TextCall>
 
 function stackChildren(value: unknown): ViewValue[] {
   return Array.isArray(value)
@@ -80,7 +88,15 @@ function stackInitializers(optionsParameter: ReturnType<typeof initializerKinds.
   ]
 }
 
-export const VStack = defineBuiltinView<{ options?: VStackOptions; content: ViewValue[] }>(
+export interface VStackProps { readonly options?: VStackOptions; readonly content: ViewValue[] }
+export interface StackCall<Options> {
+  (content: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (options: Options, content: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (options: Options, ...children: ViewBuilderContent[]): ReturnType<typeof viewElement>
+  (...children: ViewBuilderContent[]): ReturnType<typeof viewElement>
+}
+
+export const VStack = defineBuiltinView<VStackProps>(
   "VStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
   ({ options = {}, content }) => viewElement("div", {
@@ -95,9 +111,10 @@ export const VStack = defineBuiltinView<{ options?: VStackOptions; content: View
     },
   }, content),
   "Content: View",
-)
+) as TypedViewConstructor<VStackProps, StackCall<VStackOptions>>
 
-export const HStack = defineBuiltinView<{ options?: HStackOptions; content: ViewValue[] }>(
+export interface HStackProps { readonly options?: HStackOptions; readonly content: ViewValue[] }
+export const HStack = defineBuiltinView<HStackProps>(
   "HStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
   ({ options = {}, content }) => viewElement("div", {
@@ -112,9 +129,24 @@ export const HStack = defineBuiltinView<{ options?: HStackOptions; content: View
     },
   }, content),
   "Content: View",
-)
+) as TypedViewConstructor<HStackProps, StackCall<HStackOptions>>
 
-export const ZStack = defineBuiltinView<{ options?: ZStackOptions; content: ViewValue[] }>(
+export interface ZStackProps { readonly options?: ZStackOptions; readonly content: ViewValue[] }
+function zStackPlaceItems(alignment: ZStackOptions["alignment"]): string {
+  switch (alignment) {
+    case "leading": return "center start"
+    case "trailing": return "center end"
+    case "top": return "start center"
+    case "bottom": return "end center"
+    case "topLeading": return "start start"
+    case "topTrailing": return "start end"
+    case "bottomLeading": return "end start"
+    case "bottomTrailing": return "end end"
+    default: return "center"
+  }
+}
+
+export const ZStack = defineBuiltinView<ZStackProps>(
   "ZStack",
   [
     initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [genericStackContent]),
@@ -128,18 +160,24 @@ export const ZStack = defineBuiltinView<{ options?: ZStackOptions; content: View
       display: "grid",
       width: "100%",
       boxSizing: "border-box",
-      placeItems: options.alignment === "topLeading" ? "start" : options.alignment === "topTrailing" ? "start end" : options.alignment === "bottomLeading" ? "end start" : options.alignment === "bottomTrailing" ? "end" : "center",
+      placeItems: zStackPlaceItems(options.alignment),
     },
   }, content),
   "Content: View",
-)
+) as TypedViewConstructor<ZStackProps, StackCall<ZStackOptions>>
 
 export type ScrollAxis = "vertical" | "horizontal" | "both"
 
 const scrollContent = initializerKinds.viewBuilder(true, "content")
 const scrollAxis = initializerKinds.value(false, "axis", undefined, "string")
 
-export const ScrollView = defineBuiltinView<{ axis?: ScrollAxis; content: ViewValue[] }>(
+export interface ScrollViewProps { readonly axis?: ScrollAxis; readonly content: ViewValue[] }
+export interface ScrollViewCall {
+  (content: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (axis: ScrollAxis, content: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (content: ViewBuilderContent, axis?: ScrollAxis): ReturnType<typeof viewElement>
+}
+export const ScrollView = defineBuiltinView<ScrollViewProps>(
   "ScrollView",
   [
     initializer(
@@ -169,7 +207,7 @@ export const ScrollView = defineBuiltinView<{ axis?: ScrollAxis; content: ViewVa
       WebkitOverflowScrolling: "touch",
     },
   }, content),
-)
+) as TypedViewConstructor<ScrollViewProps, ScrollViewCall>
 
 export type SafeAreaEdge = "top" | "right" | "bottom" | "left" | "all"
 
@@ -179,7 +217,12 @@ function hasSafeAreaEdge(edges: SafeAreaEdge | readonly SafeAreaEdge[], edge: Ex
 
 const safeAreaContent = initializerKinds.viewBuilder(true, "content")
 
-export const SafeArea = defineBuiltinView<{ edges?: SafeAreaEdge | readonly SafeAreaEdge[]; content: ViewValue[] }>(
+export interface SafeAreaProps { readonly edges?: SafeAreaEdge | readonly SafeAreaEdge[]; readonly content: ViewValue[] }
+export interface SafeAreaCall {
+  (content: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (edges: SafeAreaEdge | readonly SafeAreaEdge[], content: ViewBuilderClosure): ReturnType<typeof viewElement>
+}
+export const SafeArea = defineBuiltinView<SafeAreaProps>(
   "SafeArea",
   [
     initializer(
@@ -205,9 +248,11 @@ export const SafeArea = defineBuiltinView<{ edges?: SafeAreaEdge | readonly Safe
       boxSizing: "border-box",
     },
   }, content),
-)
+) as TypedViewConstructor<SafeAreaProps, SafeAreaCall>
 
-export const GeometryReader = defineBuiltinView<{ content: (geometry: GeometryProxy) => ViewValue }>(
+export interface GeometryReaderProps { readonly content: (geometry: GeometryProxy) => ViewValue }
+export interface GeometryReaderCall { (content: (geometry: GeometryProxy) => ViewBuilderContent): ReturnType<typeof viewElement> }
+export const GeometryReader = defineBuiltinView<GeometryReaderProps>(
   "GeometryReader",
   [initializer(
     "GeometryReader(@ViewBuilder content)",
@@ -216,13 +261,15 @@ export const GeometryReader = defineBuiltinView<{ content: (geometry: GeometryPr
     [initializerKinds.viewBuilder(true, "content")],
   )],
   ({ content }) => geometryView(content),
-)
+) as TypedViewConstructor<GeometryReaderProps, GeometryReaderCall>
 
-export const Spacer = defineBuiltinView<{ minLength?: number | string }>(
+export interface SpacerProps { readonly minLength?: number | string }
+export interface SpacerCall { (minLength?: number | string): ReturnType<typeof viewElement> }
+export const Spacer = defineBuiltinView<SpacerProps>(
   "Spacer",
   [initializer("Spacer(minLength?)", args => args.length <= 1 && typeof args[0] !== "function", args => ({ minLength: args[0] as number | string | undefined }), [initializerKinds.value(false, "minLength")])],
-  ({ minLength }) => viewElement("div", { "data-muse": "Spacer", style: { flexGrow: 1, minWidth: minLength, minHeight: minLength, flexBasis: typeof minLength === "number" ? `${minLength}px` : minLength } }),
-)
+  ({ minLength }) => viewElement("div", { "data-muse": "Spacer", style: { flexGrow: 1, flexShrink: 0, flexBasis: typeof minLength === "number" ? `${minLength}px` : minLength } }),
+) as TypedViewConstructor<SpacerProps, SpacerCall>
 
 export const Divider = defineBuiltinView("Divider", [initializer("Divider()", args => args.length === 0)], () => viewElement("hr", { "data-muse": "Divider" }))
 
@@ -235,14 +282,24 @@ export const Group = defineBuiltinView<{ content: ViewValue[] }>(
   ({ content }) => viewFragment(content),
 )
 
-/** Construct a raw HTML element without involving a renderer or a component allow-list. */
-export function Element(tag: string, props: Record<string, unknown> | null = null, ...children: ViewValue[]): ReturnType<typeof viewElement> {
-  return viewElement(tag, props, children)
+/** Construct typed raw HTML without involving a renderer or a component allow-list. */
+export function Element<Tag extends MuseHtmlTagName>(tag: Tag, props?: MuseHtmlAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
+export function Element<Tag extends `${string}-${string}`>(tag: Tag, props?: MuseCustomElementAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
+export function Element(tag: string, props: object | null = null, ...children: ViewValue[]): ReturnType<typeof viewElement> {
+  return viewElement(tag, props as Record<string, unknown> | null, children)
 }
 
 interface ButtonProps {
   readonly label?: ViewValue[]
   readonly action: () => unknown
+}
+
+type ButtonAction = () => unknown
+interface ButtonCall {
+  (action: ButtonAction): ReturnType<typeof viewElement>
+  (title: string | number, action: ButtonAction): ReturnType<typeof viewElement>
+  (action: ButtonAction, label: ViewBuilderClosure): ReturnType<typeof viewElement>
+  (label: ViewBuilderClosure, action: ButtonAction): ReturnType<typeof viewElement>
 }
 
 const actionParameter = initializerKinds.action(true, "action")
@@ -257,7 +314,7 @@ export const Button = defineBuiltinView<ButtonProps>(
     initializer("Button(@ViewBuilder label, @Action action)", args => args.length === 2 && typeof args[0] === "function" && typeof args[1] === "function", args => ({ label: resolveBuilderClosure(args[0] as () => ViewValue), action: args[1] as () => unknown }), [labelParameter, actionParameter]),
   ],
   ({ label = [Text("Button")], action }) => viewElement("button", { type: "button", onClick: action }, label),
-)
+) as TypedViewConstructor<ButtonProps, ButtonCall>
 
 const objectIdentityKeys = new WeakMap<object, number>()
 let nextObjectIdentityKey = 0

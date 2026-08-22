@@ -17,6 +17,7 @@ import {
   view,
 } from '../dist/index.js'
 import { GeometryReader, Text as CanonicalText, render as canonicalRender, view as canonicalView } from '../packages/react/dist/index.js'
+import { ForEach, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
 
 function installDOM() {
   const dom = new JSDOM('<!doctype html><html><body><main id="root"></main></body></html>', {
@@ -76,6 +77,34 @@ test('State-driven views rerender and controlled inputs update in JSDOM', async 
   }
 })
 
+test('React consumes core keyed View identity for reorder and remount State semantics', async () => {
+  const restore = installDOM()
+  try {
+    const items = State([{ id: 'a' }, { id: 'b' }])
+    const Row = defineView('ReactIdentityRow', {
+      initializers: [initializer('Row(id)', args => args.length === 1, args => ({ id: args[0] }))],
+      state: () => ({ count: State(0) }),
+      body: ({ id, count }) => viewElement('button', { 'data-row': id, onClick: () => { count.value += 1 } }, [`${id}:${count.value}`]),
+    })
+    const App = defineView('ReactIdentityApp', {
+      initializers: [initializer('App()', args => args.length === 0)],
+      body: () => viewElement('section', null, [ForEach(items.value, item => Row(item.id))]),
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(canonicalRender(App())) })
+    await act(async () => { document.querySelector('[data-row="a"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+    assert.equal(document.querySelector('[data-row="a"]').textContent, 'a:1')
+    await act(async () => { items.value = [items.value[1], items.value[0]] })
+    assert.deepEqual([...document.querySelectorAll('button')].map(button => button.textContent), ['b:0', 'a:1'])
+    await act(async () => { items.value = items.value.filter(item => item.id !== 'a') })
+    await act(async () => { items.value = [{ id: 'a' }, ...items.value] })
+    assert.equal(document.querySelector('[data-row="a"]').textContent, 'a:0')
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
 test('GeometryReader feeds measured host geometry back into the React graph', async () => {
   const restore = installDOM()
   window.getComputedStyle = () => ({ paddingTop: '12px', paddingRight: '8px', paddingBottom: '4px', paddingLeft: '2px' })
@@ -106,14 +135,29 @@ test('canonical @muse/react graph output hydrates through the standard React bou
   const restore = installDOM()
   try {
     const container = document.getElementById('root')
-    container.innerHTML = renderToString(canonicalRender(CanonicalText('Hydrated canonical graph')))
+    const Counter = defineView('ReactHydratedCounter', {
+      initializers: [initializer('ReactHydratedCounter()', args => args.length === 0)],
+      state: () => ({ count: State(0) }),
+      body: ({ count }) => viewElement('button', {
+        'data-counter': 'react',
+        onclick: () => { count.value += 1 },
+      }, [CanonicalText(`Hydrated ${count.value}`)]),
+    })
+    const value = Counter()
+    container.innerHTML = renderToString(canonicalRender(value))
+    const serverButton = container.querySelector('button')
     const recoverableErrors = []
-    const root = hydrateRoot(container, canonicalRender(CanonicalText('Hydrated canonical graph')), {
+    const root = hydrateRoot(container, canonicalRender(value), {
       onRecoverableError(error) { recoverableErrors.push(error) },
     })
     await act(async () => {})
     assert.equal(recoverableErrors.length, 0)
-    assert.equal(container.textContent, 'Hydrated canonical graph')
+    assert.equal(container.querySelector('button'), serverButton)
+    assert.equal(container.textContent, 'Hydrated 0')
+    await act(async () => {
+      serverButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(container.textContent, 'Hydrated 1')
     await act(async () => { root.unmount() })
   } finally {
     restore()

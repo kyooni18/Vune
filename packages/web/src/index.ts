@@ -1,8 +1,10 @@
 import {
   collectStateReads,
   edgeInsetsFromCss,
+  frameStyle,
   renderViewNode,
   subscribeState,
+  viewIdentityKey,
   classNameOf,
   zeroGeometry,
   type MuseRenderer,
@@ -37,16 +39,8 @@ function styleOf(modifier: ViewModifierNode): Record<string, string> {
     case "foreground": return { color: String(value) }
     case "background": return { background: String(value) }
     case "frame": {
-      const frame = value && typeof value === "object" ? value as Record<string, unknown> : {}
-      return {
-        "box-sizing": "border-box",
-        width: length(frame.width) ?? "",
-        height: length(frame.height) ?? "",
-        "min-width": length(frame.minWidth) ?? "",
-        "max-width": frame.maxWidth === "infinity" ? "100%" : length(frame.maxWidth) ?? "",
-        "min-height": length(frame.minHeight) ?? "",
-        "max-height": frame.maxHeight === "infinity" ? "100%" : length(frame.maxHeight) ?? "",
-      }
+      return Object.fromEntries(Object.entries(frameStyle(value && typeof value === "object" ? value : {}))
+        .map(([key, item]) => [cssPropertyName(key), item ?? ""]))
     }
     case "style": return typeof value === "object" && value !== null
       ? Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]))
@@ -81,6 +75,8 @@ function escapeAttribute(value: unknown): string {
   return escape(value).replaceAll("'", "&#39;")
 }
 
+const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
+
 const htmlRenderer: MuseRenderer<string> = {
   element(type, props, ...children) {
     const tag = typeof type === "string" ? type : "div"
@@ -94,7 +90,8 @@ const htmlRenderer: MuseRenderer<string> = {
       })
       .filter(Boolean)
       .join(" ")
-    return `<${tag}${attributes ? ` ${attributes}` : ""}>${children.join("")}</${tag}>`
+    const opening = `<${tag}${attributes ? ` ${attributes}` : ""}>`
+    return voidHtmlElements.has(tag.toLowerCase()) ? opening : `${opening}${children.join("")}</${tag}>`
   },
   fragment(children) { return children.join("") },
   value(value) { return value === null || value === undefined || value === false ? "" : escape(value) },
@@ -145,7 +142,8 @@ const htmlRenderer: MuseRenderer<string> = {
 
 interface DomRenderContext {
   readonly document: Document
-  readonly states: WeakMap<object, Record<string, unknown>>
+  readonly states: Map<string, { readonly host: unknown; readonly value: Record<string, unknown> }>
+  readonly visitedStateIdentities: Set<string>
   readonly refs: Array<() => void>
   readonly geometries: Map<number, GeometryProxy>
   readonly hydrationProps: WeakMap<Element, Record<string, unknown> | null | undefined>
@@ -267,13 +265,15 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       nodes.forEach(node => { if (node.nodeType === 1) applyDomProps(node as HTMLElement, props, context) })
       return content
     },
-    view(node, render) {
-      let state = context.states.get(node)
-      if (!state) {
-        state = node.state?.(node.props) ?? {}
-        context.states.set(node, state)
+    view(node, render, identity) {
+      const key = viewIdentityKey(identity)
+      context.visitedStateIdentities.add(key)
+      let entry = context.states.get(key)
+      if (!entry || entry.host !== node.host) {
+        entry = { host: node.host, value: node.state?.(node.props) ?? {} }
+        context.states.set(key, entry)
       }
-      return render({ ...node.props, ...state })
+      return render({ ...node.props, ...entry.value })
     },
     geometry(_node, render) {
       const index = context.geometryIndex++
@@ -332,7 +332,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
   if (canMaterializeDOM) {
     const context: DomRenderContext = {
       document,
-      states: new WeakMap(),
+      states: new Map(),
+      visitedStateIdentities: new Set(),
       refs: [],
       geometries: new Map(),
       hydrationProps: new WeakMap(),
@@ -372,9 +373,13 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       activeRefCleanup = []
       context.refs.length = 0
       context.geometryIndex = 0
+      context.visitedStateIdentities.clear()
       const dependencies = new Set<StateRef<unknown>>()
       context.hydrating = Boolean(options.hydrate && !hasMounted)
       const output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+      for (const key of context.states.keys()) {
+        if (!context.visitedStateIdentities.has(key)) context.states.delete(key)
+      }
       const outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
       const existingChildren = [...container.childNodes]
       const hydrated = context.hydrating

@@ -14,10 +14,11 @@ The first workspace architecture slice is now implemented:
 - `@muse/compiler` and `@muse/vite` handle `.muse.ts` builder/struct lowering.
 - `@muse/react`, `@muse/vue`, and `@muse/web` consume the same graph through
   renderer interfaces, with layout primitives and native controls migrated first.
-- Core-owned `Text`, stacks, `ScrollView`, `SafeArea`, `Button`, `ForEach`,
+- Core-owned `Text`, stacks, layout, collection, presentation, native control,
   `Element`, and custom View definitions are available without React.
   `.muse.ts` raw HTML lowers to those graph `Element` nodes, including
-  arbitrary `class`, `for`, `aria-*`, and `data-*` attributes.
+  typed standard attributes/events and extensible `aria-*`, `data-*`, and
+  custom-element attributes.
 - `editors/vscode` provides `.muse.ts` Muse/HTML highlighting, diagnostics,
   formatting, completion, hover, definition, rename, and optional `.vue`
   provider coverage.
@@ -38,10 +39,11 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   and an original-source language-service adapter without a component-name
   registry.
 
-The collection, presentation, and control implementations are available from
-the canonical `@muse/react` package. The old root entry points are preserved as
-`@muse/react/legacy` compatibility exports; new work should target the canonical
-graph and renderer APIs instead of extending that legacy surface.
+Collection, presentation, and native control implementations are owned by
+`@muse/core`; `@muse/react` keeps reference-identical compatibility re-exports.
+The old root entry points are preserved as `@muse/react/legacy` compatibility
+exports; new work should target the canonical graph and renderer APIs instead
+of extending that legacy surface.
 
 ## Correctness release
 
