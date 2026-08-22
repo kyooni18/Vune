@@ -235,9 +235,9 @@ keyboard navigation with `menuitem` children.
 
 ## Run the Muse example
 
-The repository includes a small React component demo in `examples/App.ts` and a
-canonical Vue SFC bridge in `examples/VueCounter.vue`. Both use the same Muse
-graph primitives at their renderer boundary.
+The repository includes React, Vue, and direct Web adapter demos in
+`examples/App.ts`, `examples/VueCounter.vue`, and `examples/WebCounter.muse.ts`.
+They use the same Muse graph primitives at their renderer boundary.
 
 From the repository root:
 
@@ -256,7 +256,11 @@ For the Muse repository itself:
 ```bash
 pnpm test
 pnpm run demo:build
+pnpm run demo:vue:build
+pnpm run demo:web:build
 pnpm run test:browser
+pnpm run test:browser:vue
+pnpm run test:browser:web
 pnpm run benchmark:modifiers
 pnpm run benchmark:performance:ci
 ```
@@ -266,8 +270,9 @@ macro transforms, controls, presentation, and State behavior.
 `benchmark:modifiers` compares raw React styles with Muse modifier chains and
 the compiler-shaped flat modifier construction across element counts and chain
 depths. `benchmark:performance:ci` additionally guards initializer
-specialization, View construction, `ForEach`, State updates, React/Vue/Web SSR,
-live DOM reconciliation, and heap-aware runs when Node is launched with
+specialization, compiler transforms, View construction, `ForEach`, State
+updates, keyed DOM updates, React/Vue rerenders, React/Vue/Web SSR and Web
+hydration, live DOM reconciliation, and heap-aware runs when Node is launched with
 `--expose-gc`. Modifier CI uses a depth-aware `base + depth × per-depth`
 regression budget instead of one global loose ratio.
 

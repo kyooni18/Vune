@@ -19,6 +19,17 @@ The first workspace architecture slice is now implemented:
   `.muse.ts` raw HTML lowers to those graph `Element` nodes, including
   typed standard attributes/events and extensible `aria-*`, `data-*`, and
   custom-element attributes.
+- The core graph concentration point is split behind stable internal modules
+  for graph types/symbols, nodes, immutable modifiers, identity-aware traversal,
+  environment helpers, and initializer semantics; the public graph barrel stays
+  unchanged and focused modules are covered by boundary tests.
+- Type-checker-backed compiler specialization is isolated in its own internal
+  pass for static modifier chains and imported View calls, while unresolved or
+  ambiguous calls retain the dynamic fallback contract.
+- The Web renderer is split into shared serialization/DOM contracts, SSR,
+  DOM props, hydration, and live DOM reconciliation modules; its public barrel
+  remains unchanged and the existing lazy, GeometryReader, hydration, and
+  identity tests cover the split.
 - `editors/vscode` provides `.muse.ts` Muse/HTML highlighting, diagnostics,
   formatting, completion, hover, definition, rename, and optional `.vue`
   provider coverage.
@@ -115,10 +126,12 @@ is settled:
   must stay aligned with the function DSL before it is treated as the primary
   authoring path.
 - Modifier performance is benchmarked against raw React styles at 100, 1,000,
-  and 10,000 elements with chain depths of 1, 5, 10, and 20. CI runs a smaller
-  matrix with a depth-aware regression guard; large lists and deeply modified
-  trees still establish a measurable need before Muse changes its materialization
-  strategy.
+  and 10,000 elements with chain depths of 1, 5, 10, and 20. The performance
+  suite also measures compiler transforms, State propagation, keyed DOM updates,
+  React/Vue rerenders, SSR, hydration, and retained heap. CI runs the 100/1,000
+  matrix with depth-aware and absolute regression guards; large lists and deeply
+  modified trees still establish a measurable need before Muse changes its
+  materialization strategy.
 
 ## Semantic contract
 

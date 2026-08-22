@@ -36,6 +36,48 @@ core and React surfaces. The old root API is implemented by the opt-in
 `@muse/react/legacy` surface; this keeps compatibility code inside the React
 renderer package while leaving the root package as a facade.
 
+### Core graph internals
+
+The public `@muse/core` graph barrel is intentionally thin. Its implementation
+is split into focused, renderer-neutral modules:
+
+| Module | Internal contract |
+| --- | --- |
+| `graph/types` and `graph/symbols` | Recursive graph types and stable metadata symbols |
+| `graph/environment` | Zero geometry, safe-area normalization, and class value helpers |
+| `graph/nodes` | Element, foreign-component, View host, geometry, and lazy node constructors |
+| `graph/modifiers` | Immutable modifier decoration, flattening, and modifier graph inspection |
+| `graph/renderer` | Identity-aware graph traversal through `MuseRenderer` |
+| `graph/initializers` | Declaration metadata, overload resolution, ViewBuilder, and View construction |
+
+Adapters may consume the public barrel, but these modules must remain free of
+React, Vue, and DOM imports. The barrel re-exports the same symbols so this
+structural split does not create a second public API or a second identity
+implementation.
+
+The compiler keeps its TypeScript specialization machinery separate from the
+source scanner and lowering pipeline. Its internal contracts are:
+
+| Module | Internal contract |
+| --- | --- |
+| `compiler/scanner` | Quote/comment/regex-safe source scanning, builder/raw-HTML discovery, and top-level delimiter parsing |
+| `compiler/pipeline` | Binding shorthand, closures, builder/struct lowering, HTML expression lowering, and syntax detection |
+| `compiler/specialization` | Type-checker-backed static modifier-chain and imported-View lowering |
+| `compiler/diagnostics` | Original-source syntax, TypeScript, and semantic HTML diagnostics |
+| `compiler/vite` | Vue SFC and `.muse.ts` Vite transformation orchestration |
+| `compiler/index` | Public API barrel, source maps, and language-service composition |
+
+If static type resolution is not unique, the specialization pass leaves the
+source for the dynamic runtime resolver. These modules remain renderer-neutral;
+only the Vite adapter knows how to attach the compiler to a host build.
+
+The Web adapter follows the same boundary: `web/ssr` owns deterministic HTML
+serialization, `web/props` owns DOM attributes/events/refs, `web/hydration`
+owns server-to-client activation and structural checks, and `web/dom` owns
+live reconciliation, lazy ranges, geometry measurement, and mount cleanup.
+Only `web/index` is the package entry point; these implementation modules are
+not additional authoring APIs.
+
 ## View values
 
 `Text("Hello")` in `muse` returns a frozen graph node. It is not a React or Vue

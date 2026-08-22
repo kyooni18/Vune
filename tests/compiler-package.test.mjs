@@ -210,6 +210,7 @@ test("the Vite adapter caches unchanged modules and leaves CSS to Vite", () => {
   assert.equal(first, second)
   assert.equal(plugin.transform(".card { color: red }", "/src/style.css"), null)
   assert.equal(plugin.transform("function ordinary() { return 1 }", "/src/node_modules/dependency/index.js"), null)
+  assert.equal(plugin.transform('const value = Text("Hi").padding(4)', "/workspace/packages/core/dist/advanced.js"), null)
   assert.equal(plugin.transform("function ordinary() { return 1 }", "/src/ordinary.ts"), null)
   assert.equal(plugin.transform("const pattern = /^[$A-Z_]/", "/src/ordinary.js"), null)
   assert.equal(plugin.transform('const App = () => <div className="card" />', "/src/App.tsx"), null)
@@ -237,6 +238,12 @@ VStack() { Text("Hello from Muse") }
   const script = plugin.transform('VStack() { Text("Query script") }', "/src/Counter.vue?vue&type=script&setup=true&lang.ts")
   assert.ok(script)
   assert.match(script.code, /overloadClosure\(/)
+  assert.equal(plugin.transform(`import { defineComponent as _defineComponent } from "vue"
+import { openBlock as _openBlock, createBlock as _createBlock } from "vue"
+export default _defineComponent({ setup(__props, { expose }) {
+  expose()
+  return (_ctx: any, _cache: any) => (_openBlock(), _createBlock("div"))
+} })`, "/src/Counter.vue?vue&type=script&setup=true&lang.ts"), null)
   const virtualScript = plugin.transform('const graph = () => VStack() { Text("Virtual script") }', "/src/Counter.vue?id=virtual")
   assert.ok(virtualScript)
   assert.match(virtualScript.code, /overloadClosure\(/)

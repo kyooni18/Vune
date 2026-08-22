@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { pathToFileURL } from "node:url"
 import { JSDOM } from "jsdom"
+import ts from "typescript"
 import { BindingValue, Element, ForEach, ForeignComponent, State, Toggle, defineView, initializer } from "../packages/core/dist/index.js"
+import { compileMuseFile } from "../packages/compiler/dist/index.js"
 
 function installDOM() {
   const dom = new JSDOM("<!doctype html><html><body><main id=app></main></body></html>", { url: "http://localhost/" })
@@ -68,6 +71,48 @@ async function mountLiveValue(renderer, value) {
   }
 }
 
+async function compiledSharedGraph() {
+  const source = `import { Button, State, Text, VStack } from "muse"
+struct SharedCounter: View {
+  @State var count = State(0)
+  var body: some View {
+    VStack() {
+      Text(\`Count: \${count.value}\`)
+      Button("Increment") { count.value += 1 }
+    }
+  }
+}
+export const create = () => SharedCounter()`
+  const result = compileMuseFile(source, "shared-counter.muse.ts")
+  const museUrl = pathToFileURL(new URL("../packages/muse/dist/index.js", import.meta.url).pathname).href
+  const coreUrl = pathToFileURL(new URL("../packages/core/dist/index.js", import.meta.url).pathname).href
+  const code = ts.transpileModule(result.code, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+    .replaceAll('from "muse"', `from "${museUrl}"`)
+    .replaceAll('from "@muse/core"', `from "${coreUrl}"`)
+  return import(`data:text/javascript,${encodeURIComponent(code)}`)
+}
+
+test("one compiled .muse.ts graph behaves identically in React, Vue, and Web", async () => {
+  const shared = await compiledSharedGraph()
+  for (const renderer of ["react", "vue", "web"]) {
+    const restore = installDOM()
+    try {
+      const mounted = await mountLiveValue(renderer, shared.create())
+      const button = document.querySelector("button")
+      assert.ok(button)
+      assert.equal(button.textContent, "Increment")
+      assert.match(document.body.textContent ?? "", /Count: 0/)
+      await mounted.dispatch(() => button.dispatchEvent(new window.MouseEvent("click", { bubbles: true })))
+      assert.match(document.body.textContent ?? "", /Count: 1/)
+      await mounted.unmount()
+    } finally {
+      restore()
+    }
+  }
+})
+
 test("the same live state, event, ref, and DOM identity contract holds in React, Vue, and Web", async () => {
   for (const renderer of ["react", "vue", "web"]) {
     const restore = installDOM()
@@ -128,6 +173,43 @@ test("the same foreign component event, ref, state, and identity contract holds 
   }
 })
 
+test("raw HTML attributes, custom CSS properties, children, events, and refs stay identical across renderers", async () => {
+  for (const renderer of ["react", "vue", "web"]) {
+    const restore = installDOM()
+    try {
+      const count = State(0)
+      let reference
+      const Host = defineView("ConformanceRawHtmlHost", {
+        initializers: [initializer("Host()", args => args.length === 0)],
+        body: () => Element("section", {
+          class: "raw-card",
+          "aria-label": "raw content",
+          "data-kind": "custom",
+          style: { "--muse-accent": "rebeccapurple", color: "red" },
+          onclick: () => { count.value += 1 },
+          ref: value => { reference = value },
+        }, Element("strong", null, "Raw"), ` Count: ${count.value}`),
+      })
+      const mounted = await mountLiveValue(renderer, Host())
+      const section = document.querySelector("section[data-kind=custom]")
+      assert.ok(section)
+      assert.equal(section.className, "raw-card")
+      assert.equal(section.getAttribute("aria-label"), "raw content")
+      assert.equal(section.textContent, "Raw Count: 0")
+      assert.equal(section.style.getPropertyValue("--muse-accent"), "rebeccapurple")
+      assert.equal(reference, section)
+      await mounted.dispatch(() => section.dispatchEvent(new window.MouseEvent("click", { bubbles: true })))
+      assert.equal(count.value, 1)
+      assert.equal(document.querySelector("section[data-kind=custom]"), section)
+      assert.equal(section.textContent, "Raw Count: 1")
+      await mounted.unmount()
+      assert.equal(reference, null)
+    } finally {
+      restore()
+    }
+  }
+})
+
 test("the same writable Binding control contract holds in React, Vue, and Web", async () => {
   for (const renderer of ["react", "vue", "web"]) {
     const restore = installDOM()
@@ -180,9 +262,17 @@ test("the same keyed State lifetime contract holds across all live renderers", a
       assert.equal(first.textContent, "a:1")
       await mounted.dispatch(() => { fixture.items.value = [fixture.items.value[1], fixture.items.value[0]] })
       assert.deepEqual([...document.querySelectorAll("button")].map(button => button.textContent), ["b:0", "a:1"])
-      await mounted.dispatch(() => { fixture.items.value = fixture.items.value.filter(item => item.id !== "a") })
-      await mounted.dispatch(() => { fixture.items.value = [{ id: "a" }, ...fixture.items.value] })
-      assert.equal(document.querySelector('[data-row="a"]')?.textContent, "a:0")
+      await mounted.dispatch(() => { fixture.items.value = [{ id: "b" }, { id: "c" }, { id: "a" }] })
+      assert.deepEqual([...document.querySelectorAll("button")].map(button => button.textContent), ["b:0", "c:0", "a:1"])
+      const inserted = document.querySelector('[data-row="c"]')
+      assert.ok(inserted)
+      await mounted.dispatch(() => inserted.dispatchEvent(new window.MouseEvent("click", { bubbles: true })))
+      await mounted.dispatch(() => { fixture.items.value = [{ id: "c" }, { id: "a" }] })
+      await mounted.dispatch(() => { fixture.items.value = [{ id: "b" }, { id: "c" }, { id: "a" }] })
+      assert.deepEqual([...document.querySelectorAll("button")].map(button => button.textContent), ["b:0", "c:1", "a:1"])
+      await mounted.dispatch(() => { fixture.items.value = [{ id: "b" }, { id: "c" }] })
+      await mounted.dispatch(() => { fixture.items.value = [{ id: "b" }, { id: "c" }, { id: "a" }] })
+      assert.deepEqual([...document.querySelectorAll("button")].map(button => button.textContent), ["b:0", "c:1", "a:0"])
       await mounted.unmount()
     } finally {
       restore()

@@ -28,7 +28,7 @@ export const Toggle = defineBuiltinView<ToggleProps>(
     viewElement("input", {
       type: "checkbox",
       checked: Boolean(isOn.value),
-      onChange(event: { target?: { checked?: boolean } }) { isOn.value = Boolean(event.target?.checked) },
+      onChange(event: { target?: { checked?: boolean } }) { isOn.value = Boolean(event.target ? event.target.checked : undefined) },
     }),
     Text(title),
   ]),
@@ -50,7 +50,7 @@ export const TextField = defineBuiltinView<TextFieldProps>(
     type: "text",
     value: value.value,
     placeholder,
-    onInput(event: { target?: { value?: string } }) { value.value = String(event.target?.value ?? "") },
+    onInput(event: { target?: { value?: string } }) { value.value = String(event.target && event.target.value !== undefined ? event.target.value : "") },
   }),
 ) as TypedViewConstructor<TextFieldProps, TextFieldCall>
 
@@ -73,7 +73,7 @@ export const Slider = defineBuiltinView<SliderProps>(
     min,
     max,
     step,
-    onInput(event: { target?: { value?: string } }) { value.value = Number(event.target?.value ?? 0) },
+    onInput(event: { target?: { value?: string } }) { value.value = Number(event.target && event.target.value !== undefined ? event.target.value : 0) },
   }),
 ) as TypedViewConstructor<SliderProps, SliderCall>
 

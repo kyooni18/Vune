@@ -1,5 +1,5 @@
 import { actionClosure } from "./closures.js"
-import { isViewNode } from "./graph.js"
+import { isViewNode } from "./graph/nodes.js"
 
 declare const stateBrand: unique symbol
 declare const bindingBrand: unique symbol

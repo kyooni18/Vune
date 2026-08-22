@@ -87,7 +87,7 @@ interface TextAreaCall { (value: BindingRef<string>, placeholder?: string): Modi
 export const TextArea = defineBuiltinView<TextAreaProps>(
   "TextArea",
   [initializer("TextArea(value, placeholder?)", args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || typeof args[1] === "string"), args => ({ value: args[0] as BindingRef<string>, placeholder: args[1] as string | undefined }), [initializerKinds.binding(true, "value", "string"), initializerKinds.value(false, "placeholder", undefined, "string")])],
-  ({ value, placeholder }) => viewElement("textarea", { "data-muse": "TextArea", value: value.value, placeholder, onInput(event: { target?: { value?: string } }) { value.value = String(event.target?.value ?? "") } }),
+  ({ value, placeholder }) => viewElement("textarea", { "data-muse": "TextArea", value: value.value, placeholder, onInput(event: { target?: { value?: string } }) { value.value = String(event.target && event.target.value !== undefined ? event.target.value : "") } }),
 ) as TypedViewConstructor<TextAreaProps, TextAreaCall>
 
 export interface PickerOption<T extends string | number> { readonly label: string; readonly value: T; readonly disabled?: boolean }
@@ -96,7 +96,7 @@ interface PickerCall { <T extends string | number>(value: BindingRef<T>, options
 export const Picker = defineBuiltinView<PickerProps>(
   "Picker",
   [initializer("Picker(value, options)", args => args.length === 2 && isBinding(args[0]) && Array.isArray(args[1]), args => ({ value: args[0] as BindingRef<string | number>, options: args[1] as readonly PickerOption<string | number>[] }), [initializerKinds.binding(true, "value", "string | number"), initializerKinds.value(true, "options", undefined, "array")])],
-  ({ value, options }) => viewElement("select", { "data-muse": "Picker", value: value.value, onChange(event: { target?: { value?: string } }) { const option = options.find(item => String(item.value) === event.target?.value); if (option) value.value = option.value } }, options.map(option => viewElement("option", { value: option.value, disabled: option.disabled }, [option.label]))),
+  ({ value, options }) => viewElement("select", { "data-muse": "Picker", value: value.value, onChange(event: { target?: { value?: string } }) { const selectedValue = event.target ? event.target.value : undefined; const option = options.find(item => String(item.value) === selectedValue); if (option) value.value = option.value } }, options.map(option => viewElement("option", { value: option.value, disabled: option.disabled }, [option.label]))),
 ) as TypedViewConstructor<PickerProps, PickerCall>
 
 export interface ProgressViewOptions { readonly label?: string; readonly max?: number }

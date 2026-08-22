@@ -1,4 +1,4 @@
-import type { Length } from "./graph.js"
+import type { Length } from "./graph/types.js"
 
 export type FrameAlignment = "center" | "leading" | "trailing" | "top" | "bottom" | "topLeading" | "topTrailing" | "bottomLeading" | "bottomTrailing"
 

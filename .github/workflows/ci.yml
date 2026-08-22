@@ -30,6 +30,8 @@ jobs:
           ${{ matrix.react == '18.3.1' && '@types/react@18.3.23 @types/react-dom@18.3.7' || '@types/react@19.2.18 @types/react-dom@19.2.4' }}
       - run: pnpm test
       - run: pnpm run demo:build
+      - run: pnpm run demo:vue:build
+      - run: pnpm run demo:web:build
 
   browser:
     name: Browser interaction
@@ -47,17 +49,27 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - name: Start demo server
         run: pnpm exec vite --config examples/vite.config.ts --host 127.0.0.1 > muse-vite.log 2>&1 &
-      - name: Wait for demo server
+      - name: Start Vue demo server
+        run: pnpm exec vite --config examples/vue.vite.config.ts --host 127.0.0.1 --port 5175 > muse-vue-vite.log 2>&1 &
+      - name: Start Web demo server
+        run: pnpm exec vite --config examples/web.vite.config.ts --host 127.0.0.1 --port 5174 > muse-web-vite.log 2>&1 &
+      - name: Wait for renderer demo servers
         run: |
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:5173/ >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:5173/ >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5175/vue-index.html >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5174/web-index.html >/dev/null; then
               exit 0
             fi
             sleep 1
           done
           cat muse-vite.log
+          cat muse-vue-vite.log
+          cat muse-web-vite.log
           exit 1
       - run: MUSE_BROWSER_URL=http://127.0.0.1:5173 pnpm run test:browser
+      - run: MUSE_VUE_BROWSER_URL=http://127.0.0.1:5175/vue-index.html pnpm run test:browser:vue
+      - run: MUSE_WEB_BROWSER_URL=http://127.0.0.1:5174/web-index.html pnpm run test:browser:web
 
   benchmark:
     name: Modifier benchmark
@@ -73,3 +85,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run benchmark:modifiers:ci
+      - name: Run performance benchmark
+        run: pnpm run benchmark:performance:ci
