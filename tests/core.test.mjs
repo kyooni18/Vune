@@ -71,6 +71,33 @@ test("@muse/core keeps View identity storage renderer-independent", () => {
   assert.equal(store.getOrCreate(identity, () => ++creations), 2)
 })
 
+test("@muse/core makes View type changes explicit remount boundaries", () => {
+  const First = defineView("FirstBranch", { initializers: [initializer("FirstBranch()", args => args.length === 0)], body: () => CoreText("first") })
+  const Second = defineView("SecondBranch", { initializers: [initializer("SecondBranch()", args => args.length === 0)], body: () => CoreText("second") })
+  const identities = []
+  const renderer = {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { children } },
+    value(value) { return value },
+    modifier(content) { return content },
+    view(_node, _render, identity) { identities.push(identity); return identity },
+  }
+  renderViewNode(First(), renderer)
+  renderViewNode(First(), renderer)
+  renderViewNode(Second(), renderer)
+  renderViewNode(First().keyed("row"), renderer)
+  assert.deepEqual(identities[0], identities[1])
+  assert.notDeepEqual(identities[0], identities[2])
+  assert.match(identities[0].join("/"), /view\/FirstBranch$/)
+  assert.match(identities[3].join("/"), /key\/row\/view\/FirstBranch$/)
+
+  const SameNameA = defineView("SameName", { name: "SameName.A", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("a") })
+  const SameNameB = defineView("SameName", { name: "SameName.B", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("b") })
+  renderViewNode(SameNameA(), renderer)
+  renderViewNode(SameNameB(), renderer)
+  assert.notDeepEqual(identities.at(-2), identities.at(-1))
+})
+
 test("@muse/core owns built-in and custom View graphs without a renderer", () => {
   const card = defineView("Card", {
     initializers: [initializer(

@@ -44,6 +44,20 @@ import {
   viewNodeOf,
 } from '../dist/index.js'
 import { createMuseLanguageService, createMuseTypeScriptLanguageService, diagnoseMuseSource, formatMuseSource, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseBuilderSyntax, transformMuseStructSyntax } from '../dist/compiler/index.js'
+import {
+  Action as CoreAction,
+  Binding as CoreBinding,
+  ForEach as CoreForEach,
+  State as CoreState,
+  Text as CoreText,
+  defineView as CoreDefineView,
+  initializer as CoreInitializer,
+  initializerKinds as CoreInitializerKinds,
+  renderViewNode as CoreRenderViewNode,
+  resolveBuilderClosure as CoreResolveBuilderClosure,
+  resolveInitializer as CoreResolveInitializer,
+  viewBuilderClosure as CoreViewBuilderClosure,
+} from '../packages/core/dist/index.js'
 
 test('struct syntax lowers to initializer metadata, a body, and instance State', () => {
   const output = transformMuseStructSyntax(`
@@ -506,6 +520,39 @@ test('initializer resolution scores declared value types instead of using regist
   assert.equal(resolveInitializer(Overloaded, [42]).initializer.signature, 'Overloaded(number)')
   assert.throws(() => resolveInitializer(Overloaded, [true]), /No matching initializer for Overloaded/)
   assert.equal(resolveInitializer(Text, [undefined]).args.length, 1)
+})
+
+test('the declared resolver handles State, Binding, generic Content, and Action roles', () => {
+  const number = CoreState(3)
+  const title = CoreState('before')
+  const Probe = CoreDefineView('ResolverProbe', {
+    genericParameters: 'Content: View',
+    initializers: [
+      CoreInitializer('ResolverProbe(State<number>)', () => false, args => ({ value: args[0] }), [CoreInitializerKinds.value(true, 'value', undefined, 'State<number>')]),
+      CoreInitializer('ResolverProbe(Binding<string>)', () => false, args => ({ value: args[0] }), [CoreInitializerKinds.value(true, 'value', undefined, 'Binding<string>')]),
+      CoreInitializer('ResolverProbe(@Action action)', () => false, args => ({ action: args[0] }), [CoreInitializerKinds.action(true, 'action', '() => void')]),
+      CoreInitializer('ResolverProbe(@ViewBuilder content)', () => false, args => ({ content: CoreResolveBuilderClosure(args[0]) }), [CoreInitializerKinds.viewBuilder(true, 'content', '() => Content')]),
+    ],
+    body: props => props.content ?? CoreText(String(props.value?.value ?? 'action')),
+  })
+
+  assert.match(CoreResolveInitializer(Probe, [number]).initializer.signature, /State<number>/)
+  assert.match(CoreResolveInitializer(Probe, [CoreBinding(title)]).initializer.signature, /Binding<string>/)
+  assert.match(CoreResolveInitializer(Probe, [CoreAction(() => undefined)]).initializer.signature, /@Action/)
+  assert.match(CoreResolveInitializer(Probe, [CoreViewBuilderClosure(() => CoreText('content'))]).initializer.signature, /@ViewBuilder/)
+})
+
+test('ForEach uses the same View initializer boundary for State-backed collections', () => {
+  const items = CoreState([{ id: 'a' }, { id: 'b' }])
+  assert.equal(CoreForEach.viewType.name, 'ForEach')
+  const value = CoreForEach(items, item => CoreText(item.id))
+  const rendered = CoreRenderViewNode(value, {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { children } },
+    value(value) { return value },
+    modifier(content) { return content },
+  })
+  assert.deepEqual(rendered.children.map(child => child.children[0]), ['a', 'b'])
 })
 
 test('Binding is a writable lens and modifiers produce an immutable graph', () => {

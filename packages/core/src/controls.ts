@@ -87,7 +87,7 @@ export const Image = defineBuiltinView<ImageProps>(
     "Image(source, options?)",
     args => args.length >= 1 && args.length <= 2 && (typeof args[0] === "string" || typeof args[0] === "function") && (args[1] === undefined || isObject(args[1])),
     args => ({ source: String(resolveValue(args[0] as Value<string>)), ...(isObject(args[1]) ? args[1] : {}) }),
-    [initializerKinds.value(true, "source", undefined, "string"), initializerKinds.value(false, "options", ["alt"], "object")],
+    [initializerKinds.value(true, "source", undefined, "Value<string>"), initializerKinds.value(false, "options", ["alt"], "object")],
   )],
   ({ source, alt }) => viewElement("img", { src: source, alt }),
 ) as TypedViewConstructor<ImageProps, ImageCall>
@@ -101,7 +101,7 @@ export const Link = defineBuiltinView<LinkProps>(
     "Link(label, href)",
     args => args.length === 2 && typeof args[0] === "string" && (typeof args[1] === "string" || typeof args[1] === "function"),
     args => ({ label: args[0] as string, href: String(resolveValue(args[1] as Value<string>)) }),
-    [initializerKinds.value(true, "label", undefined, "string"), initializerKinds.value(true, "href", undefined, "string")],
+    [initializerKinds.value(true, "label", undefined, "string"), initializerKinds.value(true, "href", undefined, "Value<string>")],
   )],
   ({ label, href }) => viewElement("a", { href }, [Text(label)]),
 ) as TypedViewConstructor<LinkProps, LinkCall>

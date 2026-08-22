@@ -23,8 +23,11 @@ import {
   Binding,
   classNameOf,
   collectStateReads,
+  defineView,
   edgeInsetsFromCss,
   frameStyle,
+  initializer,
+  initializerKinds,
   renderViewNode,
   subscribeState,
   viewIdentityKey,
@@ -128,6 +131,9 @@ const renderer: MuseRenderer<VNodeChild> = {
     return value === null || value === undefined || value === false ? null : value as VNodeChild
   },
   modifier(content, modifier) {
+    if (modifier.name === "frame") {
+      return h("div", modifierProps(modifier), [content])
+    }
     return content && typeof content === "object" && "type" in content
       ? cloneVNode(content as VNode, modifierProps(modifier))
       : h(Fragment, modifierProps(modifier), [content])
@@ -299,7 +305,17 @@ export function Component(
 
 /** Adapt a Vue component definition into a Muse-callable, preserving its Vue prop surface. */
 export function vueComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
-  const View = ((...args: VueComponentArguments<C>) => Component(type, ...args)) as VueComponentView<C>
+  const name = typeof type === "function" && type.name ? type.name : "VueComponent"
+  const View = defineView(name, {
+    initializers: [initializer(
+      "VueComponent(props?)",
+      args => args.length <= 1 && (args.length === 0 || (typeof args[0] === "object" && args[0] !== null && !Array.isArray(args[0]))),
+      args => ({ props: args[0] ?? null }),
+      [initializerKinds.value(false, "props", undefined, "object")],
+    )],
+    intrinsic: true,
+    body: ({ props }: { readonly props: Record<string, unknown> | null }) => Component(type, (props ?? {}) as MuseVueComponentProps<C>),
+  }) as unknown as VueComponentView<C>
   Object.defineProperty(View, "component", { configurable: false, enumerable: false, value: type })
   return View
 }

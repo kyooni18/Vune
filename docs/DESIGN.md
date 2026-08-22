@@ -20,6 +20,31 @@ React, Vue, and direct DOM adapters own host measurement and feed the proxy back
 into the same body, including normalized CSS safe-area insets; renderer-less
 traversal and SSR use zero geometry.
 
+### Web layout contract
+
+The web layout contract is intentionally CSS-native and renderer-independent:
+
+- `VStack` and `HStack` are full-width flex containers. Their alignment controls
+  the cross axis and `spacing` becomes `gap`.
+- `ZStack` is a full-width grid container. Its alignment maps to grid placement
+  and its children remain independent layout items.
+- `Spacer` grows on the parent flex axis, never shrinks below its minimum, and
+  does not impose a fixed coordinate.
+- `frame` creates a grid layout host. Size limits apply to the host and its
+  alignment places the content inside it. A frame applied around a component
+  therefore does not depend on that component forwarding `style` props.
+- `ScrollView` owns overflow only for its declared axis. Other overflow stays
+  clipped unless the host's ordinary CSS changes it explicitly.
+- `SafeArea` maps selected edges to `env(safe-area-inset-*)`; it does not change
+  the child's coordinate system or merge Muse state with browser layout state.
+- `GeometryReader` reports the measured host box and normalized safe-area insets.
+  SSR and renderer-less evaluation use zero geometry and must remain deterministic.
+
+Arbitrary CSS remains host CSS. A `.style()` modifier before `frame` styles the
+content; a `.style()` modifier after `frame` styles the frame host. External
+stylesheets, CSS Modules, Sass, PostCSS, and Tailwind can target either element
+through ordinary selectors without a Muse-specific preprocessing step.
+
 ## Renderer boundary
 
 `Muse View !== React Element` and `Muse View !== Vue VNode`. A call such as

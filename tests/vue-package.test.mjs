@@ -9,6 +9,7 @@ import {
   Text,
   VStack,
 } from "../packages/core/dist/index.js"
+import { initializersOf, namedArguments } from "../packages/core/dist/index.js"
 import {
   Component,
   MuseView,
@@ -38,8 +39,12 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   const html = await renderToString(createSSRApp({ render: () => render(value) }))
   assert.match(html, /<strong>Vue component<\/strong>/)
   const MuseBadge = vueComponent(Badge)
+  assert.equal(MuseBadge({ label: "Graph Vue" }).kind, "element")
   const adaptedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge({ label: "Adapted Vue" })) }))
   assert.match(adaptedHtml, /<strong>Adapted Vue<\/strong>/)
+  assert.equal(initializersOf(MuseBadge).length, 1)
+  const namedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge(namedArguments({ label: "Named Vue" }))) }))
+  assert.match(namedHtml, /<strong>Named Vue<\/strong>/)
 
   const Panel = defineComponent({
     setup(_props, { slots }) {

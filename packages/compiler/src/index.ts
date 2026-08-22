@@ -142,10 +142,13 @@ function skipTrivia(source: string, index: number): number {
 
 function matching(source: string, open: number, left: string, right: string): number {
   let depth = 0
+  let steps = 0
   for (let cursor = open; cursor < source.length; cursor += 1) {
+    if (++steps > source.length + 1) throw syntaxError(`Unable to scan ${left} block in Muse source`, open)
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === left) depth += 1
     if (character === right) {
       depth -= 1
@@ -162,10 +165,13 @@ function identifierAt(source: string, start: number): { name: string; end: numbe
 
 function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCall | undefined {
   const excluded = new Set(["if", "for", "while", "switch", "catch", "function"])
+  let steps = 0
   for (let cursor = from; cursor < source.length; cursor += 1) {
+    if (++steps > source.length + 1) throw syntaxError("Unable to scan builder expressions in Muse source", from)
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     const identifier = identifierAt(source, cursor)
     if (!identifier) continue
     cursor = identifier.end - 1
@@ -290,9 +296,12 @@ function rawHtmlAt(source: string, start: number): RawHtmlCall | undefined {
       cursor = commentEnd + 3
       continue
     }
-    if (source.startsWith(`</${openingName.name}`, cursor)) {
-      const end = source.indexOf(">", cursor + openingName.name.length + 2)
-      if (end < 0) return undefined
+    if (source[cursor] === "<" && source[cursor + 1] === "/") {
+      const closing = /^<\/([A-Za-z][A-Za-z0-9:._-]*)([^>]*)>/.exec(source.slice(cursor))
+      if (!closing) throw syntaxError("Unclosed raw HTML closing tag in Muse source", cursor)
+      if (closing[1] !== openingName.name) throw syntaxError(`Mismatched raw HTML closing tag </${closing[1]}>; expected </${openingName.name}>`, cursor)
+      if (closing[2].trim().length > 0) throw syntaxError("Raw HTML closing tags cannot have attributes", cursor)
+      const end = cursor + closing[0].length - 1
       return {
         start,
         end: end + 1,
@@ -345,7 +354,7 @@ function validateRawHtmlSyntax(source: string): void {
       cursor = html.end - 1
       continue
     }
-    if (source.indexOf(">", cursor) >= 0) throw syntaxError("Unclosed raw HTML element in Muse source", cursor)
+    throw syntaxError("Unclosed raw HTML element in Muse source", cursor)
   }
 }
 
@@ -359,6 +368,7 @@ function splitTopLevel(source: string, separator = ","): string[] {
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === "<") {
       const html = rawHtmlAt(source, cursor)
       if (html) { cursor = html.end - 1; continue }
@@ -389,6 +399,7 @@ function splitStatements(source: string): string[] {
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === "<") {
       const html = rawHtmlAt(source, cursor)
       if (html) { cursor = html.end - 1; continue }
@@ -415,17 +426,23 @@ function topLevelColon(source: string): number {
   let parens = 0
   let brackets = 0
   let braces = 0
+  let ternary = 0
   for (let cursor = 0; cursor < source.length; cursor += 1) {
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === "(") parens += 1
     else if (character === ")") parens -= 1
     else if (character === "[") brackets += 1
     else if (character === "]") brackets -= 1
     else if (character === "{") braces += 1
     else if (character === "}") braces -= 1
-    else if (character === ":" && parens === 0 && brackets === 0 && braces === 0) return cursor
+    else if (parens === 0 && brackets === 0 && braces === 0 && character === "?" && source[cursor + 1] !== ".") ternary += 1
+    else if (character === ":" && parens === 0 && brackets === 0 && braces === 0) {
+      if (ternary > 0) ternary -= 1
+      else return cursor
+    }
   }
   return -1
 }
@@ -440,13 +457,25 @@ function lowerShorthand(source: string): string {
       cursor = end
       continue
     }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) {
+      const end = skipComment(source, cursor)
+      result += source.slice(cursor, end)
+      cursor = end
+      continue
+    }
+    if (character === "/" && regexCanStart(source, cursor)) {
+      const end = skipRegex(source, cursor)
+      result += source.slice(cursor, end)
+      cursor = end
+      continue
+    }
     if (character === "$" && /^[A-Za-z_$][A-Za-z0-9_$]*/.test(source.slice(cursor + 1))) {
       const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(cursor + 1))!
       result += `Binding(${match[0]})`
       cursor += match[0].length + 1
       continue
     }
-    if (character === "." && /[A-Za-z_$]/.test(source[cursor + 1] ?? "") && !/[A-Za-z0-9_$)\]}.?]/.test(source[cursor - 1] ?? "")) {
+    if (character === "." && /[A-Za-z_$]/.test(source[cursor + 1] ?? "") && !/[A-Za-z0-9_$)\]}.?/\\/]/.test(source[cursor - 1] ?? "")) {
       const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(cursor + 1))!
       result += JSON.stringify(match[0])
       cursor += match[0].length + 1
@@ -458,14 +487,29 @@ function lowerShorthand(source: string): string {
   return result
 }
 
+function containsAwaitKeyword(source: string): boolean {
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
+    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    const identifier = identifierAt(source, cursor)
+    if (!identifier) continue
+    if (identifier.name === "await") return true
+    cursor = identifier.end - 1
+  }
+  return false
+}
+
 function lowerClosure(value: string): string {
   const source = value.trim()
   if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source)
   const body = source.slice(1, -1).trim()
   const lowered = lowerStatements(body)
-  const action = /\b(const|let|var|return|throw)\b/.test(body)
+  const asynchronous = containsAwaitKeyword(body)
+  const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
-  return `overloadClosure(${builder}, () => {${lowerRange(body)}})`
+  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body)}})`
 }
 
 function lowerArguments(source: string): string {
@@ -526,9 +570,10 @@ function lowerAstClosure(body: string, parameter?: string): string {
     closure: (nestedBody, nestedParameter) => lowerAstClosure(nestedBody, nestedParameter),
   }).join(", ")
   if (parameter) return `(${parameter}) => [${lowered}]`
-  const action = /\b(const|let|var|return|throw)\b/.test(body)
+  const asynchronous = containsAwaitKeyword(body)
+  const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
-  return `overloadClosure(${builder}, () => {${lowerRange(body)}})`
+  return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body)}})`
 }
 
 function lowerBuilder(call: BuilderCall, source: string): string {
@@ -544,7 +589,9 @@ function lowerBuilder(call: BuilderCall, source: string): string {
 function lowerRange(source: string): string {
   let output = ""
   let cursor = 0
+  let iterations = 0
   while (cursor < source.length) {
+    if (++iterations > source.length + 1) throw syntaxError("Muse lowering did not advance past a builder expression", cursor)
     const call = findBuilder(source, cursor)
     const html = findRawHtml(source, cursor)
     if (!call && !html) break
@@ -617,69 +664,130 @@ function topLevelEquals(source: string): number {
   return -1
 }
 
-function parseStructFields(source: string): StructField[] {
-  const fields: StructField[] = []
-  const pattern = /(?:^|[;\n])\s*(?:(@State|@Binding)\s+)?(?:private\s+|public\s+|internal\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([^=\n;]+))?(?:\s*=\s*([^\n;]+))?/g
-  for (const match of source.matchAll(pattern)) {
-    const name = match[2]
-    if (fields.some(field => field.name === name)) continue
-    fields.push({
-      name,
-      kind: match[1] === "@State" ? "state" : match[1] === "@Binding" ? "binding" : "value",
-      type: match[3]?.trim(),
-      defaultValue: match[4]?.trim(),
-    })
-  }
-  return fields
+interface StructInitializerPlan {
+  readonly parameters: readonly StructParameter[]
+  readonly assignments: ReadonlyMap<string, string>
+  readonly delegation?: readonly string[]
 }
 
-interface StructInitializerSource {
-  readonly parameterSource: string
-  readonly bodySource: string
+function structInitializerPlan(parameterSource: string, bodySource: string): StructInitializerPlan {
+  const parameters = splitTopLevel(parameterSource).filter(Boolean).map(structParameter)
+  const assignments = new Map<string, string>()
+  for (const match of bodySource.matchAll(/self\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)) assignments.set(match[1], match[2].trim())
+  const delegationMatch = /\bself\.init\s*\(/.exec(bodySource)
+  if (!delegationMatch) return { parameters, assignments }
+  const open = bodySource.indexOf("(", delegationMatch.index)
+  const close = matching(bodySource, open, "(", ")")
+  return { parameters, assignments, delegation: splitTopLevel(bodySource.slice(open + 1, close)).filter(Boolean) }
 }
 
-function structInitializers(body: string): StructInitializerSource[] {
-  const result: StructInitializerSource[] = []
-  const pattern = /\binit\s*\(/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(body))) {
-    const open = body.indexOf("(", match.index)
-    const close = matching(body, open, "(", ")")
-    const brace = skipTrivia(body, close + 1)
-    if (body[brace] !== "{") throw new SyntaxError("Struct init must have a body")
-    const braceClose = matching(body, brace, "{", "}")
-    result.push({ parameterSource: body.slice(open + 1, close), bodySource: body.slice(brace + 1, braceClose) })
-    pattern.lastIndex = braceClose + 1
+function structArgument(source: string): { readonly label?: string; readonly value: string } {
+  const colon = topLevelColon(source)
+  if (colon < 0) return { value: source.trim() }
+  return { label: source.slice(0, colon).trim(), value: source.slice(colon + 1).trim() }
+}
+
+function delegatedParameterValues(parameters: readonly StructParameter[], arguments_: readonly string[]): Map<string, string> | undefined {
+  const values = new Map<string, string>()
+  const used = new Set<number>()
+  let nextPositional = 0
+  for (const source of arguments_) {
+    const argument = structArgument(source)
+    let index = argument.label === undefined
+      ? (() => {
+          while (used.has(nextPositional)) nextPositional += 1
+          return nextPositional
+        })()
+      : parameters.findIndex(parameter => parameter.label === argument.label || parameter.name === argument.label)
+    if (index < 0 || index >= parameters.length || used.has(index)) return undefined
+    used.add(index)
+    if (argument.label === undefined) nextPositional = index + 1
+    values.set(parameters[index].name, argument.value)
   }
+  for (let index = 0; index < parameters.length; index += 1) {
+    const parameter = parameters[index]
+    if (!values.has(parameter.name)) {
+      if (parameter.required) return undefined
+      values.set(parameter.name, parameter.defaultValue ?? "undefined")
+    }
+  }
+  return values
+}
+
+function findDelegatedInitializer(plans: readonly StructInitializerPlan[], arguments_: readonly string[], excludedIndex: number): { plan: StructInitializerPlan; values: Map<string, string> } | undefined {
+  for (let index = 0; index < plans.length; index += 1) {
+    if (index === excludedIndex) continue
+    const plan = plans[index]
+    const values = delegatedParameterValues(plan.parameters, arguments_)
+    if (values) return { plan, values }
+  }
+  return undefined
+}
+
+function substituteStructParameters(expression: string, values: ReadonlyMap<string, string>): string {
+  let result = expression
+  for (const [name, value] of values) result = result.replace(new RegExp(`\\b${name}\\b`, "g"), `(${value})`)
   return result
 }
 
-function structInitializer(name: string, parameterSource: string, bodySource: string, fields: StructField[]): string {
-  const parameters = splitTopLevel(parameterSource).filter(Boolean).map(structParameter)
-  const checks = parameters.map((parameter, index) => parameter.kind === "value"
+function resolvedStructFields(
+  index: number,
+  plans: readonly StructInitializerPlan[],
+  fields: readonly StructField[],
+  stack = new Set<number>(),
+): Map<string, string> {
+  if (stack.has(index)) return new Map()
+  const nextStack = new Set(stack).add(index)
+  const plan = plans[index]
+  const values = new Map<string, string>()
+  if (plan.delegation) {
+    const delegated = findDelegatedInitializer(plans, plan.delegation, index)
+    if (delegated) {
+      const targetIndex = plans.indexOf(delegated.plan)
+      const targetFields = resolvedStructFields(targetIndex, plans, fields, nextStack)
+      for (const [field, expression] of targetFields) values.set(field, substituteStructParameters(expression, delegated.values))
+    }
+  }
+  for (const [field, expression] of plan.assignments) values.set(field, expression)
+  for (const field of fields) {
+    if (values.has(field.name)) continue
+    const parameter = plan.parameters.find(item => item.name === field.name)
+    if (parameter) values.set(field.name, parameter.name)
+    else if (field.defaultValue !== undefined && field.kind !== "state") values.set(field.name, `(${field.defaultValue})`)
+    else values.set(field.name, "undefined")
+  }
+  return values
+}
+
+function delegatedStructInitializer(
+  name: string,
+  plan: StructInitializerPlan,
+  fields: readonly StructField[],
+  plans: readonly StructInitializerPlan[],
+  index: number,
+): string {
+  const parameters = plan.parameters
+  const assignments = resolvedStructFields(index, plans, fields)
+  const checks = parameters.map((parameter, parameterIndex) => parameter.kind === "value"
     ? "true"
     : parameter.kind === "binding"
-      ? `(args[${index}] && typeof args[${index}] === "object" && (Object.getOwnPropertyDescriptor(args[${index}], "value")?.get || Object.getOwnPropertyDescriptor(args[${index}], "value")?.set))`
-    : parameter.required
-      ? `typeof args[${index}] === "function"`
-      : `(args[${index}] === undefined || typeof args[${index}] === "function")`)
-  const assignments = new Map<string, string>()
-  for (const match of bodySource.matchAll(/self\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)) assignments.set(match[1], match[2].trim())
+      ? `(args[${parameterIndex}] && typeof args[${parameterIndex}] === "object" && (Object.getOwnPropertyDescriptor(args[${parameterIndex}], "value")?.get || Object.getOwnPropertyDescriptor(args[${parameterIndex}], "value")?.set))`
+      : parameter.required
+        ? `typeof args[${parameterIndex}] === "function"`
+        : `(args[${parameterIndex}] === undefined || typeof args[${parameterIndex}] === "function")`)
   const values = fields.map(field => {
-    const assigned = assignments.get(field.name)
+    const expression = assignments.get(field.name) ?? "undefined"
     const parameter = parameters.find(item => item.name === field.name)
-    if (assigned && parameter?.kind === "viewBuilder" && assigned === `${parameter.name}()`) return `${field.name}: resolveBuilderClosure(${parameter.name})`
-    if (assigned) return `${field.name}: ${assigned}`
-    if (parameter?.kind === "viewBuilder") return `${field.name}: resolveBuilderClosure(${field.name})`
-    if (parameter) return `${field.name}: ${field.name}`
-    if (field.defaultValue !== undefined && field.kind !== "state") return `${field.name}: (${field.defaultValue})`
-    return `${field.name}: undefined`
+    const resolved = parameter?.kind === "viewBuilder" && (expression === `${parameter.name}()` || expression === `(${parameter.name})()`)
+      ? `resolveBuilderClosure(${parameter.name})`
+      : expression
+    return `${field.name}: ${resolved}`
   })
   const signature = `${name}(${parameters.map(parameter => `${parameter.kind === "viewBuilder" ? "@ViewBuilder " : parameter.kind === "action" ? "@Action " : parameter.kind === "binding" ? "@Binding " : ""}${parameter.label ?? parameter.name}${parameter.defaultValue === undefined ? "" : ` = ${parameter.defaultValue}`}`).join(", ")})`
   const metadata = `[${parameters.map(parameter => `{ name: ${JSON.stringify(parameter.name)}, kind: ${JSON.stringify(parameter.kind)}, label: ${parameter.label ? JSON.stringify(parameter.label) : "undefined"}, required: ${parameter.required}, type: ${parameter.type ? JSON.stringify(parameter.type) : "undefined"} }`).join(", ")}]`
   const required = parameters.filter(parameter => parameter.required).length
   const maximum = parameters.length
-  return `initializer(${JSON.stringify(signature)}, args => args.length >= ${required} && args.length <= ${maximum}${checks.length ? ` && ${checks.join(" && ")}` : ""}, args => { ${parameters.map((parameter, index) => `const ${parameter.name} = args[${index}]${parameter.defaultValue ? ` === undefined ? (${parameter.defaultValue}) : args[${index}]` : ""}` ).join("; ")}; return { ${values.join(", ")} } }, ${metadata})`
+  return `initializer(${JSON.stringify(signature)}, args => args.length >= ${required} && args.length <= ${maximum}${checks.length ? ` && ${checks.join(" && ")}` : ""}, args => { ${parameters.map((parameter, parameterIndex) => `const ${parameter.name} = args[${parameterIndex}]${parameter.defaultValue ? ` === undefined ? (${parameter.defaultValue}) : args[${parameterIndex}]` : ""}` ).join("; ")}; return { ${values.join(", ")} } }, ${metadata})`
 }
 
 function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[number]): string {
@@ -689,9 +797,10 @@ function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[
       type: field.type,
       defaultValue: field.initializer,
     }))
-    const initializers = declaration.initializers.length > 0
-      ? declaration.initializers.map(item => structInitializer(declaration.name, item.parametersSource, item.bodySource, fields))
-      : [structInitializer(declaration.name, fields.filter(field => field.kind !== "state").map(field => `${field.name}: unknown${field.defaultValue === undefined ? "" : ` = ${field.defaultValue}`}`).join(", "), "", fields)]
+    const plans = declaration.initializers.length > 0
+      ? declaration.initializers.map(item => structInitializerPlan(item.parametersSource, item.bodySource))
+      : [structInitializerPlan(fields.filter(field => field.kind !== "state").map(field => `${field.name}: unknown${field.defaultValue === undefined ? "" : ` = ${field.defaultValue}`}`).join(", "), "")]
+    const initializers = plans.map((plan, index) => delegatedStructInitializer(declaration.name, plan, fields, plans, index))
     const stateFields = fields.filter(field => field.kind === "state")
     const state = stateFields.length === 0
       ? ""
@@ -786,8 +895,33 @@ function lowerNamedMuseCalls(source: string): string {
   }
 }
 
+/**
+ * Vue SFC imports are Vue component values, not callable Muse Views. Wrap the
+ * default import at the compiler boundary so a .vue value can participate in
+ * the same graph and labeled-argument path as every other View.
+ */
+function lowerVueComponentImports(source: string): string {
+  const pattern = /^([ \t]*)import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+(['"])([^'"]+\.vue)\3[ \t]*;?[ \t]*$/gm
+  const replacements: Array<{ start: number; end: number; value: string }> = []
+  let match: RegExpExecArray | null
+  let index = 0
+  while ((match = pattern.exec(source))) {
+    const importedName = match[2]
+    const adapterName = `__museVueComponent${index++}`
+    replacements.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      value: `${match[1]}import ${adapterName} from ${match[3]}${match[4]}${match[3]}\n${match[1]}const ${importedName} = __museVueComponent(${adapterName})`,
+    })
+  }
+  if (replacements.length === 0) return source
+  let result = source
+  for (const replacement of replacements.reverse()) result = result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end)
+  return `import { vueComponent as __museVueComponent } from "@muse/vue"\n${result}`
+}
+
 export function transformMuseSource(source: string, _fileName = "muse-source.ts"): string {
-  return ensureImports(lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(source)))))
+  return ensureImports(lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(lowerVueComponentImports(source))))))
 }
 
 function hasNamedMuseArguments(source: string): boolean {
@@ -841,6 +975,7 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
     for (let cursor = 0; cursor < source.length; cursor += 1) {
       if (source[cursor] === "\"" || source[cursor] === "'" || source[cursor] === "`") cursor = skipString(source, cursor) - 1
       else if (source[cursor] === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) cursor = skipComment(source, cursor) - 1
+      else if (source[cursor] === "/" && regexCanStart(source, cursor)) cursor = skipRegex(source, cursor) - 1
       else if (source[cursor] === "(") matching(source, cursor, "(", ")")
       else if (source[cursor] === "{") matching(source, cursor, "{", "}")
     }

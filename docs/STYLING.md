@@ -71,6 +71,11 @@ Text('Themed')
   })
 ```
 
+Inline style objects use checked camelCase CSS property names. Misspelled
+properties are rejected by TypeScript, while names beginning with `--` remain
+open for application-defined custom properties. Stylesheet imports continue to
+use the host CSS pipeline described below.
+
 Styles are merged in call order. A later value replaces an earlier value for the same CSS property:
 
 ```ts

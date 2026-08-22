@@ -261,6 +261,14 @@ Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `Scr
 
 `Spacer()` consumes available flex space. `Spacer(minLength)` keeps that explicit minimum when flex space becomes tight. `HStack` is full-width by default, and `.frame({ maxWidth: 'infinity' })` is available when a parent or another element should explicitly stretch.
 
+`frame` creates a renderer-neutral layout host around its content. Its width and
+height constraints apply to that host, while `alignment` places the content in
+the host (`leading`/`trailing` are horizontal, `top`/`bottom` are vertical, and
+the corner values combine both axes). This keeps alignment predictable for raw
+HTML, custom Views, React components, and Vue components, including SSR output.
+Styles applied before `frame` belong to the content; styles applied after it
+belong to the frame host.
+
 ## Simple and advanced CSS styling
 
 Use the simple modifiers for the styles that are common to most views. They stay

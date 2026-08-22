@@ -1,4 +1,17 @@
 const vscode = require('vscode')
+const path = require('path')
+
+function loadSemanticCompiler() {
+  for (const request of ['@muse/compiler', path.resolve(__dirname, '../../packages/compiler/dist/index.js')]) {
+    try {
+      const compiler = require(request)
+      if (typeof compiler.diagnoseMuseSource === 'function') return compiler
+    } catch { /* The standalone extension can still use its lexical fallback. */ }
+  }
+  return undefined
+}
+
+const semanticCompiler = loadSemanticCompiler()
 
 const VIEW_SIGNATURES = Object.freeze({
   Text: ['Text(value: string | number)'],
@@ -289,15 +302,36 @@ function diagnosticsInSource(document, source, offset) {
   return diagnostics
 }
 
+function offsetsForLines(source) {
+  const offsets = [0]
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === '\n') offsets.push(index + 1)
+  }
+  return offsets
+}
+
+function semanticDiagnostics(document, source, offset) {
+  if (!semanticCompiler) return undefined
+  const offsets = offsetsForLines(source)
+  return semanticCompiler.diagnoseMuseSource(source).map(diagnostic => {
+    const line = Math.max(1, diagnostic.line)
+    const column = Math.max(1, diagnostic.column)
+    const sourceOffset = (offsets[line - 1] ?? source.length) + column - 1
+    const start = document.positionAt(offset + sourceOffset)
+    return new vscode.Diagnostic(new vscode.Range(start, start.translate(0, 1)), diagnostic.message, vscode.DiagnosticSeverity.Error)
+  })
+}
+
 function diagnostics(document) {
   const source = document.getText()
-  if (document.languageId !== 'vue') return diagnosticsInSource(document, source, 0)
+  if (document.languageId !== 'vue') return semanticDiagnostics(document, source, 0) ?? diagnosticsInSource(document, source, 0)
   const result = []
   const script = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi
   let match
   while ((match = script.exec(source))) {
     const body = match[1]
-    result.push(...diagnosticsInSource(document, body, match.index + match[0].indexOf(body)))
+    const offset = match.index + match[0].indexOf(body)
+    result.push(...(semanticDiagnostics(document, body, offset) ?? diagnosticsInSource(document, body, offset)))
   }
   return result
 }

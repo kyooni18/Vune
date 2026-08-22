@@ -44,6 +44,12 @@ SafeArea(['top', 'left'], () => Text('Inset'))
 GeometryReader(geometry => Text(geometry.size.width))
 Text('Frame').frame({ minWidth: 120, maxWidth: 'infinity', height: '3rem', alignment: 'center' })
 Text('Styled').foreground('CanvasText').background('Canvas').style({ borderRadius: 8, '--muse-accent': '#7c3aed' })
+// @ts-expect-error inline style names are checked while CSS custom properties stay extensible
+Text('Invalid style').style({ colro: 'tomato' })
+Element('button', { onPointerMove: event => event.preventDefault?.(), onKeyDown: event => event.currentTarget?.key })
+// @ts-expect-error standard HTML event names are checked
+Element('button', { onClic: () => undefined })
+Element('muse-chart', { onAnything: () => undefined, 'data-series': 'revenue', 'aria-label': 'Chart' })
 Button(() => undefined)
 Button('Save', () => undefined)
 Button(() => undefined, () => Text('Label'))

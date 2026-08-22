@@ -96,6 +96,10 @@ const htmlRenderer: MuseRenderer<string> = {
   fragment(children) { return children.join("") },
   value(value) { return value === null || value === undefined || value === false ? "" : escape(value) },
   modifier(content, modifier) {
+    if (modifier.name === "frame") {
+      const style = styleText(styleOf(modifier))
+      return `<div${style ? ` style="${escapeAttribute(style)}"` : ""}>${content}</div>`
+    }
     const extraStyle = styleText(styleOf(modifier))
     const extraProps = propsOf(modifier)
     const propStyle = styleAttribute(extraProps.style)
@@ -255,6 +259,12 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       return context.document.createTextNode(value === null || value === undefined || value === false ? "" : String(value))
     },
     modifier(content, modifier) {
+      if (modifier.name === "frame") {
+        const wrapper = context.document.createElement("div")
+        applyDomProps(wrapper, { style: frameStyle(modifier.arguments[0] && typeof modifier.arguments[0] === "object" ? modifier.arguments[0] : {}) }, context)
+        appendDomChild(wrapper, content)
+        return wrapper
+      }
       const extraStyle = styleOf(modifier)
       const extraProps = propsOf(modifier)
       const style = Object.keys(extraStyle).length > 0 || extraProps.style

@@ -192,3 +192,30 @@ test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", a
   unmount()
   dom.window.close()
 })
+
+test("@muse/web hydrates the frame host without replacing its child", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const Counter = defineView("HydratedFrameCounter", {
+    initializers: [initializer("HydratedFrameCounter()", args => args.length === 0)],
+    state: () => ({ count: State(0) }),
+    body: ({ count }) => Element("button", { onclick: () => { count.value += 1 } }, String(count.value)).frame({
+      width: 120,
+      height: 48,
+      alignment: "center",
+    }),
+  })
+  const value = Counter()
+  container.innerHTML = renderToHTML(value)
+  const serverFrame = container.firstElementChild
+  const serverButton = container.querySelector("button")
+  const unmount = mount(value, container, { hydrate: true })
+  assert.equal(container.firstElementChild, serverFrame)
+  assert.equal(container.querySelector("button"), serverButton)
+  serverButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(container.textContent, "1")
+  unmount()
+  dom.window.close()
+})

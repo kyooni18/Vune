@@ -15,7 +15,7 @@ import {
   viewFragment,
 } from "./graph.js"
 import type { MuseCustomElementAttributes, MuseHtmlAttributes, MuseHtmlTagName } from "./html.js"
-import type { BindingRef, StateRef } from "./state.js"
+import { isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
 
 export interface VStackOptions {
@@ -62,6 +62,7 @@ function isOptions(value: unknown): value is Record<string, unknown> {
 }
 
 function stackInitializers(optionsParameter: ReturnType<typeof initializerKinds.value>) {
+  const variadicOptions = initializerKinds.value(true, optionsParameter.label, optionsParameter.properties, optionsParameter.type, true)
   return [
     initializer(
       "@ViewBuilder content",
@@ -79,6 +80,7 @@ function stackInitializers(optionsParameter: ReturnType<typeof initializerKinds.
       "options, ...children",
       args => args.length >= 1 && isOptions(args[0]) && args.slice(1).every(value => typeof value !== "function"),
       args => ({ options: args[0], content: args.slice(1).flatMap(stackChildren) }),
+      [variadicOptions],
     ),
     initializer(
       "...children",
@@ -340,9 +342,32 @@ function keyedCollectionChildren(value: ViewValue, key: string | number): ViewVa
     : child)
 }
 
-export function ForEach<Item>(items: readonly Item[], content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment> {
-  return viewFragment(items.flatMap((item, index) => keyedCollectionChildren(content(item, index), collectionKey(item, index))))
+interface ForEachProps<Item> {
+  readonly items: readonly Item[] | StateRef<readonly Item[]>
+  readonly content: (item: Item, index: number) => ViewValue
 }
+
+interface ForEachCall {
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
+}
+
+const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
+  "ForEach",
+  [initializer(
+    "ForEach(items, @ViewBuilder content)",
+    args => args.length === 2 && typeof args[1] === "function",
+    args => ({ items: args[0] as readonly unknown[] | StateRef<readonly unknown[]>, content: args[1] as (item: unknown, index: number) => ViewValue }),
+    [initializerKinds.value(true, "items", undefined, "array"), initializerKinds.viewBuilder(true, "content", "(item: Item, index: number) => View")],
+  )],
+  ({ items, content }) => {
+    const collection = (isStateRef(items) ? items.value : items) as readonly unknown[]
+    return viewFragment(collection.flatMap((item, index) => keyedCollectionChildren(content(item, index), collectionKey(item, index))))
+  },
+  "Item",
+)
+
+/** A keyed collection View that also accepts a State-backed collection directly. */
+export const ForEach = ForEachType as unknown as ForEachCall & typeof ForEachType
 
 export const Section = defineBuiltinView<{ title?: string; content: ViewValue[] }>(
   "Section",

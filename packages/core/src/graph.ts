@@ -8,6 +8,7 @@ import {
 import { keyedViewIdentity, type ViewIdentity } from "./identity.js"
 import type { FrameOptions } from "./layout.js"
 import type { MuseStyleProperties } from "./html.js"
+import { isBinding, isStateRef } from "./state.js"
 
 export const museView = Symbol.for("muse.view")
 export const museInitializers = Symbol.for("muse.initializers")
@@ -251,8 +252,19 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<
       ), value.modifier)
     case "view":
       {
-        const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeAt(value.render(props), renderer, [...identity, "body"])
-        if (renderer.view) return renderer.view(value, renderWithProps, identity)
+        // A conditional can replace one View type with another at the same
+        // structural slot. Include the declared View type in its identity so
+        // every renderer observes the same remount boundary.
+        // Prefer the declared semantic name when present. It is stable across
+        // server/client processes; process-local object IDs would break
+        // hydration when construction order differs between the two sides.
+        const definitionName = typeof value.host === "object" && value.host !== null
+          ? (value.host as { definition?: { name?: unknown } }).definition?.name
+          : undefined
+        const typeIdentity = typeof definitionName === "string" && definitionName.length > 0 ? definitionName : value.name
+        const viewIdentity: ViewIdentity = [...identity, "view", typeIdentity]
+        const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeAt(value.render(props), renderer, [...viewIdentity, "body"])
+        if (renderer.view) return renderer.view(value, renderWithProps, viewIdentity)
         const state = value.state?.(value.props) ?? {}
         return renderWithProps({ ...value.props, ...state })
       }
@@ -271,6 +283,8 @@ export interface InitializerParameter {
   readonly label?: string
   readonly kind: InitializerParameterKind
   readonly required?: boolean
+  /** The final parameter accepts additional positional values. */
+  readonly variadic?: boolean
   readonly type?: string
   readonly properties?: readonly string[]
 }
@@ -383,7 +397,21 @@ function normalizeNamedArguments(candidate: InitializerMatch, args: readonly unk
     if (properties.size > 0 && keys.every(key => properties.has(key))) return []
     return [{ index, value, keys }]
   })
-  if (carriers.length !== 1) return args
+  if (carriers.length !== 1) {
+    if (parameters.some(parameter => parameter.variadic)) return args
+    const normalized = Array<unknown>(parameters.length).fill(undefined)
+    const align = (parameterIndex: number, argumentIndex: number): boolean => {
+      if (parameterIndex === parameters.length) return argumentIndex === args.length
+      const parameter = parameters[parameterIndex]
+      if (parameter.required === false && align(parameterIndex + 1, argumentIndex)) return true
+      if (argumentIndex >= args.length) return false
+      const value = args[argumentIndex]
+      if (typeMatches(parameter, value) === false) return false
+      normalized[parameterIndex] = value
+      return align(parameterIndex + 1, argumentIndex + 1)
+    }
+    return align(0, 0) ? normalized : args
+  }
   const carrier = carriers[0]
   const positional = args.filter((_, index) => index !== carrier.index)
   let positionalIndex = 0
@@ -401,36 +429,97 @@ function genericConstraint(genericParameters: string | undefined, type: string):
   return match?.[1]?.trim() ?? (match ? "unknown" : undefined)
 }
 
-function typeMatches(parameter: InitializerParameter, value: unknown, genericParameters?: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined
-  if (parameter.kind === "binding") {
-    const descriptor = typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "value") : undefined
-    return !!descriptor?.get || !!descriptor?.set
+function splitTypeAlternatives(type: string): string[] {
+  const result: string[] = []
+  let start = 0
+  let angle = 0
+  let square = 0
+  let parens = 0
+  for (let index = 0; index < type.length; index += 1) {
+    switch (type[index]) {
+      case "<": angle += 1; break
+      case ">": angle = Math.max(0, angle - 1); break
+      case "[": square += 1; break
+      case "]": square = Math.max(0, square - 1); break
+      case "(": parens += 1; break
+      case ")": parens = Math.max(0, parens - 1); break
+      case "|":
+        if (angle === 0 && square === 0 && parens === 0) {
+          result.push(type.slice(start, index).trim())
+          start = index + 1
+        }
+        break
+    }
   }
-  if (!parameter.type || parameter.kind !== "value") return undefined
-  const generic = genericConstraint(genericParameters, parameter.type)
+  result.push(type.slice(start).trim())
+  return result.filter(Boolean)
+}
+
+function referenceValue(value: unknown): unknown {
+  if (isStateRef(value) || isBinding(value)) return (value as { value: unknown }).value
+  return value
+}
+
+function typeMatchesSingle(type: string, value: unknown, genericParameters?: string): boolean | undefined {
+  const normalized = type.trim().replace(/\s+/g, " ").replace(/\s*\?$/, "")
+  if (!normalized || normalized === "unknown" || normalized === "any") return undefined
+  if (normalized === "null") return value === null
+  if (normalized === "undefined" || normalized === "void") return value === undefined
+
+  const generic = genericConstraint(genericParameters, normalized)
   if (generic) {
     if (/\bView\b/.test(generic)) return isViewNode(value) || (typeof value === "function" && !!(value as { [museView]?: true })[museView])
     return undefined
   }
-  const alternatives = parameter.type.split("|").map(item => item.trim().toLowerCase()).filter(Boolean)
-  let recognized = false
-  for (const type of alternatives) {
-    if (type.includes("binding")) {
-      recognized = true
-      const descriptor = typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "value") : undefined
-      if (descriptor?.get || descriptor?.set) return true
-      continue
-    }
-    if (type === "string") { recognized = true; if (typeof value === "string") return true; continue }
-    if (type === "number") { recognized = true; if (typeof value === "number") return true; continue }
-    if (type === "boolean") { recognized = true; if (typeof value === "boolean") return true; continue }
-    if (type === "function" || type.includes("=>")) { recognized = true; if (typeof value === "function") return true; continue }
-    if (type === "object") { recognized = true; if (typeof value === "object" && value !== null) return true; continue }
-    if (type === "array" || type.endsWith("[]")) { recognized = true; if (Array.isArray(value)) return true; continue }
-    if (type === "unknown" || type === "any") continue
+
+  const reference = referenceValue(value)
+  const stateMatch = /^(?:State|StateRef)\s*<([\s\S]+)>$/.exec(normalized)
+  if (stateMatch) return isStateRef(value) && typeMatchesType(stateMatch[1], reference, genericParameters) !== false
+  const bindingMatch = /^(?:Binding|BindingRef)\s*<([\s\S]+)>$/.exec(normalized)
+  if (bindingMatch) return isBinding(value) && typeMatchesType(bindingMatch[1], reference, genericParameters) !== false
+  const valueMatch = /^Value\s*<([\s\S]+)>$/.exec(normalized)
+  if (valueMatch) {
+    if (typeof value === "function") return true
+    if (isStateRef(value) || isBinding(value)) return typeMatchesType(valueMatch[1], reference, genericParameters) !== false
+    return typeMatchesType(valueMatch[1], value, genericParameters)
   }
-  return recognized ? false : undefined
+
+  if (/^(?:some\s+)?View$/.test(normalized)) return isViewNode(value) || (typeof value === "function" && !!(value as { [museView]?: true })[museView])
+  if (/^(?:Function|function)$/.test(normalized) || normalized.includes("=>")) return typeof value === "function"
+  const arrayMatch = /^(?:ReadonlyArray|Array)\s*<([\s\S]+)>$/.exec(normalized) ?? /^([\s\S]+)\[\]$/.exec(normalized)
+  if (arrayMatch) return Array.isArray(reference) && (reference as unknown[]).every(item => typeMatchesType(arrayMatch[1], item, genericParameters) !== false)
+  if (normalized.toLowerCase() === "array") return Array.isArray(reference)
+  if (normalized === "string") return typeof reference === "string"
+  if (normalized === "number") return typeof reference === "number"
+  if (normalized === "boolean") return typeof reference === "boolean"
+  if (normalized === "object" || normalized.startsWith("Record<")) return typeof reference === "object" && reference !== null && !Array.isArray(reference) && !isViewNode(reference)
+  if (/^(?:true|false)$/.test(normalized)) return value === (normalized === "true")
+  if (/^(?:\"[^\"]*\"|'[^']*')$/.test(normalized)) return value === normalized.slice(1, -1)
+  if (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return value === Number(normalized)
+  return undefined
+}
+
+function typeMatchesType(type: string, value: unknown, genericParameters?: string): boolean | undefined {
+  const results = splitTypeAlternatives(type).map(alternative => typeMatchesSingle(alternative, value, genericParameters))
+  if (results.some(result => result === true)) return true
+  return results.some(result => result === undefined) ? undefined : false
+}
+
+function typeMatches(parameter: InitializerParameter, value: unknown, genericParameters?: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined
+  if (parameter.kind === "binding") {
+    if (!isBinding(value)) return false
+    if (!parameter.type) return true
+    if (/^(?:Binding|BindingRef)\s*</.test(parameter.type.trim())) return typeMatchesType(parameter.type, value, genericParameters)
+    return typeMatchesType(parameter.type, referenceValue(value), genericParameters)
+  }
+  if (parameter.kind === "viewBuilder" || parameter.kind === "action") {
+    return typeof value === "function"
+  }
+  if (!parameter.type || parameter.kind !== "value") return undefined
+  const results = splitTypeAlternatives(parameter.type).map(type => typeMatchesSingle(type, value, genericParameters))
+  if (results.some(result => result === true)) return true
+  return results.some(result => result === undefined) ? undefined : false
 }
 
 function genericViewType(type: string | undefined, genericParameters: string | undefined): boolean {
@@ -481,13 +570,32 @@ function score(candidate: InitializerMatch, original: readonly unknown[], args: 
   return result
 }
 
+function declaredParametersAccept(candidate: InitializerMatch, args: readonly unknown[], genericParameters?: string): boolean | undefined {
+  if (!candidate.parameters) return undefined
+  const parameters = candidate.parameters
+  const required = parameters.filter(parameter => parameter.required !== false).length
+  const variadic = parameters.at(-1)?.variadic === true
+  if (args.length < required || (!variadic && args.length > parameters.length)) return false
+  if (variadic && args.slice(parameters.length).some(value => typeof value === "function")) return false
+  for (let index = 0; index < parameters.length; index += 1) {
+    const value = args[index]
+    if (value === undefined) continue
+    if (typeMatches(parameters[index], value, genericParameters) === false) return false
+  }
+  return true
+}
+
 export function resolveInitializer(target: unknown, args: readonly unknown[]): InitializerResolution {
   const supplied = args.length === 2 && args[1] === undefined && (args[0] === null || typeof args[0] === "object") ? args.slice(0, -1) : args
   const candidates = metadataOf(target)
   const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
   const match = candidates.map(candidate => {
     const normalized = normalizeNamedArguments(candidate, supplied)
-    if (!candidate.accepts(normalized)) return null
+    const declared = declaredParametersAccept(candidate, normalized, genericParameters)
+    // Parameter metadata is the canonical resolver contract. Predicates remain
+    // available for legacy variadic initializers that intentionally have no
+    // finite parameter list.
+    if (declared === false || (declared === undefined && !candidate.accepts(normalized))) return null
     const value = score(candidate, supplied, normalized, genericParameters)
     if (!Number.isFinite(value)) return null
     const typed = candidate.parameters
@@ -600,7 +708,14 @@ export function initializer(signature: string, accepts: (args: readonly unknown[
 }
 
 export const initializerKinds = Object.freeze({
-  value: (required = true, label?: string, properties?: readonly string[], type?: string): InitializerParameter => ({ kind: "value", required, label, properties, type }),
+  value: (required = true, label?: string, properties?: readonly string[], type?: string, variadic = false): InitializerParameter => ({
+    kind: "value",
+    required,
+    label,
+    properties,
+    type,
+    ...(variadic ? { variadic: true } : {}),
+  }),
   binding: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "binding", required, label, type }),
   viewBuilder: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "viewBuilder", required, label, type }),
   action: (required = true, label?: string, type?: string): InitializerParameter => ({ kind: "action", required, label, type }),

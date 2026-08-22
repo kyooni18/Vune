@@ -195,6 +195,9 @@ const renderer: MuseRenderer<ReactNode> = {
     return value as ReactNode
   },
   modifier(content, modifier) {
+    if (modifier.name === "frame") {
+      return createElement("div", modifierProps(modifier), content)
+    }
     return applyProps(content, modifierProps(modifier))
   },
   view(node, _render, identity) {

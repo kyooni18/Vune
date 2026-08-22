@@ -208,6 +208,18 @@ test("VS Code providers return Muse and HTML tooling results", async () => {
     assert.equal(malformedDiagnostic.range.start.line, 1)
     assert.equal(malformedDiagnostic.range.start.character, 0)
 
+    const malformedHtmlSource = "<section><span></section>"
+    const malformedHtmlDocument = {
+      ...document,
+      uri: "file:///MalformedHtml.muse.ts",
+      lineCount: 1,
+      lineAt: () => ({ text: malformedHtmlSource }),
+      getText: () => malformedHtmlSource,
+      positionAt(offset) { return new Position(0, offset) },
+    }
+    openDocument(malformedHtmlDocument)
+    assert.match(diagnosticRuns.at(-1).diagnostics[0].message, /Mismatched raw HTML closing tag/)
+
     const vueSource = `<template><div :class="{ active: enabled"></div></template>\n<script setup>\nconst count=State(0)\nif(count.value){\nText('ready')\n}\n</script>`
     const vueDocument = {
       uri: "file:///Counter.vue",

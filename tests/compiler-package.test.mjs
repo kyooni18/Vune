@@ -37,6 +37,12 @@ test("@muse/compiler keeps statement-bearing action closures out of ViewBuilder 
   assert.equal(ts.createSourceFile("Action.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("@muse/compiler preserves async action closures", () => {
+  const output = transformMuseSource("Button() { await save() }", "AsyncAction.muse.ts")
+  assert.match(output, /overloadClosure\(\(\) => \[\], async \(\) => \{\s*await save\(\)\s*\}\)/)
+  assert.equal(ts.createSourceFile("AsyncAction.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("@muse/compiler exposes source-ranged builder and struct ASTs", () => {
   const source = `VStack(spacing: 12) {
   Text("Header")
@@ -163,6 +169,15 @@ MyVueComponent(value: data)`
   assert.equal(ts.createSourceFile("VueInterop.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("Vue SFC default imports become transparent Muse Views", () => {
+  const output = transformMuseSource(`import VueChart from "./VueChart.vue"
+VueChart(values: values)`, "VueChart.muse.ts")
+  assert.match(output, /import \{ vueComponent as __museVueComponent \} from "@muse\/vue"/)
+  assert.match(output, /const VueChart = __museVueComponent\(__museVueComponent0\)/)
+  assert.match(output, /VueChart\(namedArguments\(\{ values: values \}\)\)/)
+  assert.equal(ts.createSourceFile("VueChart.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("the canonical compiler preserves host stylesheet imports", () => {
   const source = `import styles from "./Card.module.css"
 import "./tokens.scss"
@@ -183,6 +198,14 @@ test("compiler diagnostics retain the original offset for raw HTML and delimiter
   assert.deepEqual(templateDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed ( block in Muse source", line: 1, column: 5 }])
   const commentDiagnostic = createMuseLanguageService().diagnose("Text(\"ok\")\n/* unfinished")
   assert.deepEqual(commentDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed block comment in Muse source", line: 2, column: 1 }])
+  assert.deepEqual(createMuseLanguageService().diagnose("<section><span></section>"), [{ severity: "error", code: "MUSE_SYNTAX", message: "Mismatched raw HTML closing tag </section>; expected </span>", line: 1, column: 16 }])
+})
+
+test("builder scanning ignores regex literals in TypeScript expressions", () => {
+  const source = `VStack() { Text(/[{}]/.test(value) ? "yes" : "no") }`
+  const output = transformMuseSource(source, "RegexExpression.muse.ts")
+  assert.match(output, /Text\(\/\[\{\}\]\/\.test\(value\) \? "yes" : "no"\)/)
+  assert.equal(ts.createSourceFile("RegexExpression.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("the checked-in .muse.ts example passes through the compiler pipeline", () => {
@@ -270,6 +293,26 @@ const card = MixedCard("Title", action: { save() }) { Text("Body") }`
   assert.equal(saves, 0)
 })
 
+test("struct AST keeps stored fields declared after an initializer and ignores initializer locals", () => {
+  const source = `struct FieldOrder: View {
+  init(title: string) { let local = title; const text = "init(fake)"; /* init(comment) */ self.title = title }
+  let title: string
+  @State var count: number = 0
+  let suffix = "!"
+  var body: some View { Text(title + suffix + String(count.value)) }
+}`
+  const declaration = parseMuseStructs(source)[0]
+  assert.deepEqual(declaration.fields.map(field => [field.name, field.kind]), [
+    ["title", "stored"],
+    ["count", "state"],
+    ["suffix", "stored"],
+  ])
+  const output = transformMuseSource(source, "FieldOrder.muse.ts")
+  assert.match(output, /fields: \[\{ name: "title"/)
+  assert.match(output, /name: "suffix", kind: "stored"/)
+  assert.doesNotMatch(output, /name: "local"/)
+})
+
 test("nested View structs keep the outer body and local View scope", () => {
   const source = `struct Parent: View {
   struct Header: View {
@@ -345,6 +388,20 @@ struct Card<Content: View>: View {
   assert.match(output, /kind: "binding"/)
   assert.doesNotMatch(output, /import \{[^}]*State[^}]*\} from "@muse\/core"/)
   assert.equal(ts.createSourceFile("Card.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("struct initializers delegate through the same field plan", () => {
+  const source = `struct DelegatedCard: View {
+  let title: string
+  let subtitle: string
+  init(title: string) { self.init(title: title, subtitle: "Default") }
+  init(title: string, subtitle: string) { self.title = title; self.subtitle = subtitle }
+  var body: some View { VStack() { Text(title); Text(subtitle) } }
+}`
+  const output = transformMuseSource(source, "DelegatedCard.muse.ts")
+  assert.match(output, /title: \(title\)/)
+  assert.match(output, /subtitle: \("Default"\)/)
+  assert.doesNotMatch(output, /title: undefined/)
 })
 
 test("AST-backed struct lowering preserves export boundaries and ignores initializer locals", () => {

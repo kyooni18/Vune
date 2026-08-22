@@ -387,34 +387,67 @@ function maskNestedStructs(source: string): string {
   return characters.join("")
 }
 
+function maskInitializerBodies(source: string): string {
+  const masked = [...source]
+  let cursor = 0
+  while (true) {
+    const initializer = findInitializer(source, cursor)
+    if (initializer < 0) break
+    const open = skipTrivia(source, initializer + 4)
+    const close = findMatching(source, open, "(")
+    const blockOpen = skipTrivia(source, close + 1)
+    if (source[blockOpen] !== "{") { cursor = initializer + 4; continue }
+    const blockClose = findMatching(source, blockOpen, "{")
+    for (let index = initializer; index <= blockClose; index += 1) {
+      if (masked[index] !== "\n" && masked[index] !== "\r") masked[index] = " "
+    }
+    cursor = blockClose + 1
+  }
+  return masked.join("")
+}
+
+function findInitializer(source: string, start: number): number {
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    const next = source[cursor + 1]
+    if (character === "\"" || character === "'") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "`") { cursor = skipTemplate(source, cursor) - 1; continue }
+    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (!source.startsWith("init", cursor) || identifierPart(source[cursor - 1]) || identifierPart(source[cursor + 4])) continue
+    if (source[skipTrivia(source, cursor + 4)] === "(") return cursor
+  }
+  return -1
+}
+
 function parseStructMembers(body: string, baseOffset: number): { fields: MuseStructField[]; initializers: MuseStructInitializer[] } {
   const fields: MuseStructField[] = []
   const initializers: MuseStructInitializer[] = []
-  const maskedBody = maskNestedStructs(body)
+  const nestedMaskedBody = maskNestedStructs(body)
+  const maskedBody = maskInitializerBodies(nestedMaskedBody)
   const fieldPattern = /(?:^|[;\n])\s*(?:(@State|@Binding)\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([^=\n;]+))?(?:\s*=\s*([^\n;]+))?/g
-  const firstInitializer = maskedBody.search(/\binit\s*\(/)
-  const fieldSource = maskedBody.slice(0, firstInitializer < 0 ? maskedBody.length : firstInitializer)
-  for (const match of fieldSource.matchAll(fieldPattern)) {
+  for (const match of maskedBody.matchAll(fieldPattern)) {
     if (match[2] === "body") continue
     const start = baseOffset + (match.index ?? 0) + match[0].indexOf(match[2])
     fields.push({ name: match[2], kind: match[1] === "@State" ? "state" : match[1] === "@Binding" ? "binding" : "stored", type: match[3]?.trim(), initializer: match[4]?.trim(), range: { start, end: start + match[2].length } })
   }
-  const initPattern = /\binit\s*\(/g
-  let match: RegExpExecArray | null
-  while ((match = initPattern.exec(maskedBody))) {
-    const open = maskedBody.indexOf("(", match.index)
-    const close = findMatching(maskedBody, open, "(")
-    const blockOpen = skipTrivia(maskedBody, close + 1)
-    if (maskedBody[blockOpen] !== "{") continue
-    const blockClose = findMatching(maskedBody, blockOpen, "{")
+  let cursor = 0
+  while (true) {
+    const initializer = findInitializer(nestedMaskedBody, cursor)
+    if (initializer < 0) break
+    const open = skipTrivia(nestedMaskedBody, initializer + 4)
+    const close = findMatching(nestedMaskedBody, open, "(")
+    const blockOpen = skipTrivia(nestedMaskedBody, close + 1)
+    if (nestedMaskedBody[blockOpen] !== "{") { cursor = initializer + 4; continue }
+    const blockClose = findMatching(nestedMaskedBody, blockOpen, "{")
     initializers.push({
       parametersSource: body.slice(open + 1, close),
       bodySource: body.slice(blockOpen + 1, blockClose),
-      range: { start: baseOffset + match.index, end: baseOffset + blockClose + 1 },
+      range: { start: baseOffset + initializer, end: baseOffset + blockClose + 1 },
       parametersRange: { start: baseOffset + open + 1, end: baseOffset + close },
       bodyRange: { start: baseOffset + blockOpen + 1, end: baseOffset + blockClose },
     })
-    initPattern.lastIndex = blockClose + 1
+    cursor = blockClose + 1
   }
   return { fields, initializers }
 }

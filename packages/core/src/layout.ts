@@ -12,6 +12,20 @@ export interface FrameOptions {
   readonly alignment?: FrameAlignment
 }
 
+function framePlaceItems(alignment: FrameAlignment = "center"): string {
+  switch (alignment) {
+    case "leading": return "center start"
+    case "trailing": return "center end"
+    case "top": return "start center"
+    case "bottom": return "end center"
+    case "topLeading": return "start start"
+    case "topTrailing": return "start end"
+    case "bottomLeading": return "end start"
+    case "bottomTrailing": return "end end"
+    default: return "center"
+  }
+}
+
 export function layoutLength(value: unknown): string | undefined {
   return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
 }
@@ -19,6 +33,8 @@ export function layoutLength(value: unknown): string | undefined {
 export function frameStyle(options: FrameOptions): Record<string, string | undefined> {
   return {
     boxSizing: "border-box",
+    display: "grid",
+    placeItems: framePlaceItems(options.alignment),
     width: layoutLength(options.width),
     height: layoutLength(options.height),
     minWidth: layoutLength(options.minWidth),

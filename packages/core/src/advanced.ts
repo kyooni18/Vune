@@ -67,7 +67,7 @@ export const Grid = defineBuiltinView<GridProps>(
   [
     initializer("Grid(options, @ViewBuilder content)", args => args.length === 2 && isObject(args[0]) && typeof args[1] === "function", args => ({ options: args[0] as GridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object"), initializerKinds.viewBuilder(true, "content")]),
     initializer("Grid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
-    initializer("Grid(options, ...children)", args => args.length >= 1 && isObject(args[0]) && staticChildren(args.slice(1)), args => ({ options: args[0] as GridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object")]),
+    initializer("Grid(options, ...children)", args => args.length >= 1 && isObject(args[0]) && staticChildren(args.slice(1)), args => ({ options: args[0] as GridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object", true)]),
     initializer("Grid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
   ({ options = {}, children }) => viewElement("div", {
@@ -103,7 +103,7 @@ export interface ProgressViewProps extends ProgressViewOptions { readonly value?
 interface ProgressViewCall { (value?: Value<number>, options?: ProgressViewOptions): ModifiableViewNode }
 export const ProgressView = defineBuiltinView<ProgressViewProps>(
   "ProgressView",
-  [initializer("ProgressView(value?, options?)", args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "function" || isBinding(args[0]) || isStateRef(args[0])) && (args[1] === undefined || isObject(args[1])), args => ({ value: args[0] === undefined ? undefined : Number(resolveValue(args[0] as Value<number>)), ...(isObject(args[1]) ? args[1] : {}) }), [initializerKinds.value(false, "value", undefined, "number"), initializerKinds.value(false, "options", ["label", "max"], "object")])],
+  [initializer("ProgressView(value?, options?)", args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "function" || isBinding(args[0]) || isStateRef(args[0])) && (args[1] === undefined || isObject(args[1])), args => ({ value: args[0] === undefined ? undefined : Number(resolveValue(args[0] as Value<number>)), ...(isObject(args[1]) ? args[1] : {}) }), [initializerKinds.value(false, "value", undefined, "Value<number>"), initializerKinds.value(false, "options", ["label", "max"], "object")])],
   ({ value, label, max = 1 }) => viewElement("div", { "data-muse": "ProgressView" }, [viewElement("progress", { max, ...(value === undefined ? {} : { value }) }), ...(label === undefined ? [] : [Text(label)])]),
 ) as TypedViewConstructor<ProgressViewProps, ProgressViewCall>
 
