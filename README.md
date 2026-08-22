@@ -16,7 +16,8 @@ React is a renderer, not the definition of a Muse View.
 New framework code should import graph values from `muse` and select a renderer
 explicitly from `@muse/react`, `@muse/vue`, or `@muse/web`. The historical
 `react-muse-ui` entry point remains available as a compatibility facade backed
-by `@muse/react/legacy`.
+by the separate `@muse/legacy-react` package through preserved
+`@muse/react/legacy` proxy paths.
 
 The canonical Vite workflow lowers Muse builders and custom `struct ...: View` declarations without coupling the graph to a renderer. The compatibility React workflow also offers `State`, `Action`, and `view` macros.
 
@@ -124,7 +125,10 @@ Builder blocks support nested Views, conditionals, optional branches, and
 `ForEach(items) { item in ... }`. The compiler resolves syntax by initializer
 metadata rather than a hard-coded component-name list; malformed calls produce
 structured compiler diagnostics and `MuseInitializerError` at the runtime
-boundary.
+boundary. When a same-file custom View call has exactly one declaration-defined
+initializer match, or an imported View exposes one unique non-variadic typed
+call signature, the compiler emits a direct initializer-index path; ambiguous
+overloads retain the normal runtime resolver.
 
 The same source syntax can be used with built-in and custom Views:
 
@@ -372,7 +376,10 @@ LazyHStack(...cards)
 LazyGrid({ columns: 3, estimatedItemSize: 160 }, ...cards)
 ```
 
-`Lazy*` uses browser `content-visibility` hints. It is not a windowed virtualization engine; normal React virtualization libraries can be used through `Component(...)` when true virtualization is needed.
+`Lazy*` carries estimated-size metadata for every renderer. Direct `@muse/web`
+mounts window children and updates the range on scroll/resize; SSR, React, and
+Vue materialize the full graph while retaining the browser `content-visibility`
+hint.
 
 ## Navigation and presentation
 
@@ -423,6 +430,7 @@ pnpm test
 pnpm run demo:build
 pnpm run test:browser
 pnpm run benchmark:modifiers
+pnpm run benchmark:performance:ci
 ```
 
 `test:browser` is opt-in and uses `MUSE_BROWSER_URL` so it can target a running

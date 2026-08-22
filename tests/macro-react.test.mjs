@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import ts from 'typescript'
 import { museMacro, transformMuseMacros } from '../dist/vite.js'
+import { State, Text, view } from '../dist/index.js'
 
 test('moves State declarations into per-view state and defers Action expressions', () => {
   const source = `
@@ -40,6 +41,49 @@ export default view(
   assert.ok(output)
   assert.match(output, /const count = State\(2\)[\s\S]*const doubled = State\(count\.value \* 2\)/)
   assert.match(output, /return \{ count, doubled \}/)
+})
+
+test('hoists only the State graph used by each view when a module has multiple views', () => {
+  const source = `
+import { State, Text, view } from 'react-muse-ui'
+const firstOnly = State(1)
+const secondOnly = State(2)
+export const First = view(() => Text(String(firstOnly.value)))
+export default view(() => Text(String(secondOnly.value)))
+`
+  const output = transformMuseMacros(source, '/src/MultipleViews.ts')
+  assert.ok(output)
+  const first = output.slice(output.indexOf('export const First'), output.indexOf('export default'))
+  const second = output.slice(output.indexOf('export default'))
+  assert.match(first, /const firstOnly = State\(1\)/)
+  assert.doesNotMatch(first, /secondOnly/)
+  assert.match(second, /const secondOnly = State\(2\)/)
+  assert.doesNotMatch(second, /firstOnly/)
+  assert.doesNotMatch(output, /^const (?:firstOnly|secondOnly) = State/m)
+  assert.equal(ts.createSourceFile('MultipleViews.ts', output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test('multiple transformed views receive distinct State instances at runtime', () => {
+  const source = `
+import { State, Text, view } from 'react-muse-ui'
+const firstOnly = State(1)
+const secondOnly = State(2)
+export const First = view(() => Text(String(firstOnly.value)))
+export default view(() => Text(String(secondOnly.value)))
+`
+  const output = transformMuseMacros(source, '/src/MultipleRuntimeViews.ts')
+  assert.ok(output)
+  const generated = output
+    .replace(/^\/\* @muse-macro-transformed \*\/\n/, '')
+    .replace(/^\s*import[^\n]+\n/, '')
+    .replace('export const First', 'const First')
+    .replace('export default view', 'const Second = view')
+  const { First, Second } = Function('State', 'Text', 'view', `${generated}; return { First, Second }`)(State, Text, view)
+  const firstState = First.viewType.definition.state({ inputProps: {} }).instanceState.firstOnly
+  const secondState = Second.viewType.definition.state({ inputProps: {} }).instanceState.secondOnly
+  assert.equal(firstState.value, 1)
+  assert.equal(secondState.value, 2)
+  assert.notEqual(firstState, secondState)
 })
 
 test('splits mixed top-level declarations without leaving State module-scoped', () => {

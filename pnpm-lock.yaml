@@ -86,6 +86,21 @@ importers:
 
   packages/core: {}
 
+  packages/legacy-react:
+    dependencies:
+      '@muse/core':
+        specifier: workspace:*
+        version: link:../core
+      react:
+        specifier: '>=18 <20'
+        version: 19.2.8
+      react-dom:
+        specifier: '>=18 <20'
+        version: 19.2.8(react@19.2.8)
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   packages/muse:
     dependencies:
       '@muse/core':
@@ -97,12 +112,16 @@ importers:
       '@muse/core':
         specifier: workspace:*
         version: link:../core
+      '@muse/legacy-react':
+        specifier: workspace:*
+        version: link:../legacy-react
       react:
         specifier: '>=18 <20'
         version: 19.2.8
       react-dom:
         specifier: '>=18 <20'
         version: 19.2.8(react@19.2.8)
+    devDependencies:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

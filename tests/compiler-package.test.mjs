@@ -3,7 +3,7 @@ import test from "node:test"
 import ts from "typescript"
 import { compileMuseFile, createMuseLanguageService, createMuseSemanticModel, createMuseVitePlugin, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
 import { musePlugin } from "../packages/vite/dist/index.js"
-import { Text, VStack, defineView, initializer, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
+import { Text, VStack, defineView, initializer, modifiedContent, modifierGraphOf, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
 import { readFileSync } from "node:fs"
 
 test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax", () => {
@@ -15,6 +15,24 @@ test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax
   assert.match(output, /Each\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /import \{ namedArguments, overloadClosure \} from "@muse\/core"/)
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("binding shorthand uses AST identifiers and preserves host dollar syntax", () => {
+  const source = `Toggle(isOn: $wifi)
+const attrs = vm.$attrs
+const refs = $refs
+const token = foo$bar
+const text = "$wifi"
+const pattern = /\\$wifi/`
+  const output = transformMuseSource(source, "Binding.muse.ts")
+  assert.match(output, /Binding\(wifi\)/)
+  assert.doesNotMatch(output, /Binding\(attrs\)/)
+  assert.doesNotMatch(output, /Binding\(refs\)/)
+  assert.match(output, /vm\.\$attrs/)
+  assert.match(output, /foo\$bar/)
+  assert.match(output, /"\$wifi"/)
+  assert.match(output, /\/\\\$wifi\//)
+  assert.equal(ts.createSourceFile("Binding.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("compiler and IDE consumers share one Muse plus TypeScript semantic model", () => {
@@ -166,6 +184,9 @@ test("the Vite adapter caches unchanged modules and leaves CSS to Vite", () => {
   assert.equal(plugin.transform("function ordinary() { return 1 }", "/src/ordinary.ts"), null)
   assert.equal(plugin.transform("const pattern = /^[$A-Z_]/", "/src/ordinary.js"), null)
   assert.equal(plugin.transform('const App = () => <div className="card" />', "/src/App.tsx"), null)
+  const staticModifier = plugin.transform('import { Text } from "@muse/core"\nconst value = Text("Hi").padding(4)', new URL("../StaticModifier.ts", import.meta.url).pathname)
+  assert.ok(staticModifier)
+  assert.match(staticModifier.code, /modifiedContent\(/)
   const scoped = createMuseVitePlugin({ include: /Counter\.muse\.ts/g })
   assert.ok(scoped.transform(source, "/src/Counter.muse.ts"))
   assert.ok(scoped.transform(source, "/src/Counter.muse.ts"))
@@ -218,7 +239,8 @@ Text("Card").className(styles.card)`
   const output = transformMuseSource(source, "Card.muse.ts")
   assert.match(output, /import styles from "\.\/Card\.module\.css"/)
   assert.match(output, /import "\.\/tokens\.scss"/)
-  assert.match(output, /\.className\(styles\.card\)/)
+  assert.match(output, /modifiedContent\(/)
+  assert.match(output, /styles\.card/)
 })
 
 test("compiler diagnostics retain the original offset for raw HTML and delimiters", () => {
@@ -264,6 +286,73 @@ test("custom generic View structs lower to declaration-defined initializer metad
   assert.equal(ts.createSourceFile("Card.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("compiler specializes unambiguous same-file struct calls from initializer declarations", () => {
+  const source = `struct Card: View {
+  let title: string
+  init(title: string) { self.title = title }
+  var body: some View { Text(title) }
+}
+const card = Card(title: "Hello")`
+  const output = transformMuseSource(source, "SpecializedCard.muse.ts")
+  assert.match(output, /Card\.viewType\.createNodeSpecialized\(0, \[namedArguments\(\{ title: "Hello" \}\)\]\)/)
+  assert.doesNotMatch(output, /const card = Card\(/)
+  assert.equal(ts.createSourceFile("SpecializedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler specializes imported Views from a unique typed call signature", () => {
+  const source = `import { Text } from "@muse/core"
+const value = Text("Hello")`
+  const output = transformMuseSource(source, "ImportedText.muse.ts")
+  assert.match(output, /Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\)/)
+  assert.equal(ts.createSourceFile("ImportedText.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+  const generated = output.replace(/^import [^\n]+\n/, "")
+  const value = Function("Text", `${generated}; return value`)(Text)
+  assert.equal(value.kind, "element")
+})
+
+test("compiler specializes a resolved imported ViewBuilder overload by declaration order", () => {
+  const source = `import { Text, VStack } from "@muse/core"
+const value = VStack() { Text("Hello") }`
+  const output = transformMuseSource(source, "ImportedVStack.muse.ts")
+  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(0, \[overloadClosure\(/)
+  assert.match(output, /Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\)/)
+})
+
+test("compiler lowers a statically typed modifier chain into one flat graph construction", () => {
+  const source = `import { Text } from "@muse/core"
+const value = Text("Hello").padding(8).background("red").bold()`
+  const output = transformMuseSource(source, "StaticModifiers.muse.ts")
+  assert.match(output, /modifiedContent\(Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\), \[\{ name: "padding", arguments: \[8\] \}, \{ name: "background", arguments: \["red"\] \}, \{ name: "bold", arguments: \[\] \}\]\)/)
+  assert.doesNotMatch(output, /\.padding\(|\.background\(|\.bold\(/)
+  assert.equal(ts.createSourceFile("StaticModifiers.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+  const generated = output.replace(/^import [^\n]+\n/gm, "")
+  const value = Function("Text", "modifiedContent", `${generated}; return value`)(Text, modifiedContent)
+  assert.deepEqual(modifierGraphOf(value).map(item => [item.name, item.arguments]), [["padding", [8]], ["background", ["red"]], ["bold", []]])
+})
+
+test("compiler preserves dynamic and non-View modifier methods", () => {
+  const source = `declare const unknownValue: unknown
+const dynamic = (unknownValue as any).padding(8)
+const ordinary = { padding(value: number) { return value } }.padding(8)`
+  const output = transformMuseSource(source, "DynamicModifiers.muse.ts")
+  assert.doesNotMatch(output, /modifiedContent\(/)
+  assert.match(output, /unknownValue as any\)\.padding\(8\)/)
+  assert.match(output, /const ordinary = .*\.padding\(8\)/)
+})
+
+test("compiler keeps ambiguous declaration overloads on the dynamic resolver", () => {
+  const source = `struct Card: View {
+  let value: any
+  init(_ value: string) { self.value = value }
+  init(_ value: number) { self.value = value }
+  var body: some View { Text(String(value)) }
+}
+const card = Card(valueFromRuntime)`
+  const output = transformMuseSource(source, "DynamicCard.muse.ts")
+  assert.match(output, /const card = Card\(valueFromRuntime\)/)
+  assert.doesNotMatch(output, /createNodeSpecialized/)
+})
+
 test("compiled generic ViewBuilder initializers enforce View results", () => {
   const source = `import { Text, VStack } from "@muse/core"
 struct GenericBox<Content: View>: View {
@@ -301,7 +390,7 @@ test("compiled structs resolve unlabeled values, labeled actions, and trailing b
 }
 const card = MixedCard("Title", action: { save() }) { Text("Body") }`
   const output = transformMuseSource(source, "MixedCard.muse.ts")
-  assert.match(output, /MixedCard\("Title", namedArguments\(\{ action:/)
+  assert.match(output, /MixedCard\.viewType\.createNodeSpecialized\(0, \["Title", namedArguments\(\{ action:/)
   assert.equal(ts.createSourceFile("MixedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/, "").replace(/: any\b/g, "")
   let saves = 0

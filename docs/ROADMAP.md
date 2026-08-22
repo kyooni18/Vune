@@ -41,9 +41,10 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
 
 Collection, presentation, and native control implementations are owned by
 `@muse/core`; `@muse/react` keeps reference-identical compatibility re-exports.
-The old root entry points are preserved as `@muse/react/legacy` compatibility
-exports; new work should target the canonical graph and renderer APIs instead
-of extending that legacy surface.
+The old root entry points are implemented by the separate `@muse/legacy-react`
+package and preserved as `@muse/react/legacy` compatibility proxy exports; new
+work should target the canonical graph and renderer APIs instead of extending
+that legacy surface.
 
 ## Correctness release
 
@@ -88,13 +89,24 @@ instance-specific IDs and hydration-safe portals; and `Menu` provides first
 item focus, Home/End, disabled skipping, typeahead, Tab close, and
 `menuitem` semantics.
 
+Lazy containers now expose a renderer-neutral range boundary. `@muse/web`
+uses estimated-size spacers and scroll/resize range updates to window direct
+DOM mounts; SSR, React, and Vue retain a full-graph fallback with
+`content-visibility` hints.
+
 ## Deliberately deferred work
 
 Some useful systems remain explicit experiments until their integration contract
 is settled:
 
-- `LazyVStack` and related APIs use `content-visibility: auto`. This is a
-  browser-assisted rendering optimization, not virtualization or windowing.
+- Declaration-driven specialization now emits a direct initializer-index call
+  for unambiguous same-file `struct ...: View` uses and imported Views with a
+  unique non-variadic TypeScript call signature. Overloaded calls whose choice
+  needs runtime values remain on the dynamic resolver. The runtime also uses a
+  single-declaration fast path and caches safe metadata-driven call shapes,
+  while predicate-only legacy initializers remain dynamic. Statically typed
+  modifier chains are also lowered to one flat `modifiedContent` construction;
+  unknown or non-View receivers retain their original method calls.
 - Legacy layout-engine, coordinate-runtime, observer, builder, and plugin
   facilities remain available from `react-muse-ui/experimental`; canonical
   `GeometryReader` now owns the cross-renderer measured-host contract while the
@@ -104,7 +116,7 @@ is settled:
   authoring path.
 - Modifier performance is benchmarked against raw React styles at 100, 1,000,
   and 10,000 elements with chain depths of 1, 5, 10, and 20. CI runs a smaller
-  matrix with a generous regression guard; large lists and deeply modified
+  matrix with a depth-aware regression guard; large lists and deeply modified
   trees still establish a measurable need before Muse changes its materialization
   strategy.
 

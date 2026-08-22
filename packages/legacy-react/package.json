@@ -1,49 +1,45 @@
 {
-  "name": "@muse/react",
+  "name": "@muse/legacy-react",
   "version": "0.1.0",
-  "description": "React renderer for the renderer-independent Muse core.",
+  "description": "Legacy React and compiler compatibility layer for Muse.",
   "type": "module",
   "files": ["dist"],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/legacy/index.js",
+  "types": "./dist/legacy/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./legacy": {
       "types": "./dist/legacy/index.d.ts",
       "import": "./dist/legacy/index.js"
     },
-    "./legacy/compiler": {
+    "./compiler": {
       "types": "./dist/legacy/compiler/index.d.ts",
       "import": "./dist/legacy/compiler/index.js"
     },
-    "./legacy/experimental": {
+    "./experimental": {
       "types": "./dist/legacy/experimental.d.ts",
       "import": "./dist/legacy/experimental.js"
     },
-    "./legacy/jsx-runtime": {
+    "./jsx-runtime": {
       "types": "./dist/legacy/jsx-runtime.d.ts",
       "import": "./dist/legacy/jsx-runtime.js"
     },
-    "./legacy/jsx-dev-runtime": {
+    "./jsx-dev-runtime": {
       "types": "./dist/legacy/jsx-dev-runtime.d.ts",
       "import": "./dist/legacy/jsx-dev-runtime.js"
     },
-    "./legacy/state": {
+    "./state": {
       "types": "./dist/legacy/state.d.ts",
       "import": "./dist/legacy/state.js"
     },
-    "./legacy/types": {
+    "./types": {
       "types": "./dist/legacy/types.d.ts",
       "import": "./dist/legacy/types.js"
     },
-    "./legacy/react-types": {
+    "./react-types": {
       "types": "./dist/legacy/react-types.d.ts",
       "import": "./dist/legacy/react-types.js"
     },
-    "./legacy/vite": {
+    "./vite": {
       "types": "./dist/legacy/vite.d.ts",
       "import": "./dist/legacy/vite.js"
     }
@@ -54,13 +50,10 @@
   },
   "dependencies": {
     "@muse/core": "workspace:*",
-    "@muse/legacy-react": "workspace:*"
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "react": ">=18 <20",
     "react-dom": ">=18 <20"
-  },
-  "devDependencies": {
-    "typescript": "^5.8.3"
   }
 }

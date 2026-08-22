@@ -128,15 +128,31 @@ export interface GeometryViewNode {
   readonly content: (geometry: GeometryProxy) => ViewGraphValue
 }
 
+export interface LazyViewRange {
+  readonly start: number
+  readonly end: number
+}
+
+export interface LazyViewNode {
+  readonly kind: "lazy"
+  readonly name: string
+  readonly axis: "vertical" | "horizontal" | "grid"
+  readonly props: Record<string, unknown>
+  readonly children: readonly ViewGraphChild[]
+}
+
 export interface ModifiedContent {
   readonly kind: "modified"
+  /** The unmodified graph node; modifiers are stored in one flat sequence. */
   readonly content: ViewNode
+  readonly modifiers: readonly ViewModifierNode[]
+  /** Compatibility view of the final modifier in the flat sequence. */
   readonly modifier: ViewModifierNode
   readonly name: string
   readonly arguments: readonly unknown[]
 }
 
-export type ViewNode = ElementViewNode | FragmentViewNode | ViewHostNode | GeometryViewNode | ModifiedContent
+export type ViewNode = ElementViewNode | FragmentViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
 /** Public View value: an immutable graph node with value-semantic modifiers. */
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
@@ -161,28 +177,83 @@ export interface Modifiers {
 export type ModifiableViewNode = ViewNode & Modifiers
 
 const decoratedNodes = new WeakMap<object, ModifiableViewNode>()
+const initializerSpecializations = new WeakMap<object, Map<string, InitializerMatch>>()
+const initializerSpecializationEligibility = new WeakMap<object, boolean>()
 
-function decorate(node: ViewNode): ModifiableViewNode {
+function specializationShape(value: unknown, depth = 0): string | undefined {
+  if (depth > 3) return undefined
+  if (value === undefined) return "undefined"
+  if (value === null) return "null"
+  if (isBinding(value)) return `binding:${specializationShape((value as { value: unknown }).value, depth + 1) ?? "unknown"}`
+  if (isStateRef(value)) return `state:${specializationShape((value as { value: unknown }).value, depth + 1) ?? "unknown"}`
+  if (typeof value === "function") {
+    const variants = closureVariantsOf(value)
+    const variantNames = variants ? Object.keys(variants).sort().join(",") : ""
+    return `function:${closureKindOf(value) ?? "unmarked"}:${variantNames}`
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 16).map(item => specializationShape(item, depth + 1))
+    if (items.some(item => item === undefined)) return undefined
+    return `array:${value.length}:${items.join(",")}`
+  }
+  switch (typeof value) {
+    case "string": return value.length <= 128 ? `string:${JSON.stringify(value)}` : undefined
+    case "number": return Number.isFinite(value) ? `number:${value}` : `number:${String(value)}`
+    case "boolean": return `boolean:${value}`
+    case "bigint": return `bigint:${String(value)}`
+    case "symbol": return `symbol:${String(value)}`
+  }
+  if (typeof value !== "object") return typeof value
+  if (isViewNode(value)) return `view:${value.kind}`
+  const keys = Object.keys(value as Record<string, unknown>).sort()
+  const properties = keys.map(key => {
+    const item = specializationShape((value as Record<string, unknown>)[key], depth + 1)
+    return item === undefined ? undefined : `${key}=${item}`
+  })
+  if (properties.some(item => item === undefined)) return undefined
+  return `object:${properties.join(";")}`
+}
+
+function specializationKey(args: readonly unknown[]): string | undefined {
+  const shapes = args.map(value => specializationShape(value))
+  return shapes.some(shape => shape === undefined) ? undefined : shapes.join("|")
+}
+
+function canSpecialize(candidates: readonly InitializerMatch[]): boolean {
+  return candidates.length > 0 && candidates.every(candidate => candidate.parameters !== undefined)
+}
+
+function applyModifier(content: ViewNode, name: string, arguments_: readonly unknown[]): ModifiableViewNode {
+  return modifiedContent(content, { name, arguments: arguments_ })
+}
+
+const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.prototype), {
+  padding(this: ViewNode, value: Length = 0) { return applyModifier(this, "padding", [value]) },
+  margin(this: ViewNode, value: Length = 0) { return applyModifier(this, "margin", [value]) },
+  gap(this: ViewNode, value: Length) { return applyModifier(this, "gap", [value]) },
+  frame(this: ViewNode, options: FrameOptions) { return applyModifier(this, "frame", [options]) },
+  font(this: ViewNode, value: string) { return applyModifier(this, "font", [value]) },
+  fontSize(this: ViewNode, value: Length) { return applyModifier(this, "fontSize", [value]) },
+  bold(this: ViewNode) { return applyModifier(this, "bold", []) },
+  foreground(this: ViewNode, value: string) { return applyModifier(this, "foreground", [value]) },
+  background(this: ViewNode, value: string) { return applyModifier(this, "background", [value]) },
+  style(this: ViewNode, value: MuseStyleProperties) { return applyModifier(this, "style", [value]) },
+  className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },
+  withProps(this: ViewNode, value: Record<string, unknown>) { return applyModifier(this, "withProps", [value]) },
+  keyed(this: ViewNode, value: string | number) { return applyModifier(this, "keyed", [value]) },
+  elementRef(this: ViewNode, value: unknown) { return applyModifier(this, "elementRef", [value]) },
+}) as Modifiers)
+
+function decorate(node: ViewNode, owned = false): ModifiableViewNode {
   const existing = decoratedNodes.get(node)
   if (existing) return existing
-  const result = { ...node } as ModifiableViewNode
-  const modifier = (name: string, args: readonly unknown[]) => modifiedContent(result, { name, arguments: [...args] })
-  Object.defineProperties(result, {
-    padding: { value: (value: Length = 0) => modifier("padding", [value]) },
-    margin: { value: (value: Length = 0) => modifier("margin", [value]) },
-    gap: { value: (value: Length) => modifier("gap", [value]) },
-    frame: { value: (options: FrameOptions) => modifier("frame", [options]) },
-    font: { value: (value: string) => modifier("font", [value]) },
-    fontSize: { value: (value: Length) => modifier("fontSize", [value]) },
-    bold: { value: () => modifier("bold", []) },
-    foreground: { value: (value: string) => modifier("foreground", [value]) },
-    background: { value: (value: string) => modifier("background", [value]) },
-    style: { value: (value: MuseStyleProperties) => modifier("style", [value]) },
-    className: { value: (value: ClassValue) => modifier("className", [value]) },
-    withProps: { value: (value: Record<string, unknown>) => modifier("withProps", [value]) },
-    keyed: { value: (value: string | number) => modifier("keyed", [value]) },
-    elementRef: { value: (value: unknown) => modifier("elementRef", [value]) },
-  })
+  let result: ModifiableViewNode
+  if (owned && Object.isExtensible(node)) {
+    Object.setPrototypeOf(node, modifierPrototype)
+    result = node as ModifiableViewNode
+  } else {
+    result = Object.assign(Object.create(modifierPrototype), node) as ModifiableViewNode
+  }
   const frozen = Object.freeze(result)
   decoratedNodes.set(node, frozen)
   decoratedNodes.set(frozen, frozen)
@@ -190,7 +261,7 @@ function decorate(node: ViewNode): ModifiableViewNode {
 }
 
 export function viewElement(type: unknown, props: Record<string, unknown> | null = null, children: readonly ViewGraphChild[] = []): ModifiableViewNode {
-  return decorate(Object.freeze({ kind: "element" as const, type, props, children: [...children] }))
+  return decorate({ kind: "element" as const, type, props, children: [...children] }, true)
 }
 
 /** Construct a renderer-neutral foreign component boundary. */
@@ -220,7 +291,7 @@ export function isForeignComponent(value: unknown): value is ForeignComponentDes
 }
 
 export function viewFragment(children: readonly ViewGraphChild[] = []): ModifiableViewNode {
-  return decorate(Object.freeze({ kind: "fragment" as const, children: [...children] }))
+  return decorate({ kind: "fragment" as const, children: [...children] }, true)
 }
 
 export function viewHost(
@@ -230,17 +301,29 @@ export function viewHost(
   render: (props: Record<string, unknown>) => ViewGraphValue,
   state?: (props: Record<string, unknown>) => Record<string, unknown>,
 ): ModifiableViewNode {
-  return decorate(Object.freeze({ kind: "view" as const, name, host, props, render, state }))
+  return decorate({ kind: "view" as const, name, host, props, render, state }, true)
 }
 
-export function modifiedContent(content: ViewNode, modifier: ViewModifierNode): ModifiableViewNode {
-  return decorate(Object.freeze({
-    kind: "modified" as const,
-    content,
-    modifier: Object.freeze({ name: modifier.name, arguments: [...modifier.arguments], props: modifier.props }),
-    name: modifier.name,
-    arguments: [...modifier.arguments],
+export function modifiedContent(content: ViewNode, modifier: ViewModifierNode | readonly ViewModifierNode[]): ModifiableViewNode {
+  const incoming = Array.isArray(modifier) ? modifier : [modifier]
+  if (incoming.length === 0) return decorate(content)
+  const normalizedIncoming = incoming.map(item => Object.freeze({
+    name: item.name,
+    arguments: Object.freeze([...item.arguments]),
+    props: item.props,
   }))
+  const normalizedModifiers = Object.freeze(content.kind === "modified"
+    ? [...content.modifiers, ...normalizedIncoming]
+    : normalizedIncoming)
+  const finalModifier = normalizedModifiers[normalizedModifiers.length - 1]
+  return decorate({
+    kind: "modified" as const,
+    content: content.kind === "modified" ? content.content : content,
+    modifiers: normalizedModifiers,
+    modifier: finalModifier,
+    name: finalModifier.name,
+    arguments: finalModifier.arguments,
+  }, true)
 }
 
 /** Apply a named modifier without coupling the graph to a renderer. */
@@ -250,23 +333,27 @@ export function modifier(content: ViewNode, name: string, ...arguments_: readonl
 
 /** Create a renderer-neutral geometry observation boundary. */
 export function geometryView(content: (geometry: GeometryProxy) => ViewGraphValue): ModifiableViewNode {
-  return decorate(Object.freeze({ kind: "geometry" as const, content }))
+  return decorate({ kind: "geometry" as const, content }, true)
+}
+
+/** Create a lazy graph boundary. Renderers may window its children by range. */
+export function lazyView(
+  name: string,
+  axis: LazyViewNode["axis"],
+  props: Record<string, unknown>,
+  children: readonly ViewGraphChild[] = [],
+): ModifiableViewNode {
+  return decorate({ kind: "lazy" as const, name, axis, props, children: [...children] }, true)
 }
 
 export function isViewNode(value: unknown): value is ViewNode {
   if (typeof value !== "object" || value === null) return false
   const kind = (value as { kind?: unknown }).kind
-  return kind === "element" || kind === "fragment" || kind === "view" || kind === "geometry" || kind === "modified"
+  return kind === "element" || kind === "fragment" || kind === "view" || kind === "geometry" || kind === "lazy" || kind === "modified"
 }
 
 export function modifierGraphOf(value: ViewNode): readonly ViewModifierNode[] {
-  const modifiers: ViewModifierNode[] = []
-  let current: ViewNode = value
-  while (current.kind === "modified") {
-    modifiers.unshift(current.modifier)
-    current = current.content
-  }
-  return modifiers
+  return value.kind === "modified" ? value.modifiers : []
 }
 
 export interface MuseRenderer<Output = unknown> {
@@ -278,6 +365,8 @@ export interface MuseRenderer<Output = unknown> {
   view?(node: ViewHostNode, render: (props?: Record<string, unknown>) => Output, identity: ViewIdentity): Output
   /** Materialize a geometry boundary and feed its measured proxy to the body. */
   geometry?(node: GeometryViewNode, render: (geometry: GeometryProxy) => Output): Output
+  /** Materialize a lazy container; `render` may request a visible child range. */
+  lazy?(node: LazyViewNode, render: (range?: LazyViewRange) => Output, identity: ViewIdentity): Output
 }
 
 export function renderViewNode<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>): Output {
@@ -293,11 +382,15 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<
     case "fragment":
       return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "fragment", index])))
     case "modified":
-      return renderer.modifier(renderViewNodeAt(
-        value.content,
-        renderer,
-        value.modifier.name === "keyed" ? keyedViewIdentity(identity, value.modifier.arguments[0] as string | number) : identity,
-      ), value.modifier)
+      {
+        let contentIdentity = identity
+        for (const item of value.modifiers) {
+          if (item.name === "keyed") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
+        }
+        let rendered = renderViewNodeAt(value.content, renderer, contentIdentity)
+        for (const item of value.modifiers) rendered = renderer.modifier(rendered, item)
+        return rendered
+      }
     case "view":
       {
         // A conditional can replace one View type with another at the same
@@ -320,6 +413,17 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<
       return renderer.geometry
         ? renderer.geometry(value, geometry => renderViewNodeAt(value.content(geometry), renderer, [...identity, "geometry"]))
         : renderViewNodeAt(value.content(zeroGeometry), renderer, [...identity, "geometry"])
+    case "lazy":
+      {
+        const renderChildren = (range?: LazyViewRange): Output => {
+          const start = Math.max(0, range?.start ?? 0)
+          const end = Math.min(value.children.length, range?.end ?? value.children.length)
+          return renderer.fragment(value.children.slice(start, end).map((child, index) => renderViewNodeAt(child, renderer, [...identity, "lazy", start + index])))
+        }
+        return renderer.lazy
+          ? renderer.lazy(value, renderChildren, identity)
+          : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "lazy", index])))
+      }
   }
 }
 
@@ -419,6 +523,8 @@ function metadataOf(target: unknown): readonly InitializerMatch[] {
 }
 
 export function registerInitializers<T extends Function>(target: T, initializers: readonly InitializerMatch[]): T {
+  initializerSpecializations.delete(target as unknown as object)
+  initializerSpecializationEligibility.set(target as unknown as object, canSpecialize(initializers))
   if (!(target as { [museView]?: true })[museView]) {
     Object.defineProperty(target, museView, { configurable: true, enumerable: false, value: true })
   }
@@ -654,10 +760,60 @@ function declaredParametersAccept(candidate: InitializerMatch, args: readonly un
   return true
 }
 
+function suppliedInitializerArguments(args: readonly unknown[]): readonly unknown[] {
+  return args.length === 2 && args[1] === undefined && (args[0] === null || typeof args[0] === "object")
+    ? args.slice(0, -1)
+    : args
+}
+
+function resolveSingleDeclaredInitializer(
+  target: unknown,
+  candidate: InitializerMatch,
+  args: readonly unknown[],
+  genericParameters?: string,
+): InitializerResolution {
+  const supplied = suppliedInitializerArguments(args)
+  const normalized = normalizeNamedArguments(candidate, supplied)
+  if (declaredParametersAccept(candidate, normalized, genericParameters) !== false) {
+    const candidateScore = score(candidate, supplied, normalized, genericParameters)
+    if (Number.isFinite(candidateScore)) {
+      const typed = normalized.map((item, index) => {
+        const parameter = candidate.parameters?.[index]
+        return typeof item === "function" && parameter && parameter.kind !== "binding"
+          ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
+          : item
+      })
+      return { initializer: candidate, args: typed }
+    }
+  }
+  throw new MuseInitializerError(displayNameOf(target), supplied, [candidate.signature])
+}
+
 export function resolveInitializer(target: unknown, args: readonly unknown[]): InitializerResolution {
-  const supplied = args.length === 2 && args[1] === undefined && (args[0] === null || typeof args[0] === "object") ? args.slice(0, -1) : args
+  const supplied = suppliedInitializerArguments(args)
+  const cacheTarget = typeof target === "function" ? target as unknown as object : undefined
+  const cacheKey = cacheTarget && initializerSpecializationEligibility.get(cacheTarget) ? specializationKey(supplied) : undefined
+  const cached = cacheKey && cacheTarget ? initializerSpecializations.get(cacheTarget)?.get(cacheKey) : undefined
+  if (cached) {
+    const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+    const normalized = normalizeNamedArguments(cached, supplied)
+    if (declaredParametersAccept(cached, normalized, genericParameters) !== false) {
+      const typed = cached.parameters
+        ? normalized.map((item, index) => {
+          const parameter = cached.parameters?.[index]
+          return typeof item === "function" && parameter && parameter.kind !== "binding"
+            ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
+            : item
+        })
+        : normalized
+      return { initializer: cached, args: typed }
+    }
+  }
   const candidates = metadataOf(target)
   const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  if (candidates.length === 1 && candidates[0].parameters) {
+    return resolveSingleDeclaredInitializer(target, candidates[0], supplied, genericParameters)
+  }
   const matches = candidates.map(candidate => {
     const normalized = normalizeNamedArguments(candidate, supplied)
     const declared = declaredParametersAccept(candidate, normalized, genericParameters)
@@ -687,6 +843,12 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
       supplied,
       tied.map(candidate => candidate.candidate.signature),
     )
+  }
+  if (cacheKey && cacheTarget && canSpecialize(candidates)) {
+    initializerSpecializationEligibility.set(cacheTarget, true)
+    const cache = initializerSpecializations.get(cacheTarget) ?? new Map<string, InitializerMatch>()
+    cache.set(cacheKey, match.candidate)
+    initializerSpecializations.set(cacheTarget, cache)
   }
   return { initializer: match.candidate, args: match.args }
 }
@@ -738,7 +900,25 @@ export class ViewType<Props extends object = Record<string, unknown>> {
 
   createNode(args: readonly unknown[]): ModifiableViewNode {
     if (!this.target) throw new TypeError(`View type ${this.name} is not bound to a constructor`)
-    const resolution = resolveInitializer(this.target, args)
+    const resolution = this.initializers.length === 1 && this.initializers[0].parameters
+      ? resolveSingleDeclaredInitializer(this.target, this.initializers[0], args, this.genericParameters)
+      : resolveInitializer(this.target, args)
+    return this.createNodeFromResolution(resolution)
+  }
+
+  /**
+   * Materialize a compiler-selected declaration initializer without scanning
+   * the overload set again. The compiler only emits this for an unambiguous
+   * declaration-defined call; the guard keeps hand-written callers safe.
+   */
+  createNodeSpecialized(initializerIndex: number, args: readonly unknown[]): ModifiableViewNode {
+    if (!this.target) throw new TypeError(`View type ${this.name} is not bound to a constructor`)
+    const candidate = this.initializers[initializerIndex]
+    if (!candidate?.parameters) return this.createNode(args)
+    return this.createNodeFromResolution(resolveSingleDeclaredInitializer(this.target, candidate, args, this.genericParameters))
+  }
+
+  private createNodeFromResolution(resolution: InitializerResolution): ModifiableViewNode {
     const props = (resolution.initializer.build?.(resolution.args) ?? {}) as Props
     validateGenericViewBuilders(this.target, resolution, props as Record<string, unknown>)
     if (this.definition.intrinsic) {

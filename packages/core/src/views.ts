@@ -5,6 +5,7 @@ import {
   initializer,
   initializerKinds,
   isViewNode,
+  lazyView,
   modifier,
   resolveBuilderClosure,
   type ViewValue,
@@ -15,7 +16,7 @@ import {
   viewFragment,
 } from "./graph.js"
 import type { MuseCustomElementAttributes, MuseHtmlAttributes, MuseHtmlTagName } from "./html.js"
-import { isStateRef, type BindingRef, type StateRef } from "./state.js"
+import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
 
 export interface VStackOptions {
@@ -27,6 +28,14 @@ export interface HStackOptions {
   readonly alignment?: "top" | "center" | "bottom"
   readonly spacing?: number | string
 }
+
+export interface LazyOptions {
+  readonly estimatedItemSize?: number | string
+  readonly overscan?: number
+}
+
+export interface LazyVStackOptions extends VStackOptions, LazyOptions {}
+export interface LazyHStackOptions extends HStackOptions, LazyOptions {}
 
 export interface ZStackOptions {
   readonly alignment?: "center" | "leading" | "trailing" | "top" | "bottom" | "topLeading" | "topTrailing" | "bottomLeading" | "bottomTrailing"
@@ -392,9 +401,63 @@ export const List = defineBuiltinView<{ content: ViewValue[] }>(
   ({ content }) => viewElement("ul", { "data-muse": "List", style: { listStyle: "none", padding: 0, margin: 0 } }, content),
 )
 
-export const LazyVStack = VStack
-export const LazyHStack = HStack
+function lazyStyle(options: LazyOptions): Record<string, string | undefined> {
+  const estimated = options.estimatedItemSize === undefined ? "44px" : typeof options.estimatedItemSize === "number" ? `${options.estimatedItemSize}px` : options.estimatedItemSize
+  return { contentVisibility: "auto", containIntrinsicSize: `auto ${estimated}` }
+}
+
+function lazyData(options: LazyOptions, axis: "vertical" | "horizontal"): Record<string, unknown> {
+  return {
+    "data-muse-lazy": axis,
+    "data-muse-lazy-estimate": options.estimatedItemSize,
+    "data-muse-lazy-overscan": options.overscan,
+    style: lazyStyle(options),
+  }
+}
+
+export interface LazyVStackProps { readonly options?: LazyVStackOptions; readonly content: ViewValue[] }
+export interface LazyHStackProps { readonly options?: LazyHStackOptions; readonly content: ViewValue[] }
+
+export const LazyVStack = defineBuiltinView<LazyVStackProps>(
+  "LazyVStack",
+  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
+  ({ options = {}, content }) => lazyView("LazyVStack", "vertical", {
+    "data-muse": "LazyVStack",
+    ...lazyData(options, "vertical"),
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      width: "100%",
+      boxSizing: "border-box",
+      alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : "center",
+      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      ...lazyStyle(options),
+    },
+  }, content),
+  "Content: View",
+) as TypedViewConstructor<LazyVStackProps, StackCall<LazyVStackOptions>>
+
+export const LazyHStack = defineBuiltinView<LazyHStackProps>(
+  "LazyHStack",
+  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
+  ({ options = {}, content }) => lazyView("LazyHStack", "horizontal", {
+    "data-muse": "LazyHStack",
+    ...lazyData(options, "horizontal"),
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      width: "100%",
+      boxSizing: "border-box",
+      alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
+      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      ...lazyStyle(options),
+    },
+  }, content),
+  "Content: View",
+) as TypedViewConstructor<LazyHStackProps, StackCall<LazyHStackOptions>>
 
 export function BindingValue<T>(state: StateRef<T> | BindingRef<T>): BindingRef<T> {
+  if (isBinding(state)) return state
+  if (isStateRef(state)) return Binding(state)
   return state as BindingRef<T>
 }

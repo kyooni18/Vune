@@ -1,6 +1,7 @@
 import { createMuseSourceMap, mapGeneratedPosition } from "./source-map.js"
 import { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
 import { createSemanticModel, type MuseSemanticModel } from "./semantic.js"
+import * as ts from "typescript"
 
 export { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
 export type {
@@ -456,42 +457,58 @@ function topLevelColon(source: string): number {
   return -1
 }
 
+const nonBindingDollarNames = new Set([
+  "attrs", "data", "emit", "el", "forceUpdate", "nextTick", "options", "parent", "props", "refs", "root", "slots", "watch",
+])
+
+function isIdentifierDeclaration(node: ts.Identifier): boolean {
+  const parent = node.parent
+  if (ts.isVariableDeclaration(parent) && parent.name === node) return true
+  if (ts.isParameter(parent) && parent.name === node) return true
+  if (ts.isBindingElement(parent) && parent.name === node) return true
+  if (ts.isFunctionDeclaration(parent) && parent.name === node) return true
+  if (ts.isClassDeclaration(parent) && parent.name === node) return true
+  if (ts.isImportClause(parent) && parent.name === node) return true
+  if (ts.isImportSpecifier(parent) && parent.name === node) return true
+  if (ts.isNamespaceImport(parent) && parent.name === node) return true
+  if (ts.isExportSpecifier(parent) && parent.name === node) return true
+  return false
+}
+
+function isBindingShorthandIdentifier(node: ts.Identifier): boolean {
+  if (!node.text.startsWith("$") || node.text.length === 1) return false
+  if (nonBindingDollarNames.has(node.text.slice(1)) || isIdentifierDeclaration(node)) return false
+  const parent = node.parent
+  if (ts.isPropertyAccessExpression(parent) && (parent.expression === node || parent.name === node)) return false
+  if (ts.isElementAccessExpression(parent) && parent.expression === node) return false
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return false
+  if (ts.isMethodDeclaration(parent) && parent.name === node) return false
+  if (ts.isPropertyDeclaration(parent) && parent.name === node) return false
+  if (ts.isMethodSignature(parent) && parent.name === node) return false
+  if (ts.isPropertySignature(parent) && parent.name === node) return false
+  if (ts.isShorthandPropertyAssignment(parent)) return false
+  return true
+}
+
+/**
+ * Lower only actual identifier nodes. The source is intentionally edited by
+ * span so the rest of Muse's syntax lowering keeps its original formatting.
+ * This prevents member properties, declarations, strings, comments, regexes,
+ * and identifiers containing `$` from being mistaken for projections.
+ */
 function lowerShorthand(source: string): string {
-  let result = ""
-  for (let cursor = 0; cursor < source.length;) {
-    const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") {
-      const end = skipString(source, cursor)
-      result += source.slice(cursor, end)
-      cursor = end
-      continue
+  const file = ts.createSourceFile("muse-shorthand.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const edits: Array<{ start: number; end: number; replacement: string }> = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && isBindingShorthandIdentifier(node)) {
+      edits.push({ start: node.getStart(file), end: node.end, replacement: `Binding(${node.text.slice(1)})` })
     }
-    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) {
-      const end = skipComment(source, cursor)
-      result += source.slice(cursor, end)
-      cursor = end
-      continue
-    }
-    if (character === "/" && regexCanStart(source, cursor)) {
-      const end = skipRegex(source, cursor)
-      result += source.slice(cursor, end)
-      cursor = end
-      continue
-    }
-    if (character === "$" && /^[A-Za-z_$][A-Za-z0-9_$]*/.test(source.slice(cursor + 1))) {
-      const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(cursor + 1))!
-      result += `Binding(${match[0]})`
-      cursor += match[0].length + 1
-      continue
-    }
-    if (character === "." && /[A-Za-z_$]/.test(source[cursor + 1] ?? "") && !/[A-Za-z0-9_$)\]}.?/\\/]/.test(source[cursor - 1] ?? "")) {
-      const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(source.slice(cursor + 1))!
-      result += JSON.stringify(match[0])
-      cursor += match[0].length + 1
-      continue
-    }
-    result += character
-    cursor += 1
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  let result = source
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
   }
   return result
 }
@@ -679,6 +696,20 @@ interface StructInitializerPlan {
   readonly delegation?: readonly string[]
 }
 
+type MuseStruct = ReturnType<typeof parseMuseStructs>[number]
+
+function structInitializerPlans(declaration: MuseStruct): readonly StructInitializerPlan[] {
+  const fields = declaration.fields.map(field => ({
+    name: field.name,
+    kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
+    type: field.type,
+    defaultValue: field.initializer,
+  }))
+  return declaration.initializers.length > 0
+    ? declaration.initializers.map(item => structInitializerPlan(item.parametersSource, item.bodySource))
+    : [structInitializerPlan(fields.filter(field => field.kind !== "state").map(field => `${field.name}: unknown${field.defaultValue === undefined ? "" : ` = ${field.defaultValue}`}`).join(", "), "")]
+}
+
 function structInitializerPlan(parameterSource: string, bodySource: string): StructInitializerPlan {
   const parameters = splitTopLevel(parameterSource).filter(Boolean).map(structParameter)
   const assignments = new Map<string, string>()
@@ -721,6 +752,21 @@ function delegatedParameterValues(parameters: readonly StructParameter[], argume
     }
   }
   return values
+}
+
+function compilerInitializerArguments(source: string): readonly string[] {
+  return splitTopLevel(source).flatMap(argument => {
+    const named = /^namedArguments\s*\(\s*\{([\s\S]*)\}\s*\)$/.exec(argument.trim())
+    return named ? splitTopLevel(named[1]) : [argument]
+  })
+}
+
+function staticInitializerIndex(declaration: MuseStruct, argumentSource: string): number | undefined {
+  const arguments_ = compilerInitializerArguments(argumentSource)
+  const matches = structInitializerPlans(declaration).flatMap((plan, index) => (
+    delegatedParameterValues(plan.parameters, arguments_) ? [index] : []
+  ))
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 function findDelegatedInitializer(plans: readonly StructInitializerPlan[], arguments_: readonly string[], excludedIndex: number): { plan: StructInitializerPlan; values: Map<string, string> } | undefined {
@@ -806,9 +852,7 @@ function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[
       type: field.type,
       defaultValue: field.initializer,
     }))
-    const plans = declaration.initializers.length > 0
-      ? declaration.initializers.map(item => structInitializerPlan(item.parametersSource, item.bodySource))
-      : [structInitializerPlan(fields.filter(field => field.kind !== "state").map(field => `${field.name}: unknown${field.defaultValue === undefined ? "" : ` = ${field.defaultValue}`}`).join(", "), "")]
+    const plans = structInitializerPlans(declaration)
     const initializers = plans.map((plan, index) => delegatedStructInitializer(declaration.name, plan, fields, plans, index))
     const stateFields = fields.filter(field => field.kind === "state")
     const state = stateFields.length === 0
@@ -838,6 +882,246 @@ function lowerStructs(source: string): string {
   return output
 }
 
+function lowerStaticStructCalls(source: string, declarations: readonly MuseStruct[]): string {
+  if (declarations.length === 0) return source
+  const known = new Map<string, MuseStruct>()
+  const add = (declaration: MuseStruct): void => {
+    known.set(declaration.name, declaration)
+    for (const nested of declaration.nested ?? []) add(nested)
+  }
+  for (const declaration of declarations) add(declaration)
+
+  const file = ts.createSourceFile("muse-specialization.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const edits: Array<{ start: number; end: number; replacement: string }> = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const declaration = known.get(node.expression.text)
+      const initializerIndex = declaration && staticInitializerIndex(declaration, node.arguments.map(argument => argument.getText(file)).join(", "))
+      if (initializerIndex !== undefined) {
+        const argumentsSource = node.arguments.map(argument => argument.getText(file)).join(", ")
+        edits.push({
+          start: node.expression.getStart(file),
+          end: node.end,
+          replacement: `${node.expression.text}.viewType.createNodeSpecialized(${initializerIndex}, [${argumentsSource}])`,
+        })
+        return
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  let result = source
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+  }
+  return result
+}
+
+function compilerRootFileName(fileName: string): string {
+  const resolvePath = (ts.sys as typeof ts.sys & { resolvePath?: (value: string) => string }).resolvePath
+  if (resolvePath) return resolvePath(fileName)
+  return /^(?:[A-Za-z]:[\\/]|\/)/.test(fileName)
+    ? fileName
+    : `${ts.sys.getCurrentDirectory().replace(/[\\/]$/, "")}/${fileName}`
+}
+
+interface MuseTypeScriptProgram {
+  readonly sourceFile: ts.SourceFile
+  readonly checker: ts.TypeChecker
+}
+
+function createMuseTypeScriptProgram(source: string, fileName: string): MuseTypeScriptProgram | undefined {
+  const rootFileName = compilerRootFileName(fileName)
+  const options: ts.CompilerOptions = {
+    allowJs: false,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    noEmit: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022,
+  }
+  const host = ts.createCompilerHost(options, true)
+  const normalize = (value: string): string => value.replaceAll("\\", "/")
+  const root = normalize(rootFileName)
+  const originalGetSourceFile = host.getSourceFile.bind(host)
+  const originalReadFile = host.readFile.bind(host)
+  const originalFileExists = host.fileExists.bind(host)
+  host.fileExists = requested => normalize(requested) === root || originalFileExists(requested)
+  host.readFile = requested => normalize(requested) === root ? source : originalReadFile(requested)
+  host.getSourceFile = (requested, languageVersion, onError, shouldCreateNewSourceFile) => normalize(requested) === root
+    ? ts.createSourceFile(requested, source, languageVersion, true, ts.ScriptKind.TS)
+    : originalGetSourceFile(requested, languageVersion, onError, shouldCreateNewSourceFile)
+
+  let program: ts.Program
+  try {
+    program = ts.createProgram([rootFileName], options, host)
+  } catch {
+    return undefined
+  }
+  const sourceFile = program.getSourceFile(rootFileName)
+  return sourceFile ? { sourceFile, checker: program.getTypeChecker() } : undefined
+}
+
+const staticModifierNames = new Set([
+  "padding", "margin", "gap", "frame", "font", "fontSize", "bold", "foreground", "background",
+  "style", "className", "withProps", "keyed", "elementRef",
+])
+
+function isMuseViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return false
+  const alias = type.aliasSymbol?.escapedName
+  if (alias === "View" || alias === "ModifiableViewNode") return true
+  if (type.isUnion()) return type.types.length > 0 && type.types.every(item => isMuseViewType(checker, item))
+  const rendered = checker.typeToString(type)
+  return rendered === "View" || rendered === "ModifiableViewNode"
+}
+
+interface StaticModifierCall {
+  readonly name: string
+  readonly node: ts.CallExpression
+}
+
+function staticModifierChain(node: ts.CallExpression): { readonly base: ts.Expression; readonly calls: readonly StaticModifierCall[] } | undefined {
+  const calls: StaticModifierCall[] = []
+  let current: ts.Expression = node
+  while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+    const name = current.expression.name.text
+    if (!staticModifierNames.has(name) || current.expression.questionDotToken) break
+    calls.unshift({ name, node: current })
+    current = current.expression.expression
+  }
+  return calls.length > 0 ? { base: current, calls } : undefined
+}
+
+function lowerStaticModifierChains(source: string, fileName: string): string {
+  if (!Array.from(staticModifierNames).some(name => new RegExp(`\\.${name}\\s*\\(`).test(source))) return source
+
+  let result = source
+  for (let pass = 0; pass < 8; pass += 1) {
+    const program = createMuseTypeScriptProgram(result, fileName)
+    if (!program) return result
+    const candidates: Array<{ node: ts.CallExpression; chain: { readonly base: ts.Expression; readonly calls: readonly StaticModifierCall[] } }> = []
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const chain = staticModifierChain(node)
+        const parent = node.parent
+        const isNestedChain = ts.isCallExpression(parent)
+          && ts.isPropertyAccessExpression(parent.expression)
+          && parent.expression.expression === node
+          && staticModifierNames.has(parent.expression.name.text)
+        if (chain && !isNestedChain && isMuseViewType(program.checker, program.checker.getTypeAtLocation(chain.base))) {
+          candidates.push({ node, chain })
+          return
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(program.sourceFile)
+    if (candidates.length === 0) return result
+
+    const edits = candidates.map(({ node, chain }) => {
+      const base = result.slice(chain.base.getStart(program.sourceFile), chain.base.end)
+      const modifiers = chain.calls.map(({ name, node: call }) => {
+        const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
+          ? "0"
+          : call.arguments.map(argument => result.slice(argument.getStart(program.sourceFile), argument.end)).join(", ")
+        return `{ name: ${JSON.stringify(name)}, arguments: [${argumentsSource}] }`
+      }).join(", ")
+      return {
+        start: node.getStart(program.sourceFile),
+        end: node.end,
+        replacement: `modifiedContent(${base}, [${modifiers}])`,
+      }
+    }).sort((left, right) => right.start - left.start)
+
+    for (const edit of edits) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+    if (result === source) return result
+    source = result
+  }
+  return result
+}
+
+function lowerStaticImportedCalls(source: string, fileName: string): string {
+  const syntax = ts.createSourceFile("muse-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const importedNames = new Set<string>()
+  for (const statement of syntax.statements) {
+    if (!ts.isImportDeclaration(statement) || !statement.importClause) continue
+    if (statement.importClause.name) importedNames.add(statement.importClause.name.text)
+    const bindings = statement.importClause.namedBindings
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) importedNames.add(element.name.text)
+    }
+  }
+  if (!Array.from(importedNames).some(name => new RegExp(`\\b${name}\\s*\\(`).test(source))) return source
+
+  const program = createMuseTypeScriptProgram(source, fileName)
+  if (!program) return source
+  const { sourceFile, checker } = program
+  const hasRestParameter = (signature: ts.Signature): boolean => signature.parameters.some(parameter => (
+    parameter.declarations?.some(declaration => ts.isParameter(declaration) && declaration.dotDotDotToken) ?? false
+  ))
+  const candidates = new Map<ts.CallExpression, number>()
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const type = checker.getTypeAtLocation(node.expression)
+      const viewType = checker.getPropertyOfType(type, "viewType")
+      const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call)
+      const resolved = checker.getResolvedSignature(node)
+      const initializerIndex = resolved
+        ? signatures.findIndex(signature => signature === resolved || signature.declaration === resolved.declaration)
+        : -1
+      const selected = initializerIndex < 0 ? undefined : signatures[initializerIndex]
+      if (viewType && selected && !hasRestParameter(selected)) {
+        candidates.set(node, initializerIndex)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (candidates.size === 0) return source
+
+  const ordered = [...candidates.keys()].sort((left, right) => left.getStart(sourceFile) - right.getStart(sourceFile) || right.end - left.end)
+  const children = new Map<ts.CallExpression | undefined, ts.CallExpression[]>()
+  const stack: ts.CallExpression[] = []
+  for (const candidate of ordered) {
+    while (stack.length > 0 && candidate.getStart(sourceFile) >= stack[stack.length - 1].end) stack.pop()
+    const parent = stack[stack.length - 1]
+    const siblings = children.get(parent) ?? []
+    siblings.push(candidate)
+    children.set(parent, siblings)
+    stack.push(candidate)
+  }
+
+  const replacements = new Map<ts.CallExpression, string>()
+  const renderCandidate = (candidate: ts.CallExpression): string => {
+    const cached = replacements.get(candidate)
+    if (cached) return cached
+    const argumentsSource = candidate.arguments.map(argument => {
+      let rendered = source.slice(argument.getStart(sourceFile), argument.end)
+      const nested = (children.get(candidate) ?? [])
+        .filter(child => child.getStart(sourceFile) >= argument.getStart(sourceFile) && child.end <= argument.end)
+        .sort((left, right) => right.getStart(sourceFile) - left.getStart(sourceFile))
+      for (const child of nested) {
+        const replacement = renderCandidate(child)
+        const start = child.getStart(sourceFile) - argument.getStart(sourceFile)
+        const end = child.end - argument.getStart(sourceFile)
+        rendered = rendered.slice(0, start) + replacement + rendered.slice(end)
+      }
+      return rendered
+    }).join(", ")
+    const replacement = `${candidate.expression.getText(sourceFile)}.viewType.createNodeSpecialized(${candidates.get(candidate)}, [${argumentsSource}])`
+    replacements.set(candidate, replacement)
+    return replacement
+  }
+
+  let result = source
+  for (const candidate of (children.get(undefined) ?? []).sort((left, right) => right.getStart(sourceFile) - left.getStart(sourceFile))) {
+    const start = candidate.getStart(sourceFile)
+    result = result.slice(0, start) + renderCandidate(candidate) + result.slice(candidate.end)
+  }
+  return result
+}
+
 function lowerTopLevelState(source: string): string {
   const declarations: Array<{ name: string; statement: string; start: number; end: number }> = []
   const pattern = /^const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*State(?:<[^()\n]*>)?\(([^\n;]*)\)\s*;?\s*$/gm
@@ -864,7 +1148,7 @@ function lowerTopLevelState(source: string): string {
 }
 
 function ensureImports(source: string): string {
-  const required = ["defineView", "initializer", "resolveBuilderClosure", "namedArguments", "overloadClosure", "Binding", "State", "Element"]
+  const required = ["defineView", "initializer", "resolveBuilderClosure", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent"]
     .filter(name => source.includes(`${name}(`) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
   let result = source
   if (required.length === 0) return result
@@ -929,8 +1213,13 @@ function lowerVueComponentImports(source: string): string {
   return `import { foreignComponent as __museForeignComponent } from "@muse/vue"\n${result}`
 }
 
-export function transformMuseSource(source: string, _fileName = "muse-source.ts"): string {
-  return ensureImports(lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(lowerVueComponentImports(source))))))
+export function transformMuseSource(source: string, fileName = "muse-source.ts"): string {
+  const withVueImports = lowerVueComponentImports(source)
+  const declarations = parseMuseStructs(withVueImports)
+  const lowered = lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(withVueImports))))
+  const withStaticStructCalls = lowerStaticStructCalls(lowered, declarations)
+  const withStaticModifiers = lowerStaticModifierChains(withStaticStructCalls, fileName)
+  return ensureImports(lowerStaticImportedCalls(withStaticModifiers, fileName))
 }
 
 function hasNamedMuseArguments(source: string): boolean {
@@ -950,15 +1239,11 @@ function hasNamedMuseArguments(source: string): boolean {
 }
 
 function hasBindingShorthand(source: string): boolean {
-  for (let cursor = 0; cursor < source.length; cursor += 1) {
-    const character = source[cursor]
-    const next = source[cursor + 1]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
-    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
-    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
-    if (character === "$" && /[A-Za-z_$]/.test(next ?? "") && !/[A-Za-z0-9_$]/.test(source[cursor - 1] ?? "")) return true
-  }
-  return false
+  return lowerShorthand(source) !== source
+}
+
+function hasStaticModifierSyntax(source: string): boolean {
+  return Array.from(staticModifierNames).some(name => new RegExp(`\\.${name}\\s*\\(`).test(source))
 }
 
 function hasMuseSyntax(source: string, allowRawHtml = true): boolean {
@@ -967,6 +1252,7 @@ function hasMuseSyntax(source: string, allowRawHtml = true): boolean {
     || findBuilder(source, 0, true) !== undefined
     || hasBindingShorthand(source)
     || hasNamedMuseArguments(source)
+    || hasStaticModifierSyntax(source)
 }
 
 export function compileMuseFile(source: string, fileName = "muse-source.muse.ts"): MuseTransformResult {

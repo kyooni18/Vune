@@ -393,6 +393,10 @@ function bindingShorthandContext(source: string, index: number): boolean {
   return prefix === 'return' || prefix === 'yield' || prefix === 'case'
 }
 
+const nonBindingDollarNames = new Set([
+  'attrs', 'data', 'emit', 'el', 'forceUpdate', 'nextTick', 'options', 'parent', 'props', 'refs', 'root', 'slots', 'watch',
+])
+
 /** Lower Swift-style `$state` projections without touching JS identifiers. */
 function lowerBindingShorthand(source: string): string {
   let output = ''
@@ -432,7 +436,7 @@ function lowerBindingShorthand(source: string): string {
     }
     if (char === '$' && bindingShorthandContext(source, index)) {
       const match = /^\$([A-Za-z_$][A-Za-z0-9_$]*)/.exec(source.slice(index))
-      if (match) {
+      if (match && !nonBindingDollarNames.has(match[1])) {
         output += `Binding(${match[1]})`
         index += match[0].length
         continue

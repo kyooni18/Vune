@@ -94,11 +94,14 @@ export function markModifiedViewNode(source: object, target: object, name: strin
     arguments: [...args],
     props: isValidElement(target) ? target.props as object | null : null,
   })
+  const modifiers = content.kind === "modified" ? [...content.modifiers, modifier] : [modifier]
+  const finalModifier = modifiers[modifiers.length - 1]
   nodes.set(target, Object.freeze({
     kind: "modified" as const,
-    content,
-    modifier,
-    name,
-    arguments: modifier.arguments,
+    content: content.kind === "modified" ? content.content : content,
+    modifiers: Object.freeze(modifiers),
+    modifier: finalModifier,
+    name: finalModifier.name,
+    arguments: finalModifier.arguments,
   }) as ModifiedContent)
 }

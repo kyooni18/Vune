@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import test from "node:test"
 import ts from "typescript"
@@ -17,7 +18,7 @@ const coreRuntimeExports = [
   "ViewIdentityStore", "ViewType", "ZStack", "actionClosure", "assertInitializerCall", "classNameOf", "closureForKind", "closureKindOf",
   "closureVariantsOf", "collectStateReads", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineView", "edgeInsetsFromCss",
   "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
-  "keyedViewIdentity", "layoutLength", "markMuseClosure", "modifiedContent", "modifier", "modifierGraphOf", "museClosureKind", "museClosureVariants",
+  "keyedViewIdentity", "layoutLength", "lazyView", "markMuseClosure", "modifiedContent", "modifier", "modifierGraphOf", "museClosureKind", "museClosureVariants",
   "museForeignComponent", "museInitializers", "museNamedArguments", "museView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
   "resolveBuilderClosure", "resolveInitializer", "resolveValue", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure",
   "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "zeroGeometry",
@@ -27,7 +28,7 @@ const coreTypeOnlyExports = [
   "AlertProps", "BindingRef", "BoxProps", "ClassValue", "EdgeInsets", "ElementViewNode", "FragmentViewNode", "FrameAlignment", "FrameOptions",
   "GeometryFrame", "GeometryProxy", "GeometryReaderCall", "GeometryReaderProps", "GeometryViewNode", "GridOptions", "GridProps", "HStackOptions",
   "HStackProps", "ImageOptions", "ImageProps", "InitializerMatch", "InitializerParameter", "InitializerParameterKind", "InitializerResolution",
-  "LabelProps", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "MuseClosure", "MuseClosureKind",
+  "LabelProps", "LazyGridOptions", "LazyGridProps", "LazyHStackOptions", "LazyHStackProps", "LazyOptions", "LazyVStackOptions", "LazyVStackProps", "LazyViewNode", "LazyViewRange", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "MuseClosure", "MuseClosureKind",
   "ForeignComponentDescriptor", "ForeignComponentOptions", "ForeignComponentSlot", "MuseClosureVariants", "MuseCustomElementAttributes", "MuseDOMEvent", "MuseEventHandler", "MuseEventTarget", "MuseGlobalHtmlAttributes",
   "MuseHtmlAttributes", "MuseHtmlEventAttributes", "MuseHtmlTagName", "MuseRenderer", "MuseStyleProperties", "MuseStyleValue", "NavigationLinkProps",
   "NavigationStackProps", "PickerOption", "PickerProps", "ProgressViewOptions", "ProgressViewProps", "RoundedRectangleProps", "SafeAreaCall",
@@ -78,6 +79,19 @@ test("canonical authoring does not expose renderer-owned materialization APIs", 
   for (const name of ["Component", "MuseView", "Raw", "mount", "reactElement", "render", "renderToHTML", "view"]) {
     assert.equal(name in muse, false, `${name} belongs to a renderer package`)
   }
+})
+
+test("@muse/react canonical entry stays independent from legacy compiler machinery", () => {
+  const canonicalFiles = ["index.js", "renderer.js", "views.js", "controls.js", "advanced.js", "interop.js", "presentation.js"]
+  const source = canonicalFiles.map(file => readFileSync(resolve(`packages/react/dist/${file}`), "utf8")).join("\n")
+  assert.doesNotMatch(source, /legacy|typescript|@muse\/compiler/)
+  const manifest = JSON.parse(readFileSync(resolve("packages/react/package.json"), "utf8"))
+  assert.equal(manifest.dependencies?.typescript, undefined)
+  assert.equal(manifest.peerDependencies?.typescript, undefined)
+  assert.equal(manifest.dependencies?.["@muse/legacy-react"], "workspace:*")
+  const legacyManifest = JSON.parse(readFileSync(resolve("packages/legacy-react/package.json"), "utf8"))
+  assert.equal(legacyManifest.dependencies?.typescript, "^5.8.3")
+  assert.match(readFileSync(resolve("packages/react/src/legacy/compiler/index.ts"), "utf8"), /@muse\/legacy-react\/compiler/)
 })
 
 test("the 1.0 candidate declaration surface includes type-only exports in the freeze gate", () => {

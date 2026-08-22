@@ -33,7 +33,9 @@ Renderer-specific entry points add only materialization and runtime bridges:
   { hydrate: true })` reuses matching SSR markup, attaches DOM events/refs, and
   keeps subsequent State invalidations live.
 
-The root `react-muse-ui` entry point remains the legacy compatibility surface:
+The root `react-muse-ui` entry point remains the legacy compatibility surface,
+implemented by the separate `@muse/legacy-react` package and exposed through
+the preserved `@muse/react/legacy` proxy paths:
 
 - Core views and state: `view`, `defineView`, `View`, `ViewBuilder`, `State`,
   `Binding`, and `Action`.
@@ -146,9 +148,10 @@ ownership and both subscribers are notified. Proxy identity is not an
 application-level contract. Frozen values, class instances, `Map`, `Set`, and
 React elements should be replaced at the State root when they change.
 
-`Lazy*` uses browser `content-visibility` and intrinsic-size hints. It is not
-windowed virtualization. Use a React virtualization library through
-`Component()` when actual windowing is required.
+`Lazy*` stores a renderer-neutral range boundary with estimated item size and
+overscan metadata. `@muse/web` mounts a windowed range, maintains spacers while
+the viewport scrolls, and preserves keyed identity; React and Vue retain a
+full-graph fallback while exposing the same lazy metadata and SSR shape.
 
 Muse layout is SwiftUI-inspired and web-native. `frame`, `Spacer`, stacks, and
 infinity sizing express relationships through CSS; they do not promise

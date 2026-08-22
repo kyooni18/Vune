@@ -141,7 +141,24 @@ function findAssignments(initBody: string): Map<string, string> {
   return assignments
 }
 
+function previousSignificant(source: string, index: number): string | undefined {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (!/\s/.test(source[cursor])) return source[cursor]
+  }
+  return undefined
+}
+
+function bindingShorthandContext(source: string, index: number): boolean {
+  const previous = previousSignificant(source, index)
+  if (previous !== undefined && '([{=,:;?'.includes(previous)) return true
+  const prefix = source.slice(0, index).match(/([A-Za-z_$][A-Za-z0-9_$]*)\s*$/)?.[1]
+  return prefix === 'return' || prefix === 'yield' || prefix === 'case'
+}
+
 function lowerBindingShorthand(source: string): string {
+  const nonBindingDollarNames = new Set([
+    'attrs', 'data', 'emit', 'el', 'forceUpdate', 'nextTick', 'options', 'parent', 'props', 'refs', 'root', 'slots', 'watch',
+  ])
   let output = ''
   for (let index = 0; index < source.length;) {
     const char = source[index]
@@ -157,9 +174,9 @@ function lowerBindingShorthand(source: string): string {
       index = end
       continue
     }
-    if (char === '$') {
+    if (char === '$' && bindingShorthandContext(source, index)) {
       const match = /^\$([A-Za-z_$][A-Za-z0-9_$]*)/.exec(source.slice(index))
-      if (match) {
+      if (match && !nonBindingDollarNames.has(match[1])) {
         output += `Binding(${match[1]})`
         index += match[0].length
         continue

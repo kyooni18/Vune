@@ -258,13 +258,18 @@ pnpm test
 pnpm run demo:build
 pnpm run test:browser
 pnpm run benchmark:modifiers
+pnpm run benchmark:performance:ci
 ```
 
 `pnpm test` checks the TypeScript build, public type usage, runtime rendering,
 macro transforms, controls, presentation, and State behavior.
-`benchmark:modifiers` compares raw React styles with Muse modifier chains across
-element counts and chain depths; it is a measurement tool, not a virtualization
-benchmark.
+`benchmark:modifiers` compares raw React styles with Muse modifier chains and
+the compiler-shaped flat modifier construction across element counts and chain
+depths. `benchmark:performance:ci` additionally guards initializer
+specialization, View construction, `ForEach`, State updates, React/Vue/Web SSR,
+live DOM reconciliation, and heap-aware runs when Node is launched with
+`--expose-gc`. Modifier CI uses a depth-aware `base + depth × per-depth`
+regression budget instead of one global loose ratio.
 
 ## Further reading
 

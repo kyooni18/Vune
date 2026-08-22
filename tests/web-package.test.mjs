@@ -5,6 +5,7 @@ import {
   Element,
   ForEach,
   GeometryReader,
+  LazyVStack,
   defineBuiltinView,
   defineView,
   initializer,
@@ -137,6 +138,92 @@ test("@muse/web DOM mount preserves events, refs, and State invalidation", async
   unmount()
   assert.equal(reference.current, null)
   assert.equal(container.innerHTML, "")
+})
+
+test("@muse/web patches text, attributes, and events without replacing the DOM node", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const label = State("one")
+  let clicks = 0
+  const Counter = defineView("PatchCounter", {
+    initializers: [initializer("PatchCounter()", args => args.length === 0)],
+    body: () => Element("button", {
+      title: label.value,
+      onclick: () => { clicks += 1 },
+    }, label.value),
+  })
+  const value = Counter()
+  const unmount = mount(value, container)
+  const button = container.firstElementChild
+  assert.ok(button)
+  assert.equal(button.getAttribute("title"), "one")
+  label.value = "two"
+  await Promise.resolve()
+  assert.equal(container.firstElementChild, button)
+  assert.equal(button.getAttribute("title"), "two")
+  assert.equal(button.textContent, "two")
+  button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.equal(clicks, 1)
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web windows lazy children and responds to scroll without rebuilding the boundary", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  container.style.overflowY = "auto"
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: 100 })
+  const children = Array.from({ length: 100 }, (_, index) => Element("span", { "data-item": String(index) }, String(index)))
+  const value = LazyVStack({ estimatedItemSize: 20, overscan: 0 }, ...children)
+  const unmount = mount(value, container)
+  await Promise.resolve()
+  await Promise.resolve()
+  const boundary = container.querySelector("[data-muse-lazy]")
+  assert.ok(boundary)
+  assert.ok(boundary.querySelectorAll("[data-item]").length < children.length)
+  assert.ok(boundary.querySelector("[data-muse-lazy-spacer=after]"))
+
+  const before = boundary.querySelector("[data-item=0]")
+  container.scrollTop = 400
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(container.scrollTop, 400)
+  assert.equal(boundary.querySelector("[data-item=0]"), null)
+  assert.ok(boundary.querySelector("[data-item=20]"))
+  assert.equal(boundary, container.querySelector("[data-muse-lazy]"))
+  assert.equal(before?.isConnected, false)
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web refines lazy ranges from measured child sizes", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  container.style.overflowY = "auto"
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: 100 })
+  const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect
+  Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value() {
+      if (this.hasAttribute("data-item")) return { x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 40, width: 100, height: 40 }
+      return originalRect.call(this)
+    },
+  })
+  const children = Array.from({ length: 100 }, (_, index) => Element("span", { "data-item": String(index) }, String(index)))
+  const unmount = mount(LazyVStack({ estimatedItemSize: 20, overscan: 0 }, ...children), container)
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  const boundary = container.querySelector("[data-muse-lazy]")
+  assert.ok(boundary)
+  assert.equal(boundary.querySelectorAll("[data-item]").length, 3)
+  unmount()
+  Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", { configurable: true, value: originalRect })
+  dom.window.close()
 })
 
 test("@muse/web preserves keyed child State across reorder and resets it after remount", async () => {

@@ -1,7 +1,8 @@
 import { performance } from 'node:perf_hooks'
 import { createElement } from 'react'
-import { Text, VStack } from '../dist/index.js'
+import { Text, VStack, modifiedContent } from '../packages/core/dist/index.js'
 
+const ci = process.env.MUSE_BENCH_CI === '1'
 const defaultCounts = process.env.MUSE_BENCH_CI === '1' ? [100, 1000] : [100, 1000, 10000]
 const itemCounts = (process.env.MUSE_BENCH_ITEMS ?? defaultCounts.join(','))
   .split(',')
@@ -9,6 +10,10 @@ const itemCounts = (process.env.MUSE_BENCH_ITEMS ?? defaultCounts.join(','))
   .filter(value => Number.isFinite(value) && value > 0)
 const depths = [1, 5, 10, 20]
 const rounds = Number(process.env.MUSE_BENCH_ROUNDS ?? (process.env.MUSE_BENCH_CI === '1' ? 2 : 5))
+const maxRatio = Number(process.env.MUSE_BENCH_MAX_RATIO)
+const baseRatio = Number(process.env.MUSE_BENCH_BASE_RATIO ?? (Number.isFinite(maxRatio) ? maxRatio : Number.NaN))
+const depthRatio = Number(process.env.MUSE_BENCH_DEPTH_RATIO ?? 0)
+const flatRatio = Number(process.env.MUSE_BENCH_FLAT_RATIO ?? 1.5)
 const results = []
 
 function measure(name, itemCount, factory) {
@@ -29,22 +34,12 @@ const modifierSteps = [
   element => element.margin(1),
   element => element.background('Canvas'),
   element => element.foreground('CanvasText'),
-  element => element.radius(4),
-  element => element.opacity(0.99),
   element => element.fontSize(14),
-  element => element.fontWeight(500),
-  element => element.lineHeight(1.2),
-  element => element.textAlign('left'),
-  element => element.grow(1),
-  element => element.shrink(1),
-  element => element.flex('0 1 auto'),
-  element => element.wrap('nowrap'),
-  element => element.order(0),
-  element => element.align('stretch'),
-  element => element.justify('flex-start'),
-  element => element.position('relative'),
-  element => element.overflow('visible'),
-  element => element.cursor('default'),
+  element => element.bold(),
+  element => element.style({ lineHeight: 1.2 }),
+  element => element.className('bench'),
+  element => element.withProps({ 'data-bench': true }),
+  element => element.keyed('bench'),
 ]
 
 const rawStyle = {
@@ -70,6 +65,19 @@ const rawStyle = {
   cursor: 'default',
 }
 
+const modifierRecords = [
+  { name: 'padding', arguments: [2] },
+  { name: 'margin', arguments: [1] },
+  { name: 'background', arguments: ['Canvas'] },
+  { name: 'foreground', arguments: ['CanvasText'] },
+  { name: 'fontSize', arguments: [14] },
+  { name: 'bold', arguments: [] },
+  { name: 'style', arguments: [{ lineHeight: 1.2 }] },
+  { name: 'className', arguments: ['bench'] },
+  { name: 'withProps', arguments: [{ 'data-bench': true }] },
+  { name: 'keyed', arguments: ['bench'] },
+]
+
 for (const itemCount of itemCounts) {
   const raw = measure('raw React style', itemCount, () => {
     VStack(...Array.from({ length: itemCount }, (_, index) => createElement('span', {
@@ -86,10 +94,30 @@ for (const itemCount of itemCounts) {
         return element
       }))
     })
-    if (process.env.MUSE_BENCH_MAX_RATIO && average / Math.max(raw, 0.001) > Number(process.env.MUSE_BENCH_MAX_RATIO)) {
-      throw new Error(`Muse modifier chain exceeded the configured ratio at ${itemCount} items and depth ${depth}`)
+    if (Number.isFinite(baseRatio)) {
+      const ratio = average / Math.max(raw, 0.001)
+      const budget = baseRatio + depthRatio * depth
+      if (ratio > budget) {
+        throw new Error(`Muse modifier chain exceeded ${budget}x at ${itemCount} items and depth ${depth}: ${ratio.toFixed(2)}x`)
+      }
     }
   }
+
+  const chained = measure('Muse chained modifier construction', itemCount, () => {
+    for (let index = 0; index < itemCount; index += 1) {
+      let element = Text(String(index))
+      for (const step of modifierSteps) element = step(element)
+    }
+  })
+  const flat = measure('Muse flat modifier construction', itemCount, () => {
+    for (let index = 0; index < itemCount; index += 1) {
+      modifiedContent(Text(String(index)), modifierRecords)
+    }
+  })
+  const flatResult = flat / Math.max(chained, 0.001)
+  results.push({ name: 'flat modifier ratio', itemCount, average: flatResult })
+  console.log(`flat modifier ratio at ${itemCount}: ${flatResult.toFixed(2)}x (budget ${flatRatio}x chained)`)
+  if (ci && flatResult > flatRatio) throw new Error(`Flat modifier construction exceeded ${flatRatio}x chained: ${flatResult.toFixed(2)}x`)
 }
 
 if (results.some(result => !Number.isFinite(result.average))) {

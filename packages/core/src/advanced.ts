@@ -2,6 +2,7 @@ import {
   defineBuiltinView,
   initializer,
   initializerKinds,
+  lazyView,
   resolveBuilderClosure,
   type ModifiableViewNode,
   type TypedViewConstructor,
@@ -123,7 +124,44 @@ export const Stepper = defineBuiltinView<StepperProps>(
   ({ value, step = 1 }) => HStack(Text(String(value.value)), viewElement("button", { type: "button", onClick() { value.value += step } }, ["+"])).withProps({ "data-muse": "Stepper" }),
 ) as TypedViewConstructor<StepperProps, StepperCall>
 
-export const LazyGrid = Grid
+export interface LazyGridOptions extends GridOptions {
+  readonly estimatedItemSize?: number | string
+  readonly overscan?: number
+}
+export interface LazyGridProps { readonly options?: LazyGridOptions; readonly children: ViewValue[] }
+interface LazyGridCall {
+  (content: ViewBuilderClosure): ModifiableViewNode
+  (options: LazyGridOptions, content: ViewBuilderClosure): ModifiableViewNode
+  (options: LazyGridOptions, ...children: ViewBuilderContent[]): ModifiableViewNode
+  (...children: ViewBuilderContent[]): ModifiableViewNode
+}
+
+export const LazyGrid = defineBuiltinView<LazyGridProps>(
+  "LazyGrid",
+  [
+    initializer("LazyGrid(options, @ViewBuilder content)", args => args.length === 2 && isObject(args[0]) && typeof args[1] === "function", args => ({ options: args[0] as LazyGridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object"), initializerKinds.viewBuilder(true, "content")]),
+    initializer("LazyGrid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
+    initializer("LazyGrid(options, ...children)", args => args.length >= 1 && isObject(args[0]) && staticChildren(args.slice(1)), args => ({ options: args[0] as LazyGridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object", true)]),
+    initializer("LazyGrid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
+  ],
+  ({ options = {}, children }) => {
+    const estimated = options.estimatedItemSize === undefined ? "44px" : typeof options.estimatedItemSize === "number" ? `${options.estimatedItemSize}px` : options.estimatedItemSize
+    return lazyView("LazyGrid", "grid", {
+      "data-muse": "LazyGrid",
+      "data-muse-lazy": "grid",
+      "data-muse-lazy-estimate": options.estimatedItemSize,
+      "data-muse-lazy-overscan": options.overscan,
+      style: {
+        display: "grid",
+        gridTemplateColumns: options.columns === undefined ? undefined : typeof options.columns === "number" ? `repeat(${options.columns}, minmax(0, 1fr))` : options.columns,
+        gridTemplateRows: options.rows === undefined ? undefined : typeof options.rows === "number" ? `repeat(${options.rows}, minmax(0, 1fr))` : options.rows,
+        gridAutoFlow: options.autoFlow,
+        contentVisibility: "auto",
+        containIntrinsicSize: `auto ${estimated}`,
+      },
+    }, children)
+  },
+) as TypedViewConstructor<LazyGridProps, LazyGridCall>
 
 export function Key<T extends ModifiableViewNode>(key: string | number, child: T): T {
   return child.keyed(key) as T

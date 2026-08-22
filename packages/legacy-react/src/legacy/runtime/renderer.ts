@@ -39,14 +39,22 @@ export function renderViewNode<Output>(
     return renderViewNode(graphValue, renderer)
   }
   if (value.kind === 'modified') {
-    const content = renderViewNode(value.content, renderer)
-    return renderer.modifier?.(content, value.modifier) ?? content
+    let content = renderViewNode(value.content, renderer)
+    for (const modifier of value.modifiers) content = renderer.modifier?.(content, modifier) ?? content
+    return content
   }
   if (value.kind === 'fragment') {
     return renderer.fragment(value.children.map(child => renderViewNode(child, renderer)))
   }
   if (value.kind === 'geometry') {
     return renderViewNode(value.content(zeroGeometry), renderer)
+  }
+  if (value.kind === 'lazy') {
+    return renderer.element(
+      'div',
+      value.props,
+      ...value.children.map(child => renderViewNode(child, renderer)),
+    )
   }
   return renderer.element(
     value.type,

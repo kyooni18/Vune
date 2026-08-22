@@ -106,6 +106,12 @@ refs, and a renderer adapter. Vue is an adapter implementation; its lifecycle,
 provide/inject, async components, transitions, and teleport remain Vue-owned
 after the graph boundary.
 
+Environment and context remain ownership-sensitive. Core graph values encode
+portable CSS environment semantics such as `SafeArea`; React and Vue context
+providers stay available to foreign components through their native renderer
+boundaries, while Web uses the neutral graph descriptor and does not invent a
+hidden provider model.
+
 ## 7. Renderer conformance
 
 React, Vue, and Web must agree on graph shape, identity, State, Binding,

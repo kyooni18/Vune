@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   Action,
   Binding,
+  BindingValue,
   Button as CoreButton,
   Element as CoreElement,
   ForEach,
@@ -20,8 +21,13 @@ import {
   initializer,
   initializerKinds,
   isForeignComponent,
+  isBinding,
+  LazyGrid,
+  LazyHStack,
+  LazyVStack,
   modifier,
   modifierGraphOf,
+  modifiedContent,
   renderViewNode,
   resolveBuilderClosure,
   subscribeState,
@@ -48,6 +54,14 @@ test("@muse/core builds a renderer-independent graph with immutable modifiers", 
   assert.equal(rendered.modifier, "padding")
   assert.equal(rendered.content.modifier, "font")
   assert.equal(modifier(original, "test", 1).modifier.name, "test")
+  assert.equal(Object.prototype.hasOwnProperty.call(original, "padding"), false)
+  assert.equal(modified.modifiers.length, 2)
+  assert.equal(modified.content.kind, "element")
+  const batched = modifiedContent(original, [
+    { name: "font", arguments: ["title"] },
+    { name: "padding", arguments: [12] },
+  ])
+  assert.deepEqual(modifierGraphOf(batched).map(item => item.name), ["font", "padding"])
 })
 
 test("@muse/core state and Binding stay independent from a renderer", () => {
@@ -61,6 +75,29 @@ test("@muse/core state and Binding stay independent from a renderer", () => {
   Action(state.value += 1)()
   assert.equal(state.value, 3)
   unsubscribe()
+})
+
+test("BindingValue converts StateRef to a real writable BindingRef", () => {
+  const state = State("before")
+  const binding = BindingValue(state)
+  assert.equal(isBinding(binding), true)
+  binding.value = "after"
+  assert.equal(state.value, "after")
+  assert.equal(BindingValue(binding), binding)
+})
+
+test("State and Binding preserve derived, nested, and writable-lens semantics", () => {
+  const state = State({ nested: { count: 1 } })
+  const binding = BindingValue(state)
+  binding.value.nested.count = 2
+  assert.equal(state.value.nested.count, 2)
+
+  const base = State(3)
+  const derived = Binding(() => base.value * 2, value => { base.value = value / 2 })
+  assert.equal(BindingValue(derived), derived)
+  assert.equal(derived.value, 6)
+  derived.value = 10
+  assert.equal(base.value, 5)
 })
 
 test("@muse/core keeps View identity storage renderer-independent", () => {
@@ -148,6 +185,22 @@ test("@muse/core gives ForEach children stable identity keys", () => {
   const value = ForEach([{ id: "a", label: "A" }, { id: "b", label: "B" }], item => CoreText(item.label))
   assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["a:0"]])
   assert.deepEqual(modifierGraphOf(value.children[1]).map(item => item.arguments), [["b:0"]])
+})
+
+test("lazy containers are distinct graph constructors with browser lazy metadata", () => {
+  assert.notEqual(LazyVStack, CoreVStack)
+  assert.notEqual(LazyHStack, CoreVStack)
+  assert.equal(LazyVStack.viewType.name, "LazyVStack")
+  assert.equal(LazyGrid.viewType.name, "LazyGrid")
+  const renderer = {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { children } },
+    value(value) { return value },
+    modifier(content) { return content },
+  }
+  const rendered = renderViewNode(LazyVStack({ estimatedItemSize: 56, overscan: 3 }, CoreText("A")), renderer)
+  assert.equal(rendered.props["data-muse-lazy"], "vertical")
+  assert.equal(rendered.props["data-muse-lazy-overscan"], 3)
 })
 
 test("@muse/core exposes renderer-independent scroll and safe-area semantics", () => {
