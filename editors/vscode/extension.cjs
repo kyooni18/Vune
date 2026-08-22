@@ -54,10 +54,34 @@ function openMuseDocuments(document) {
     .map(candidate => [String(candidate.uri), candidate])).values()]
 }
 
+function semanticSource(document) {
+  const source = document.getText()
+  if (document.languageId !== 'vue') return { source, offset: 0 }
+  const script = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/i.exec(source)
+  if (!script) return undefined
+  return { source: script[1], offset: script.index + script[0].indexOf(script[1]) }
+}
+
+function semanticModel(document) {
+  if (typeof semanticCompiler?.createMuseSemanticModel !== 'function') return undefined
+  const region = semanticSource(document)
+  if (!region) return undefined
+  try {
+    return { ...region, model: semanticCompiler.createMuseSemanticModel(region.source, String(document.uri)) }
+  } catch { return undefined }
+}
+
 function signatureMap(document) {
   const signatures = Object.fromEntries(Object.entries(VIEW_SIGNATURES))
   for (const candidate of openMuseDocuments(document)) {
     const source = candidate.getText()
+    const semantic = semanticModel(candidate)
+    if (semantic) {
+      for (const view of semantic.model.views ?? []) {
+        if (view.initializers?.length) signatures[view.name] = view.initializers.map(initializer => initializer.signature)
+      }
+      continue
+    }
     const structs = /\bstruct\s+([A-Za-z_$][A-Za-z0-9_$]*)[^{}]*\{([\s\S]*?)\}/g
     let match
     while ((match = structs.exec(source))) {
@@ -119,12 +143,22 @@ function signatureHelp(document, position) {
 function declarations(document) {
   const source = document.getText()
   const result = new Map()
+  const semantic = semanticModel(document)
+  if (semantic) {
+      for (const view of semantic.model.views ?? []) {
+        const startOffset = semantic.source.indexOf(view.name, view.range.start)
+        if (startOffset >= 0 && startOffset <= view.range.end) {
+          const start = document.positionAt(semantic.offset + startOffset)
+          result.set(view.name, new vscode.Location(document.uri, new vscode.Range(start, start.translate(0, view.name.length))))
+        }
+      }
+  }
   const pattern = /(?:struct|class|interface|const|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g
   let match
   while ((match = pattern.exec(source))) {
     const start = document.positionAt(match.index + match[0].lastIndexOf(match[1]))
     const end = start.translate(0, match[1].length)
-    result.set(match[1], new vscode.Location(document.uri, new vscode.Range(start, end)))
+    if (!result.has(match[1])) result.set(match[1], new vscode.Location(document.uri, new vscode.Range(start, end)))
   }
   return result
 }
@@ -194,6 +228,34 @@ async function renameEdits(document, position, newName) {
   const edit = new vscode.WorkspaceEdit()
   const documents = await workspaceMuseDocuments(document)
   if (!documents.some(candidate => declarations(candidate).has(token.name))) return undefined
+  const semanticTarget = documents.some(candidate => semanticModel(candidate)?.model.views?.some(view => view.name === token.name))
+  if (semanticTarget) {
+    for (const candidate of documents) {
+      const semantic = semanticModel(candidate)
+      if (semantic) {
+        for (const view of semantic.model.views ?? []) {
+          if (view.name !== token.name) continue
+          const startOffset = semantic.source.indexOf(token.name, view.range.start)
+          if (startOffset >= 0 && startOffset <= view.range.end) {
+            const start = document === candidate ? document.positionAt(semantic.offset + startOffset) : candidate.positionAt(semantic.offset + startOffset)
+            edit.replace(candidate.uri, new vscode.Range(start, start.translate(0, token.name.length)), newName)
+          }
+        }
+        for (const call of semantic.model.calls ?? []) {
+          if (call.callee !== token.name) continue
+          const startOffset = semantic.source.indexOf(token.name, call.range.start)
+          if (startOffset < 0) continue
+          const start = candidate.positionAt(semantic.offset + startOffset)
+          edit.replace(candidate.uri, new vscode.Range(start, start.translate(0, token.name.length)), newName)
+        }
+        continue
+      }
+      if (candidate.languageId === 'vue') {
+        for (const range of codeIdentifierRanges(candidate, token.name)) edit.replace(candidate.uri, range, newName)
+      }
+    }
+    return edit
+  }
   for (const candidate of documents) {
     for (const range of codeIdentifierRanges(candidate, token.name)) edit.replace(candidate.uri, range, newName)
   }
@@ -203,6 +265,41 @@ async function renameEdits(document, position, newName) {
 function semanticTokens(document) {
   const builder = new vscode.SemanticTokensBuilder(SEMANTIC_LEGEND)
   const source = document.getText()
+  const semantic = semanticModel(document)
+  if (semantic) {
+    try {
+      const model = semantic.model
+      const pushName = (name, startOffset, type) => {
+        const offset = semantic.source.indexOf(name, Math.max(0, startOffset))
+        if (offset < 0) return
+        const start = document.positionAt(semantic.offset + offset)
+        builder.push(start.line, start.character, name.length, type, [])
+      }
+      for (const view of model.views ?? []) pushName(view.name, view.range.start, 'class')
+      for (const call of model.calls ?? []) pushName(call.callee, call.range.start, 'function')
+      for (const element of model.htmlElements ?? []) {
+        pushName(element.tag, element.range.start + 1, 'class')
+        for (const attribute of element.attributes ?? []) pushName(attribute, element.range.start, 'property')
+      }
+      for (const field of (model.views ?? []).flatMap(view => view.fields ?? [])) {
+        if (field.kind === 'state' || field.kind === 'binding') pushName(field.name, field.range.start, 'property')
+      }
+      const syntaxPatterns = [
+        { expression: /\binit\b/g, group: 0, type: 'keyword' },
+        { expression: /@(State|Binding|ViewBuilder|Action)\b/g, group: 0, type: 'decorator' },
+      ]
+      for (const { expression, group, type } of syntaxPatterns) {
+        let match
+        while ((match = expression.exec(source))) {
+          const value = match[group]
+          const startOffset = match.index + match[0].indexOf(value)
+          const start = document.positionAt(startOffset)
+          builder.push(start.line, start.character, value.length, type, [])
+        }
+      }
+      return builder.build()
+    } catch { /* Fall through for a partially typed document. */ }
+  }
   const patterns = [
     { expression: /\bstruct\s+([A-Za-z_$][A-Za-z0-9_$]*)/g, group: 1, type: 'class' },
     { expression: /\binit\b/g, group: 0, type: 'keyword' },

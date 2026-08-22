@@ -51,3 +51,32 @@ test("initializer metadata maps mixed positional, labeled, and trailing closures
   assert.match(renderToStaticMarkup(render(MixedCard("Title", namedArguments({ action }), label))), /Title.*Body/)
   assert.match(renderToStaticMarkup(render(MixedCard(namedArguments({ label, action }), "Title"))), /Title.*Body/)
 })
+
+test("initializer ties are an error and do not use declaration order as a fallback", () => {
+  const make = (name, initializers) => defineView(name, {
+    initializers,
+    body: ({ value }) => Text(value),
+  })
+  const first = initializer(
+    "Ambiguous(value: string)",
+    args => args.length === 1 && typeof args[0] === "string",
+    args => ({ value: args[0] }),
+    [initializerKinds.value(true, "value", undefined, "string")],
+  )
+  const second = initializer(
+    "Ambiguous(value: string) [duplicate]",
+    args => args.length === 1 && typeof args[0] === "string",
+    args => ({ value: args[0] }),
+    [initializerKinds.value(true, "value", undefined, "string")],
+  )
+  const forward = make("Ambiguous", [first, second])
+  const reverse = make("AmbiguousReverse", [second, first])
+  for (const View of [forward, reverse]) {
+    assert.throws(() => View("value"), error => {
+      assert.equal(error.name, "MuseInitializerAmbiguityError")
+      assert.match(error.message, /Ambiguous initializer for/)
+      assert.match(error.message, /Candidates:/)
+      return true
+    })
+  }
+})

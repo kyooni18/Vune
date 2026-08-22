@@ -11,14 +11,14 @@ import * as web from "../packages/web/dist/index.js"
 
 const coreRuntimeExports = [
   "Action", "Alert", "Binding", "BindingValue", "Box", "Button", "Capsule", "Circle", "Divider", "Element", "ElementRef", "ForEach",
-  "GeometryReader", "Grid", "Group", "HStack", "Image", "Key", "Label", "LazyGrid", "LazyHStack", "LazyVStack", "Link", "List", "Menu",
-  "MuseInitializerError", "NavigationLink", "NavigationStack", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
+  "ForeignComponent", "GeometryReader", "Grid", "Group", "HStack", "Image", "Key", "Label", "LazyGrid", "LazyHStack", "LazyVStack", "Link", "List", "Menu",
+  "MuseInitializerAmbiguityError", "MuseInitializerError", "NavigationLink", "NavigationStack", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
   "Section", "Sheet", "Slider", "Spacer", "State", "Stepper", "Text", "TextArea", "TextField", "Toggle", "VStack", "ViewBuilder",
   "ViewIdentityStore", "ViewType", "ZStack", "actionClosure", "assertInitializerCall", "classNameOf", "closureForKind", "closureKindOf",
   "closureVariantsOf", "collectStateReads", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineView", "edgeInsetsFromCss",
-  "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isStateRef", "isViewNode",
+  "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
   "keyedViewIdentity", "layoutLength", "markMuseClosure", "modifiedContent", "modifier", "modifierGraphOf", "museClosureKind", "museClosureVariants",
-  "museInitializers", "museNamedArguments", "museView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
+  "museForeignComponent", "museInitializers", "museNamedArguments", "museView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
   "resolveBuilderClosure", "resolveInitializer", "resolveValue", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure",
   "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "zeroGeometry",
 ].sort()
@@ -28,7 +28,7 @@ const coreTypeOnlyExports = [
   "GeometryFrame", "GeometryProxy", "GeometryReaderCall", "GeometryReaderProps", "GeometryViewNode", "GridOptions", "GridProps", "HStackOptions",
   "HStackProps", "ImageOptions", "ImageProps", "InitializerMatch", "InitializerParameter", "InitializerParameterKind", "InitializerResolution",
   "LabelProps", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "MuseClosure", "MuseClosureKind",
-  "MuseClosureVariants", "MuseCustomElementAttributes", "MuseDOMEvent", "MuseEventHandler", "MuseEventTarget", "MuseGlobalHtmlAttributes",
+  "ForeignComponentDescriptor", "ForeignComponentOptions", "ForeignComponentSlot", "MuseClosureVariants", "MuseCustomElementAttributes", "MuseDOMEvent", "MuseEventHandler", "MuseEventTarget", "MuseGlobalHtmlAttributes",
   "MuseHtmlAttributes", "MuseHtmlEventAttributes", "MuseHtmlTagName", "MuseRenderer", "MuseStyleProperties", "MuseStyleValue", "NavigationLinkProps",
   "NavigationStackProps", "PickerOption", "PickerProps", "ProgressViewOptions", "ProgressViewProps", "RoundedRectangleProps", "SafeAreaCall",
   "SafeAreaEdge", "SafeAreaProps", "ScrollAxis", "ScrollViewCall", "ScrollViewProps", "SheetProps", "SliderOptions", "SliderProps", "SpacerCall",
@@ -66,10 +66,10 @@ test("React adds only renderer APIs and preserves canonical export identity", ()
 })
 
 test("Vue, Web, and compiler renderer surfaces remain intentionally narrow", () => {
-  assert.deepEqual(Object.keys(vue).sort(), ["Component", "MuseView", "createVueView", "fromVueRef", "mount", "render", "toVueRef", "vueComponent"])
+  assert.deepEqual(Object.keys(vue).sort(), ["Component", "MuseView", "createVueView", "foreignComponent", "fromVueRef", "mount", "render", "toVueRef", "vueComponent"])
   assert.deepEqual(Object.keys(web).sort(), ["mount", "renderToHTML"])
   assert.deepEqual(Object.keys(compiler).sort(), [
-    "compileMuseFile", "createMuseLanguageService", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource", "lowerMuseBuilderAst",
+    "compileMuseFile", "createMuseLanguageService", "createMuseSemanticModel", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource", "lowerMuseBuilderAst",
     "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "transformMuseSource",
   ])
 })
@@ -90,14 +90,16 @@ test("the 1.0 candidate declaration surface includes type-only exports in the fr
   ])
   assert.deepEqual(declarationExports("packages/vue/dist/index.d.ts"), [
     "Component", "MuseView", "MuseViewProps", "MuseVueSlot", "VueComponentProps", "VueComponentView", "VueMountOptions", "VueView",
-    "createVueView", "fromVueRef", "mount", "render", "toVueRef", "vueComponent",
+    "createVueView", "foreignComponent", "fromVueRef", "mount", "render", "toVueRef", "vueComponent",
   ])
   assert.deepEqual(declarationExports("packages/web/dist/index.d.ts"), ["WebMountOptions", "mount", "renderToHTML"])
   assert.deepEqual(declarationExports("packages/compiler/dist/index.d.ts"), [
     "MuseArgument", "MuseAstLowering", "MuseBuilderNode", "MuseBuilderProgram", "MuseCallExpression", "MuseClosureExpression",
-    "MuseConditionalExpression", "MuseDiagnostic", "MuseLanguageService", "MuseRawExpression", "MuseSourceMap", "MuseSourceMapAnchor",
+    "MuseConditionalExpression", "MuseDiagnostic", "MuseLanguageService", "MuseRawExpression", "MuseSemanticCall", "MuseSemanticField",
+    "MuseSemanticForeignComponent", "MuseSemanticHtmlElement", "MuseSemanticImport", "MuseSemanticInitializer", "MuseSemanticModel", "MuseSemanticView", "MuseSourceMap", "MuseSourceMapAnchor",
     "MuseSourcePosition", "MuseSourceRange", "MuseStructDeclaration", "MuseStructField", "MuseStructInitializer", "MuseTransformResult",
-    "MuseVitePluginOptions", "compileMuseFile", "createMuseLanguageService", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource",
+    "MuseVitePluginOptions",
+    "compileMuseFile", "createMuseLanguageService", "createMuseSemanticModel", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource",
     "lowerMuseBuilderAst", "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "transformMuseSource",
   ])
 })

@@ -2,6 +2,7 @@ import {
   collectStateReads,
   edgeInsetsFromCss,
   frameStyle,
+  isForeignComponent,
   renderViewNode,
   subscribeState,
   viewIdentityKey,
@@ -79,8 +80,12 @@ const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "hr", "i
 
 const htmlRenderer: MuseRenderer<string> = {
   element(type, props, ...children) {
+    const foreign = isForeignComponent(type) ? type : undefined
     const tag = typeof type === "string" ? type : "div"
-    const attributes = Object.entries(props ?? {})
+    const effectiveProps = foreign
+      ? { ...foreign.props, ...foreign.events, ...(foreign.ref === undefined ? {} : { ref: foreign.ref }), ...(props ?? {}), "data-muse-foreign": foreign.name }
+      : props
+    const attributes = Object.entries(effectiveProps ?? {})
       .filter(([key, value]) => value !== undefined && value !== null && value !== false && typeof value !== "function" && key !== "children")
       .map(([key, value]) => {
         const name = key === "className" ? "class" : key === "htmlFor" ? "for" : key

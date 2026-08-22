@@ -51,6 +51,10 @@ The graph can be rendered by multiple renderer implementations through the
 `MuseRenderer` interface. This keeps initializer selection, builder flattening,
 modifier value semantics, and state ownership independent from React.
 
+`ForeignComponent` is the explicit graph boundary for a non-Muse component. It
+stores props, events, slots, and refs as one renderer-neutral descriptor;
+React, Vue, and Web choose only how to materialize that descriptor.
+
 Raw HTML is graph input too. In a `.muse.ts` file the compiler lowers this
 without a tag allow-list, retaining attributes such as `class`, `for`, `aria-*`,
 and `data-*`:

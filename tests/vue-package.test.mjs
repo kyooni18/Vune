@@ -14,6 +14,7 @@ import {
   Component,
   MuseView,
   createVueView,
+  foreignComponent,
   fromVueRef,
   render,
   toVueRef,
@@ -38,11 +39,13 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   const value = VStack(Component(Badge, { label: "Vue component" }))
   const html = await renderToString(createSSRApp({ render: () => render(value) }))
   assert.match(html, /<strong>Vue component<\/strong>/)
-  const MuseBadge = vueComponent(Badge)
+  const MuseBadge = foreignComponent(Badge)
   assert.equal(MuseBadge({ label: "Graph Vue" }).kind, "element")
   const adaptedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge({ label: "Adapted Vue" })) }))
   assert.match(adaptedHtml, /<strong>Adapted Vue<\/strong>/)
   assert.equal(initializersOf(MuseBadge).length, 1)
+  const LegacyMuseBadge = vueComponent(Badge)
+  assert.equal(initializersOf(LegacyMuseBadge).length, 1)
   const namedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge(namedArguments({ label: "Named Vue" }))) }))
   assert.match(namedHtml, /<strong>Named Vue<\/strong>/)
 

@@ -15,5 +15,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "typescript": "^5.8.3"
   }
 }

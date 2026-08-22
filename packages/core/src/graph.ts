@@ -87,6 +87,28 @@ export interface ElementViewNode {
   readonly children: readonly ViewGraphChild[]
 }
 
+export const museForeignComponent = Symbol.for("muse.foreign.component")
+
+export type ForeignComponentSlot = ViewGraphValue | ((...args: any[]) => ViewGraphValue)
+
+export interface ForeignComponentOptions {
+  readonly props?: Record<string, unknown>
+  readonly events?: Record<string, unknown>
+  readonly slots?: Record<string, ForeignComponentSlot>
+  readonly ref?: unknown
+  readonly name?: string
+}
+
+export interface ForeignComponentDescriptor {
+  readonly [museForeignComponent]: true
+  readonly component: unknown
+  readonly props: Record<string, unknown>
+  readonly events: Record<string, unknown>
+  readonly slots: Record<string, ForeignComponentSlot>
+  readonly ref?: unknown
+  readonly name: string
+}
+
 export interface FragmentViewNode {
   readonly kind: "fragment"
   readonly children: readonly ViewGraphChild[]
@@ -169,6 +191,32 @@ function decorate(node: ViewNode): ModifiableViewNode {
 
 export function viewElement(type: unknown, props: Record<string, unknown> | null = null, children: readonly ViewGraphChild[] = []): ModifiableViewNode {
   return decorate(Object.freeze({ kind: "element" as const, type, props, children: [...children] }))
+}
+
+/** Construct a renderer-neutral foreign component boundary. */
+export function ForeignComponent(
+  component: unknown,
+  options: ForeignComponentOptions = {},
+  ...children: ViewGraphChild[]
+): ModifiableViewNode {
+  const descriptor: ForeignComponentDescriptor = Object.freeze({
+    [museForeignComponent]: true,
+    component,
+    props: Object.freeze({ ...(options.props ?? {}) }),
+    events: Object.freeze({ ...(options.events ?? {}) }),
+    slots: Object.freeze({ ...(options.slots ?? {}) }),
+    ...(options.ref === undefined ? {} : { ref: options.ref }),
+    name: options.name ?? (typeof component === "function" && component.name ? component.name : "ForeignComponent"),
+  })
+  return viewElement(descriptor, {
+    ...descriptor.props,
+    ...descriptor.events,
+    ...(descriptor.ref === undefined ? {} : { ref: descriptor.ref }),
+  }, children)
+}
+
+export function isForeignComponent(value: unknown): value is ForeignComponentDescriptor {
+  return typeof value === "object" && value !== null && (value as Partial<ForeignComponentDescriptor>)[museForeignComponent] === true
 }
 
 export function viewFragment(children: readonly ViewGraphChild[] = []): ModifiableViewNode {
@@ -348,6 +396,16 @@ export class MuseInitializerError extends TypeError {
     this.typeName = typeName
     this.arguments = args
     this.candidates = candidates
+  }
+}
+
+/** Thrown when declaration-defined initializer resolution has no unique winner. */
+export class MuseInitializerAmbiguityError extends MuseInitializerError {
+  constructor(typeName: string, args: readonly unknown[], candidates: readonly string[]) {
+    const ordered = [...candidates].sort()
+    super(typeName, args, ordered)
+    this.name = "MuseInitializerAmbiguityError"
+    this.message = `Ambiguous initializer for ${typeName}(${args.map(value => typeof value === "function" ? "closure" : typeof value).join(", ")}). Candidates: ${ordered.join("; ")}.`
   }
 }
 
@@ -550,9 +608,20 @@ function validateGenericViewBuilders(
   }
 }
 
+function labelOrderScore(candidate: InitializerMatch, original: readonly unknown[]): number {
+  if (!candidate.parameters) return 0
+  const carrier = original.find(value => isNamedObject(value) && Object.keys(value).length > 0)
+  if (!carrier || !isNamedObject(carrier)) return 0
+  const labels = candidate.parameters.flatMap(parameter => parameter.label ? [parameter.label] : [])
+  return Object.keys(carrier).reduce((score, key, index) => score + (labels[index] === key ? 1 : 0), 0)
+}
+
 function score(candidate: InitializerMatch, original: readonly unknown[], args: readonly unknown[], genericParameters?: string): number {
   if (!candidate.parameters) return 1
-  let result = 40 + (original === args ? 0 : 80) + (candidate.parameters.length === args.length ? 20 : 0)
+  // Labels are the first part of the language contract. A named carrier keeps
+  // source order so declarations with the same label set but different call
+  // syntax remain distinguishable before closure/type scoring.
+  let result = 40 + labelOrderScore(candidate, original) * 1000 + (original === args ? 0 : 80) + (candidate.parameters.length === args.length ? 20 : 0)
   for (let index = 0; index < candidate.parameters.length; index += 1) {
     const parameter = candidate.parameters[index]
     const value = args[index]
@@ -589,7 +658,7 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
   const supplied = args.length === 2 && args[1] === undefined && (args[0] === null || typeof args[0] === "object") ? args.slice(0, -1) : args
   const candidates = metadataOf(target)
   const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
-  const match = candidates.map(candidate => {
+  const matches = candidates.map(candidate => {
     const normalized = normalizeNamedArguments(candidate, supplied)
     const declared = declaredParametersAccept(candidate, normalized, genericParameters)
     // Parameter metadata is the canonical resolver contract. Predicates remain
@@ -608,8 +677,17 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
       : normalized
     return { candidate, args: typed, score: value }
   }).filter((item): item is { candidate: InitializerMatch; args: readonly unknown[]; score: number } => item !== null)
-    .sort((left, right) => right.score - left.score)[0]
+    .sort((left, right) => right.score - left.score)
+  const match = matches[0]
   if (!match) throw new MuseInitializerError(displayNameOf(target), supplied, candidates.map(candidate => candidate.signature))
+  const tied = matches.filter(candidate => candidate.score === match.score)
+  if (tied.length > 1) {
+    throw new MuseInitializerAmbiguityError(
+      displayNameOf(target),
+      supplied,
+      tied.map(candidate => candidate.candidate.signature),
+    )
+  }
   return { initializer: match.candidate, args: match.args }
 }
 

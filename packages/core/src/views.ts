@@ -134,6 +134,8 @@ export const HStack = defineBuiltinView<HStackProps>(
 ) as TypedViewConstructor<HStackProps, StackCall<HStackOptions>>
 
 export interface ZStackProps { readonly options?: ZStackOptions; readonly content: ViewValue[] }
+const zStackOptions = initializerKinds.value(false, "options", ["alignment"], "object")
+const zStackVariadicOptions = initializerKinds.value(true, "options", ["alignment"], "object", true)
 function zStackPlaceItems(alignment: ZStackOptions["alignment"]): string {
   switch (alignment) {
     case "leading": return "center start"
@@ -152,8 +154,8 @@ export const ZStack = defineBuiltinView<ZStackProps>(
   "ZStack",
   [
     initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [genericStackContent]),
-    initializer("options, @ViewBuilder content", args => args.length === 2 && isOptions(args[0]) && typeof args[1] === "function", args => ({ options: args[0], content: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(false, "options", ["alignment"], "object"), genericStackContent]),
-    initializer("options, ...children", args => args.length >= 1 && isOptions(args[0]) && args.slice(1).every(value => typeof value !== "function"), args => ({ options: args[0], content: args.slice(1).flatMap(stackChildren) })),
+    initializer("options, @ViewBuilder content", args => args.length === 2 && isOptions(args[0]) && typeof args[1] === "function", args => ({ options: args[0], content: resolveBuilderClosure(args[1] as () => ViewValue) }), [zStackOptions, genericStackContent]),
+    initializer("options, ...children", args => args.length >= 1 && isOptions(args[0]) && args.slice(1).every(value => typeof value !== "function"), args => ({ options: args[0], content: args.slice(1).flatMap(stackChildren) }), [zStackVariadicOptions]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
   ({ options = {}, content }) => viewElement("div", {

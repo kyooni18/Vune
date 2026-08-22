@@ -14,6 +14,7 @@ import {
   classNameOf,
   edgeInsetsFromCss,
   frameStyle,
+  isForeignComponent,
   renderViewNode,
   stateVersion,
   subscribeState,
@@ -105,6 +106,20 @@ function normalizeElementProps(props: Record<string, unknown> | null): Record<st
   return next
 }
 
+function normalizeForeignProps(
+  type: Parameters<NonNullable<MuseRenderer<ReactNode>["element"]>>[0],
+  props: Record<string, unknown> | null,
+  children: ReactNode[],
+): Record<string, unknown> | null {
+  if (!isForeignComponent(type)) return normalizeElementProps(props)
+  const next = normalizeElementProps({ ...type.props, ...type.events, ...(props ?? {}) }) ?? {}
+  for (const [name, slot] of Object.entries(type.slots)) {
+    next[name] = (...args: unknown[]) => renderViewNode(typeof slot === "function" ? slot(...args) : slot, renderer)
+  }
+  if (children.length > 0 && !("children" in next)) next.children = children
+  return next
+}
+
 function useReactiveGraph<T>(compute: () => T): T {
   const dependencies = new Set<StateRef<unknown>>()
   const value = collectStateReads(compute, dependency => dependencies.add(dependency))
@@ -186,7 +201,8 @@ function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } 
 
 const renderer: MuseRenderer<ReactNode> = {
   element(type, props, ...children) {
-    return createElement(type as any, normalizeElementProps(props) as any, ...children)
+    const component = isForeignComponent(type) ? type.component : type
+    return createElement(component as any, normalizeForeignProps(type, props, children) as any, ...children)
   },
   fragment(children) {
     return createElement(Fragment, null, ...children)

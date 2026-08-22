@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import ts from "typescript"
-import { compileMuseFile, createMuseLanguageService, createMuseVitePlugin, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
+import { compileMuseFile, createMuseLanguageService, createMuseSemanticModel, createMuseVitePlugin, lowerMuseBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseMuseBuilder, parseMuseStructs, transformMuseSource } from "../packages/compiler/dist/index.js"
 import { musePlugin } from "../packages/vite/dist/index.js"
 import { Text, VStack, defineView, initializer, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
 import { readFileSync } from "node:fs"
@@ -15,6 +15,38 @@ test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax
   assert.match(output, /Each\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /import \{ namedArguments, overloadClosure \} from "@muse\/core"/)
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler and IDE consumers share one Muse plus TypeScript semantic model", () => {
+  const source = `import { Text, VStack } from "@muse/core"
+struct Card<Content: View>: View {
+  let content: Content
+  init(@ViewBuilder content: () => Content) { self.content = content() }
+  var body: some View { VStack() { Text("Hello"); content } }
+}`
+  const model = createMuseSemanticModel(source, "Card.muse.ts")
+  const card = model.view("Card")
+  assert.equal(model.kind, "MuseSemanticModel")
+  assert.equal(card?.qualifiedName, "Card")
+  assert.equal(card?.genericParameters, "Content: View")
+  assert.equal(card?.initializers[0]?.signature, "Card(@ViewBuilder content: () => Content)")
+  assert.ok(model.calls.some(call => call.callee === "VStack" && call.trailingClosure))
+  assert.ok(model.calls.some(call => call.callee === "Text"))
+  assert.ok(model.imports.some(item => item.module === "@muse/core"))
+  assert.equal(model.typescriptDiagnostics.length, 0)
+  assert.equal(createMuseLanguageService().semantic(source, "Card.muse.ts").view("Card")?.name, "Card")
+})
+
+test("semantic model exposes lowered HTML and foreign component symbols", () => {
+  const source = `import VueChart from "./VueChart.vue"
+Element("section", { id: "root", "aria-label": title })
+VueChart(values: values)`
+  const model = createMuseSemanticModel(source, "Interop.muse.ts")
+  assert.deepEqual(model.htmlElements.map(element => [element.tag, element.attributes]), [["section", ["id", "aria-label"]]])
+  assert.deepEqual(model.foreignComponents.map(component => [component.localName, component.module]), [["VueChart", "./VueChart.vue"]])
+  assert.equal(source.slice(model.htmlElements[0].range.start, model.htmlElements[0].range.end), 'Element("section", { id: "root", "aria-label": title })')
+  assert.equal(source.slice(model.foreignComponents[0].range.start, model.foreignComponents[0].range.end), "VueChart(values: values)")
+  assert.equal(model.typescriptDiagnostics.length, 0)
 })
 
 test("@muse/compiler preserves empty, optional, and array builder results", () => {
@@ -172,8 +204,8 @@ MyVueComponent(value: data)`
 test("Vue SFC default imports become transparent Muse Views", () => {
   const output = transformMuseSource(`import VueChart from "./VueChart.vue"
 VueChart(values: values)`, "VueChart.muse.ts")
-  assert.match(output, /import \{ vueComponent as __museVueComponent \} from "@muse\/vue"/)
-  assert.match(output, /const VueChart = __museVueComponent\(__museVueComponent0\)/)
+  assert.match(output, /import \{ foreignComponent as __museForeignComponent \} from "@muse\/vue"/)
+  assert.match(output, /const VueChart = __museForeignComponent\(__museForeignComponent0\)/)
   assert.match(output, /VueChart\(namedArguments\(\{ values: values \}\)\)/)
   assert.equal(ts.createSourceFile("VueChart.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
@@ -199,6 +231,7 @@ test("compiler diagnostics retain the original offset for raw HTML and delimiter
   const commentDiagnostic = createMuseLanguageService().diagnose("Text(\"ok\")\n/* unfinished")
   assert.deepEqual(commentDiagnostic, [{ severity: "error", code: "MUSE_SYNTAX", message: "Unclosed block comment in Muse source", line: 2, column: 1 }])
   assert.deepEqual(createMuseLanguageService().diagnose("<section><span></section>"), [{ severity: "error", code: "MUSE_SYNTAX", message: "Mismatched raw HTML closing tag </section>; expected </span>", line: 1, column: 16 }])
+  assert.deepEqual(createMuseLanguageService().diagnose("const value = )"), [{ severity: "error", code: "MUSE_TYPESCRIPT", message: "Expression expected.", line: 1, column: 15 }])
 })
 
 test("builder scanning ignores regex literals in TypeScript expressions", () => {

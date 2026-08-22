@@ -17,14 +17,16 @@ The canonical `muse` entry point is the renderer-independent graph surface:
 
 - Core Views and state: `Text`, `VStack`, `HStack`, `ZStack`, `ScrollView`,
   `SafeArea`, `GeometryReader`, `Button`, `Element`, `ForEach`, `defineView`, `View`,
-  `ViewBuilder`, `State`, `Binding`, and `Action`.
+  `ViewBuilder`, `State`, `Binding`, `Action`, and the renderer-neutral
+  `ForeignComponent` descriptor.
   View modifiers include immutable `padding`, `margin`, `gap`, `frame`,
   `style`, `className`, `withProps`, `keyed`, and `elementRef` operations.
 
 Renderer-specific entry points add only materialization and runtime bridges:
 
 - `@muse/react` — React materialization and optional React compatibility APIs.
-- `@muse/vue` — Vue VNodes, `MuseView`, `createVueView`, `Component`, slots, and
+- `@muse/vue` — Vue VNodes, `MuseView`, `createVueView`, `Component`, generic
+  foreign-component slots, and
   explicit `toVueRef`/`fromVueRef` bridges. `mount(value, target, { hydrate: true })`
   hydrates Vue SSR markup.
 - `@muse/web` — HTML serialization and DOM mounting. `mount(value, target,
@@ -87,6 +89,10 @@ editor integration. `createMuseTypeScriptLanguageService()` wraps a
 lowered snapshots. `mapGeneratedPosition()` and `mapOriginalPosition()` expose
 the token-level anchors used by that adapter. Vite transforms use the standard
 source-map shape.
+
+The normative cross-layer contracts for these APIs are in
+[`docs/SEMANTICS.md`](./SEMANTICS.md). `createMuseSemanticModel()` exposes the
+shared Muse AST plus lowered TypeScript AST used by compiler and IDE clients.
 
 Modifier chains are immutable. They return cloned compatibility values and retain an
 inspectable `modifierGraphOf()` record, analogous to a `ModifiedContent<View,

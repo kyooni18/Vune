@@ -6,6 +6,7 @@ import {
   Button as CoreButton,
   Element as CoreElement,
   ForEach,
+  ForeignComponent,
   GeometryReader,
   SafeArea,
   ScrollView,
@@ -18,6 +19,7 @@ import {
   edgeInsetsFromCss,
   initializer,
   initializerKinds,
+  isForeignComponent,
   modifier,
   modifierGraphOf,
   renderViewNode,
@@ -123,6 +125,23 @@ test("@muse/core owns built-in and custom View graphs without a renderer", () =>
   assert.equal(graph.type, "div")
   assert.equal(graph.children[0].type, "section")
   assert.equal(graph.children[0].props.class, "card")
+})
+
+test("@muse/core represents foreign components as explicit graph descriptors", () => {
+  const reference = { current: null }
+  const component = function ProfileCard() { return null }
+  const value = ForeignComponent(component, {
+    props: { label: "Muse" },
+    events: { onSave: () => undefined },
+    slots: { header: () => CoreText("Header") },
+    ref: reference,
+  }, CoreText("Body"))
+  assert.equal(value.kind, "element")
+  assert.equal(isForeignComponent(value.type), true)
+  assert.equal(value.type.component, component)
+  assert.deepEqual(value.type.props, { label: "Muse" })
+  assert.deepEqual(Object.keys(value.type.events), ["onSave"])
+  assert.equal(value.props.ref, reference)
 })
 
 test("@muse/core gives ForEach children stable identity keys", () => {

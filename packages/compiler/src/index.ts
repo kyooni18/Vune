@@ -1,7 +1,6 @@
-import {
-  createMuseSourceMap,
-} from "./source-map.js"
+import { createMuseSourceMap, mapGeneratedPosition } from "./source-map.js"
 import { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
+import { createSemanticModel, type MuseSemanticModel } from "./semantic.js"
 
 export { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
 export type {
@@ -18,6 +17,16 @@ export type {
   MuseStructField,
   MuseStructInitializer,
 } from "./ast.js"
+export type {
+  MuseSemanticCall,
+  MuseSemanticField,
+  MuseSemanticForeignComponent,
+  MuseSemanticHtmlElement,
+  MuseSemanticImport,
+  MuseSemanticInitializer,
+  MuseSemanticModel,
+  MuseSemanticView,
+} from "./semantic.js"
 export { mapGeneratedPosition, mapOriginalPosition } from "./source-map.js"
 export type { MuseSourceMapAnchor, MuseSourcePosition } from "./source-map.js"
 
@@ -41,7 +50,7 @@ export interface MuseTransformResult {
 
 export interface MuseDiagnostic {
   readonly severity: "error"
-  readonly code: "MUSE_SYNTAX"
+  readonly code: "MUSE_SYNTAX" | "MUSE_TYPESCRIPT"
   readonly message: string
   readonly line: number
   readonly column: number
@@ -907,17 +916,17 @@ function lowerVueComponentImports(source: string): string {
   let index = 0
   while ((match = pattern.exec(source))) {
     const importedName = match[2]
-    const adapterName = `__museVueComponent${index++}`
+    const adapterName = `__museForeignComponent${index++}`
     replacements.push({
       start: match.index,
       end: match.index + match[0].length,
-      value: `${match[1]}import ${adapterName} from ${match[3]}${match[4]}${match[3]}\n${match[1]}const ${importedName} = __museVueComponent(${adapterName})`,
+      value: `${match[1]}import ${adapterName} from ${match[3]}${match[4]}${match[3]}\n${match[1]}const ${importedName} = __museForeignComponent(${adapterName})`,
     })
   }
   if (replacements.length === 0) return source
   let result = source
   for (const replacement of replacements.reverse()) result = result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end)
-  return `import { vueComponent as __museVueComponent } from "@muse/vue"\n${result}`
+  return `import { foreignComponent as __museForeignComponent } from "@muse/vue"\n${result}`
 }
 
 export function transformMuseSource(source: string, _fileName = "muse-source.ts"): string {
@@ -965,6 +974,11 @@ export function compileMuseFile(source: string, fileName = "muse-source.muse.ts"
   return { code, map: createMuseSourceMap(source, code, fileName) }
 }
 
+/** Build the shared Muse + TypeScript semantic model used by compiler clients and IDE tooling. */
+export function createMuseSemanticModel(source: string, fileName = "muse-source.muse.ts"): MuseSemanticModel {
+  return createSemanticModel(source, fileName, transformMuseSource(source, fileName))
+}
+
 export function formatMuseSource(source: string): string {
   return transformMuseSource(source)
 }
@@ -979,7 +993,23 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
       else if (source[cursor] === "(") matching(source, cursor, "(", ")")
       else if (source[cursor] === "{") matching(source, cursor, "{", "}")
     }
-    return []
+    const fileName = "muse-source.muse.ts"
+    const generatedSource = transformMuseSource(source, fileName)
+    const model = createSemanticModel(source, fileName, generatedSource)
+    if (model.typescriptDiagnostics.length === 0) return []
+    const map = createMuseSourceMap(source, generatedSource, fileName)
+    return model.typescriptDiagnostics.map(diagnostic => {
+      const start = diagnostic.start ?? 0
+      const position = model.typescript.getLineAndCharacterOfPosition(start)
+      const mapped = mapGeneratedPosition(map, { line: position.line + 1, column: position.character + 1 })
+      return {
+        severity: "error" as const,
+        code: "MUSE_TYPESCRIPT" as const,
+        message: tsDiagnosticMessage(diagnostic),
+        line: mapped.line,
+        column: mapped.column,
+      }
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const offset = typeof error === "object" && error !== null && "offset" in error && typeof error.offset === "number" ? error.offset : 0
@@ -988,12 +1018,20 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
   }
 }
 
+function tsDiagnosticMessage(diagnostic: { readonly messageText: unknown }): string {
+  if (typeof diagnostic.messageText === "string") return diagnostic.messageText
+  if (!diagnostic.messageText || typeof diagnostic.messageText !== "object") return String(diagnostic.messageText)
+  const chain = diagnostic.messageText as { readonly messageText?: unknown; readonly next?: readonly { readonly messageText?: unknown }[] }
+  return [chain.messageText, ...(chain.next ?? []).map(item => item.messageText)].filter(Boolean).join(" ")
+}
+
 export interface MuseLanguageService {
   readonly format: (source: string) => string
   readonly diagnose: (source: string) => readonly MuseDiagnostic[]
   readonly transform: (source: string, id?: string) => MuseTransformResult
   readonly positionAt: (source: string, offset: number) => { line: number; column: number }
   readonly offsetAt: (source: string, position: { line: number; column: number }) => number
+  readonly semantic: (source: string, fileName?: string) => MuseSemanticModel
 }
 
 export function createMuseLanguageService(): MuseLanguageService {
@@ -1011,6 +1049,7 @@ export function createMuseLanguageService(): MuseLanguageService {
       const line = Math.max(1, Math.min(lines.length, position.line))
       return lines.slice(0, line - 1).reduce((offset, item) => offset + item.length + 1, 0) + Math.max(0, position.column - 1)
     },
+    semantic: createMuseSemanticModel,
   }
 }
 

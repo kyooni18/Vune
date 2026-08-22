@@ -25,9 +25,11 @@ import {
   collectStateReads,
   defineView,
   edgeInsetsFromCss,
+  ForeignComponent,
   frameStyle,
   initializer,
   initializerKinds,
+  isForeignComponent,
   renderViewNode,
   subscribeState,
   viewIdentityKey,
@@ -100,7 +102,7 @@ function mergeProps(current: Record<string, unknown> | null | undefined, extra: 
 
 function renderVueElement(type: unknown, props: Record<string, unknown> | null, children: VNodeChild[]): VNode {
   const rawSlots = (props as Record<PropertyKey, unknown> | null)?.[museVueSlots] as Record<string, MuseVueSlot> | undefined
-  const normalizedProps = props ? { ...props } : null
+  let normalizedProps = props ? { ...props } : null
   if (normalizedProps) delete (normalizedProps as Record<PropertyKey, unknown>)[museVueSlots]
   if (normalizedProps) {
     for (const [key, value] of Object.entries(normalizedProps)) {
@@ -110,14 +112,24 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
       }
     }
   }
+  const foreign = isForeignComponent(type) ? type : undefined
+  if (foreign) {
+    normalizedProps = { ...foreign.props, ...foreign.events, ...(normalizedProps ?? {}) }
+    if (foreign.ref !== undefined) normalizedProps.ref = foreign.ref
+  }
   if (typeof type === "string") return h(type, normalizedProps, children)
-  const slots = rawSlots
+  const slots = foreign?.slots
+    ? {
+        ...Object.fromEntries(Object.entries(foreign.slots).map(([name, slot]) => [name, (...args: unknown[]) => render(typeof slot === "function" ? slot(...args) : slot)])),
+        ...(children.length > 0 && !foreign.slots.default ? { default: () => children } : {}),
+      }
+    : rawSlots
     ? {
         ...Object.fromEntries(Object.entries(rawSlots).map(([name, slot]) => [name, (...args: unknown[]) => render(typeof slot === "function" ? slot(...args) : slot)])),
         ...(children.length > 0 && !rawSlots.default ? { default: () => children } : {}),
       }
     : children.length > 0 ? { default: () => children } : undefined
-  return h(type as VueComponentType, normalizedProps, slots)
+  return h((foreign?.component ?? type) as VueComponentType, normalizedProps, slots)
 }
 
 const renderer: MuseRenderer<VNodeChild> = {
@@ -298,9 +310,9 @@ export function Component(
   props: (Record<string, unknown> & { readonly slots?: Record<string, MuseVueSlot> }) | null = null,
   ...children: ViewValue[]
 ): ModifiableViewNode {
-  if (!props?.slots) return viewElement(type, props, children)
-  const { slots, ...componentProps } = props
-  return viewElement(type, { ...componentProps, [museVueSlots]: slots }, children)
+  if (typeof type === "string") return viewElement(type, props, children)
+  const { slots, ...componentProps } = props ?? {}
+  return ForeignComponent(type, { props: componentProps, slots }, ...children)
 }
 
 /** Adapt a Vue component definition into a Muse-callable, preserving its Vue prop surface. */
@@ -318,6 +330,11 @@ export function vueComponent<C extends VueComponentType>(type: C): VueComponentV
   }) as unknown as VueComponentView<C>
   Object.defineProperty(View, "component", { configurable: false, enumerable: false, value: type })
   return View
+}
+
+/** Generic foreign-component callable layer; Vue is the first host implementation. */
+export function foreignComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
+  return vueComponent(type)
 }
 
 /** Bridge Muse State to a Vue Ref without making State a Vue primitive. */
