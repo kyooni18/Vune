@@ -16,6 +16,7 @@ import {
   VStack,
   view,
 } from '../dist/index.js'
+import { GeometryReader, Text as CanonicalText, render as canonicalRender, view as canonicalView } from '../packages/react/dist/index.js'
 
 function installDOM() {
   const dom = new JSDOM('<!doctype html><html><body><main id="root"></main></body></html>', {
@@ -70,6 +71,50 @@ test('State-driven views rerender and controlled inputs update in JSDOM', async 
 
     await act(async () => { root.unmount() })
     assert.equal(document.getElementById('root').textContent, '')
+  } finally {
+    restore()
+  }
+})
+
+test('GeometryReader feeds measured host geometry back into the React graph', async () => {
+  const restore = installDOM()
+  window.getComputedStyle = () => ({ paddingTop: '12px', paddingRight: '8px', paddingBottom: '4px', paddingLeft: '2px' })
+  const previousResizeObserver = globalThis.ResizeObserver
+  globalThis.ResizeObserver = class {
+    constructor(callback) { this.callback = callback }
+    observe(element) {
+      element.getBoundingClientRect = () => ({ x: 4, y: 8, width: 320, height: 48, top: 8, right: 324, bottom: 56, left: 4 })
+      this.callback([])
+    }
+    disconnect() {}
+  }
+  try {
+    const App = canonicalView(() => GeometryReader(geometry => CanonicalText(`${geometry.frame.x}:${geometry.size.width}:${geometry.safeAreaInsets.top}`)))
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+    await act(async () => {})
+    assert.match(document.body.textContent, /4:320:12/)
+    await act(async () => { root.unmount() })
+  } finally {
+    if (previousResizeObserver === undefined) delete globalThis.ResizeObserver
+    else globalThis.ResizeObserver = previousResizeObserver
+    restore()
+  }
+})
+
+test('canonical @muse/react graph output hydrates through the standard React boundary', async () => {
+  const restore = installDOM()
+  try {
+    const container = document.getElementById('root')
+    container.innerHTML = renderToString(canonicalRender(CanonicalText('Hydrated canonical graph')))
+    const recoverableErrors = []
+    const root = hydrateRoot(container, canonicalRender(CanonicalText('Hydrated canonical graph')), {
+      onRecoverableError(error) { recoverableErrors.push(error) },
+    })
+    await act(async () => {})
+    assert.equal(recoverableErrors.length, 0)
+    assert.equal(container.textContent, 'Hydrated canonical graph')
+    await act(async () => { root.unmount() })
   } finally {
     restore()
   }

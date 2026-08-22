@@ -1,11 +1,9 @@
 # Getting started with Muse
 
-Muse is a SwiftUI-like declarative UI layer for React. You describe layout with
-relationships such as `VStack`, `HStack`, `Grid`, and `Spacer`, while React
-continues to own rendering, components, hooks, refs, and context.
-
-This guide covers the smallest useful Muse application: a Vite app with one
-stateful screen, a React component, and a few interactive controls.
+Muse is a renderer-independent, SwiftUI-like declarative UI graph for
+TypeScript. `muse` defines Views, state, builders, modifiers, and raw HTML;
+`@muse/react` materializes the graph in React. The same graph can also be
+rendered by `@muse/vue` or `@muse/web`.
 
 ## Requirements
 
@@ -18,22 +16,23 @@ stateful screen, a React component, and a few interactive controls.
 In an existing React application:
 
 ```bash
-pnpm add react-muse-ui react react-dom
+pnpm add muse @muse/react @muse/vite react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
 When working from a local Muse checkout:
 
 ```bash
-pnpm add ../Muse
+pnpm add ../Muse/packages/muse ../Muse/packages/react ../Muse/packages/vite
 pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-## Install the starter demo
+## Install the starter demo (compatibility CLI)
 
-After adding Muse to a Vite project, install the minimal demo into that
-project's `src/` directory:
+The repository's `muse init` command is retained for the legacy React starter.
+It writes the starter files and configures the compatibility macro; it is not
+required by the canonical package workflow.
 
 ```bash
 pnpm exec muse init --force
@@ -41,44 +40,54 @@ pnpm exec muse init --force
 
 The command replaces `src/App.tsx` and the two starter style files, then adds
 `museMacro()` before the React plugin in `vite.config.ts`. The `--force` flag is
-required when those files already exist, so `pnpm add react-muse-ui` does not silently
-overwrite application code.
+required when those files already exist.
 
 ## Configure Vite
 
-The Muse macro is optional, but it makes stateful screens compact. When it is
-enabled, place `museMacro()` before the React plugin:
+The canonical compiler handles `.muse.ts` files and must run before the React
+plugin:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { museMacro } from 'react-muse-ui/vite'
+import { musePlugin } from '@muse/vite'
 
 export default defineConfig({
   plugins: [
-    museMacro(),
+    musePlugin(),
     react(),
   ],
 })
 ```
 
-The macro is a build-time transform. It does not replace React or introduce a
-second renderer.
+The plugin is a build-time syntax transform. It does not replace React or
+introduce a second renderer.
 
-If you use automatic JSX, configure Muse's runtime and modifier attribute types
-in `tsconfig.json`:
+For Vue, install `@vitejs/plugin-vue` and keep the same `musePlugin()` before
+it. The adapter lowers Muse syntax in `.vue` script blocks and Vue virtual
+script modules while leaving `<template>` and stylesheet modules to Vue/Vite:
+
+```ts
+import vue from '@vitejs/plugin-vue'
+import { musePlugin } from '@muse/vite'
+
+export default defineConfig({ plugins: [musePlugin(), vue()] })
+```
+
+If a compatibility JSX entry is needed, configure it explicitly. Canonical
+Muse source does not require JSX:
 
 ```json
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "react-muse-ui"
+    "jsxImportSource": "@muse/react/legacy"
   }
 }
 ```
 
-This enables intrinsic JSX such as `<div padding={12} />`. Function DSL and
-JSX-created Muse nodes use the same modifier/plugin pipeline.
+This enables legacy intrinsic JSX such as `<div padding={12} />`. Function DSL
+and canonical `.muse.ts` source use the same graph modifier pipeline.
 
 ## Create the React entry point
 
@@ -98,47 +107,22 @@ The following screen uses a `State` value, a coordinate-free layout, and an
 event action:
 
 ```ts
-import {
-  Action,
-  Button,
-  State,
-  Text,
-  VStack,
-  view,
-} from 'react-muse-ui'
+import { Action, State, Text, VStack } from 'muse'
+import { Button, view } from '@muse/react'
 
-const count = State(0)
-
-export default view(
-  VStack(
-    { alignment: 'leading', spacing: 12 },
-    Text(`Count: ${count.value}`).fontSize(24).bold(),
-    Button('Increase', Action(count.value += 1)),
-  ).padding(24),
-)
-```
-
-With the Vite macro, top-level `State()` declarations are moved into the
-component's per-instance state factory. Each mounted copy of the view gets its
-own `count` value.
-
-`Action(expression)` defers the expression until the event runs. Without the
-macro, use a normal callback instead:
-
-```ts
 export default view({
   state: () => ({ count: State(0) }),
   body: ({ count }) => VStack(
-    Text(`Count: ${count.value}`),
-    Button('Increase', () => { count.value += 1 }),
-  ),
+    { alignment: 'leading', spacing: 12 },
+    Text(`Count: ${count.value}`).fontSize(24).bold(),
+    Button('Increase', Action(() => { count.value += 1 })),
+  ).padding(24),
 })
 ```
 
-The macro uses the TypeScript AST, so generic calls such as `State<Todo[]>([])`
-and nested functions are handled according to lexical scope. It also returns
-source maps through the Vite plugin. `Action(() => save())` is already a
-callback and is left unchanged.
+`state` is a per-mounted-view factory, so each mounted copy owns its `count`.
+`Action(() => save())` is evaluated when the event runs. The compiler preserves
+source ranges for diagnostics and source maps.
 
 ## Use mutable collections
 
@@ -171,7 +155,8 @@ the same tree:
 
 ```ts
 import { createElement } from 'react'
-import { Component, HStack, Spacer, Text, VStack } from 'react-muse-ui'
+import { HStack, Spacer, Text, VStack } from 'muse'
+import { Component } from '@muse/react'
 
 function ProfileCard({ name }: { name: string }) {
   return createElement('strong', null, name)
@@ -206,10 +191,9 @@ mutation ownership and both containers' subscribers are notified. Proxy
 identity is not a public contract; replace the State root for frozen values,
 class instances, `Map`, `Set`, or React elements.
 
-The root `react-muse-ui` import is the stable function-DSL surface. The experimental
-layout engine, coordinate observer, metadata/plugin registry, and block-builder
-transform are available explicitly from `react-muse-ui/experimental` while their
-integration contract evolves.
+The root `react-muse-ui` import and `react-muse-ui/vite` macro remain available
+only for compatibility with older applications. New code should use `muse`,
+`@muse/react`, and `@muse/vite`.
 
 ## Styling
 
@@ -222,7 +206,7 @@ Text('Card')
   .padding(16)
   .background('#111827')
   .foreground('#f9fafb')
-  .radius(12)
+  .style({ borderRadius: 12 })
 ```
 
 Use `.style()` for an inline CSS escape hatch and `.className()` for external
@@ -251,8 +235,9 @@ keyboard navigation with `menuitem` children.
 
 ## Run the Muse example
 
-The repository includes a small component demo in `examples/App.ts`. It shows
-common Muse controls inside a simple declarative layout.
+The repository includes a small React component demo in `examples/App.ts` and a
+canonical Vue SFC bridge in `examples/VueCounter.vue`. Both use the same Muse
+graph primitives at their renderer boundary.
 
 From the repository root:
 

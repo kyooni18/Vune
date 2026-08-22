@@ -1,8 +1,24 @@
 # Muse
 
-Muse is a SwiftUI-like declarative UI layer for React. It keeps layout coordinate-free, lets UI be written as plain TypeScript expressions, and uses React as the renderer and component runtime.
+Muse is a renderer-independent declarative UI framework hosted by TypeScript.
+Its `muse` package and `@muse/core` build immutable Muse View graphs;
+`@muse/react`, `@muse/vue`, and `@muse/web` materialize those graphs for their
+respective runtimes. `react-muse-ui` remains an explicit compatibility package.
 
-The default Vite workflow can hide common callback wrappers with `State`, `Action`, and `view` macros, so a stateful screen can stay compact without JSX.
+The dependency direction is:
+
+```text
+.muse.ts -> @muse/compiler -> Muse View graph -> @muse/react, @muse/vue, or @muse/web
+```
+
+React is a renderer, not the definition of a Muse View.
+
+New framework code should import graph values from `muse` and select a renderer
+explicitly from `@muse/react`, `@muse/vue`, or `@muse/web`. The historical
+`react-muse-ui` entry point remains available as a compatibility facade backed
+by `@muse/react/legacy`.
+
+The canonical Vite workflow lowers Muse builders and custom `struct ...: View` declarations without coupling the graph to a renderer. The compatibility React workflow also offers `State`, `Action`, and `view` macros.
 
 ## Quick start
 
@@ -20,19 +36,19 @@ pnpm exec muse init --force
 ```
 
 This explicitly writes `src/App.tsx`, `src/App.css`, and `src/index.css` in the
-current project and adds `museMacro()` before the React plugin in
-`vite.config.ts`. Installing Muse alone never overwrites an existing app file.
+current project and adds the compatibility `museMacro()` before the React plugin
+in `vite.config.ts`. Installing Muse alone never overwrites an existing app file.
 
-For Vite, install the React plugin and put the Muse macro before it:
+For the canonical Vite compiler, install the React plugin and put `musePlugin()` before it:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { museMacro } from 'react-muse-ui/vite'
+import { musePlugin } from '@muse/vite'
 
 export default defineConfig({
   plugins: [
-    museMacro(),
+    musePlugin(),
     react(),
   ],
 })
@@ -42,24 +58,23 @@ A Muse screen can then be a plain `.ts` file:
 
 ```ts
 import {
-  Action,
   Button,
   HStack,
   Spacer,
   State,
   Text,
   VStack,
-  view,
-} from 'react-muse-ui'
+} from 'muse'
+import { Action, view } from '@muse/react'
 
 const count = State(0)
 
-export default view(
+export default view(() => (
   VStack(
     { alignment: 'leading', spacing: 16 },
     Text('Hello, Muse').fontSize(28).bold(),
     Text(`Count: ${count.value}`),
-    Button('Increase', Action(count.value += 1)),
+    Button('Increase', Action(() => { count.value += 1 })),
     HStack(
       Text('Left'),
       Spacer(),
@@ -67,11 +82,16 @@ export default view(
     ).frame({ maxWidth: 'infinity' }),
   )
   .padding(24)
-  .frame({ maxWidth: 'infinity' }),
-)
+  .frame({ maxWidth: 'infinity' })
+))
 ```
 
-The macro is a TypeScript AST transform. It moves only top-level `State()` declarations into per-component-instance state (including generic calls such as `State<Todo[]>(...)`), re-evaluates the `view(...)` body reactively, and turns `Action(expression)` into a deferred event callback. Function-valued actions such as `Action(() => save())` are preserved unchanged. The Vite plugin returns source maps for transformed modules.
+`@muse/vite` is the canonical syntax-lowering plugin. It transforms builder
+blocks, labeled initializers, shorthand modifiers, raw HTML, and custom
+`struct ...: View` declarations, and returns token-anchored source maps. The
+compatibility `react-muse-ui/vite` entry point remains available for the legacy
+TypeScript AST macro that hoists top-level `State()` declarations and rewrites
+`view(...)`/`Action(...)` wrappers.
 
 ## View values, initializers, and builders
 
@@ -81,7 +101,7 @@ rendering; a trailing block is valid only when that selected initializer accepts
 `@ViewBuilder` or `@Action`.
 
 ```ts
-import { defineView, initializer, resolveBuilderClosure, Text, VStack } from 'react-muse-ui'
+import { defineView, initializer, resolveBuilderClosure, Text, VStack } from 'muse'
 
 const Card = defineView('Card', {
   initializers: [initializer(
@@ -123,13 +143,13 @@ Button(action: { save() }) {
 }
 ```
 
-`museMacro()` lowers these builder, labeled-argument, shorthand-modifier, and
+`musePlugin()` lowers these builder, labeled-argument, shorthand-modifier, and
 `struct` forms before the TypeScript/React transform. `parseMuseBuilder()` and
 `parseMuseStructs()` expose the source-ranged AST consumed by that lowering
 pass, without a component-name allow-list. Labeled calls use an internal
 `namedArguments()` carrier; JavaScript object calls remain available as the
 compatibility form. Editor integrations that do not
-run Vite can use `createMuseLanguageService()` from `react-muse-ui/compiler`;
+run Vite can use `createMuseLanguageService()` from `@muse/compiler`;
 its diagnostics and positions remain in the original Muse source space. A
 TypeScript host can use `createMuseTypeScriptLanguageService()` to parse the
 same lowered snapshots in editor tooling; diagnostics and common text spans are
@@ -237,7 +257,7 @@ VStack(
 )
 ```
 
-Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `Spacer`, `Divider`, and `Group`.
+Core layout primitives include `Box`, `VStack`, `HStack`, `ZStack`, `Grid`, `ScrollView`, `SafeArea`, `GeometryReader`, `Spacer`, `Divider`, and `Group`.
 
 `Spacer()` consumes available flex space. `Spacer(minLength)` keeps that explicit minimum when flex space becomes tight. `HStack` is full-width by default, and `.frame({ maxWidth: 'infinity' })` is available when a parent or another element should explicitly stretch.
 
@@ -253,7 +273,7 @@ Text('Hello')
   .foreground('#eee')
   .padding(12)
   .background('#222')
-  .radius(10)
+  .style({ borderRadius: 10 })
 ```
 
 Use `.style()` when you need an arbitrary inline CSS property, including CSS
@@ -282,14 +302,12 @@ Text('Hello')
 This gives simple styles a concise modifier syntax while preserving the full
 CSS escape hatch through `.style()` and `.className()`.
 
-## JSX typing
+## React compatibility JSX
 
-When using automatic JSX, set `jsxImportSource` to `muse` (or configure the
-equivalent TypeScript setting). Muse's `react-muse-ui/jsx-runtime` declarations add the
-Muse modifier attributes to intrinsic elements, so runtime features such as
-`<div padding={12} frame={{ maxWidth: 'infinity' }} />` are type-checked by the
-editor as well as handled at runtime. Function-DSL nodes and JSX nodes both
-pass through registered experimental plugins.
+Automatic JSX remains an optional React compatibility surface. Set
+`jsxImportSource` to `react-muse-ui` when using its legacy JSX runtime. New
+renderer-independent code should use the `muse` function DSL; the canonical
+graph does not depend on JSX or React's runtime.
 
 ## React components are first-class layout items
 
@@ -422,8 +440,9 @@ changing filters, opening Settings, and clearing completed tasks.
 
 ## Status
 
-The React rewrite is currently versioned as `0.1.0`. The previous Vue runtime is
-not retained as a compatibility layer in this release.
+The package family is currently versioned as `0.1.0`. React is an optional
+renderer; Vue and direct web/DOM renderers are first-class canonical adapters.
+The previous root API remains available only through the explicit legacy layer.
 
 Muse's layout API is SwiftUI-inspired and CSS-native rather than a promise of
 SwiftUI's proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and

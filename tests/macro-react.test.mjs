@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import ts from 'typescript'
 import { museMacro, transformMuseMacros } from '../dist/vite.js'
@@ -69,8 +68,21 @@ test('wraps a plain view expression in a render function', () => {
   assert.match(output, /view\(\(\) => \(Text\('Hello'\)\)\)/)
 })
 
+test('does not lower ordinary renderer member calls as Muse syntax', () => {
+  const source = `class Renderer { view(value) { return value } }\nconst renderer = new Renderer()\nexport const output = renderer.view('hello')`
+  assert.equal(transformMuseMacros(source, '/src/renderer.ts'), null)
+})
+
 test('transforms the complete example, including top-level State declarations', () => {
-  const source = readFileSync(new URL('../examples/App.ts', import.meta.url), 'utf8')
+  const source = `import { State, Text, VStack, view } from 'react-muse-ui'
+const text = State('Muse')
+const value = State(60)
+const checked = State(true)
+export default view(() => VStack(
+  Text(text.value),
+  Text(value.value),
+  Text(String(checked.value)),
+))`
   const output = transformMuseMacros(source, '/src/examples/App.ts')
   assert.ok(output)
   for (const name of ['text', 'value', 'checked']) {

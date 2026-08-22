@@ -5,14 +5,15 @@ Muse provides two styling levels:
 - **Simple styling** uses readable modifiers for common layout and visual rules.
 - **Advanced styling** uses inline CSS values and external CSS classes when the design needs full CSS control.
 
-Both styles return a new React element, so modifiers can be chained without mutating the original element.
+Both styles return a new renderer-independent ViewGraph node, so modifiers can
+be chained without mutating the original View.
 
 ## Simple styling
 
 Use modifiers for styles that describe the intent of a view:
 
 ```ts
-import { Text, VStack } from 'react-muse-ui'
+import { Text, VStack } from 'muse'
 
 VStack(
   { spacing: 12, alignment: 'leading' },
@@ -30,16 +31,15 @@ Common simple modifiers include:
 
 | Area | Modifiers |
 | --- | --- |
-| Layout | `.padding()`, `.margin()`, `.gap()`, `.frame()`, `.width()`, `.height()` |
-| Color and surface | `.background()`, `.foreground()`, `.opacity()`, `.radius()`, `.border()`, `.shadow()` |
-| Typography | `.fontSize()`, `.fontWeight()`, `.fontFamily()`, `.lineHeight()`, `.textAlign()`, `.bold()` |
-| Flex layout | `.grow()`, `.shrink()`, `.flex()`, `.wrap()`, `.order()`, `.align()`, `.justify()` |
-| Behavior | `.position()`, `.overflow()`, `.cursor()`, `.zIndex()`, `.transform()`, `.cssTransition()` |
+| Layout | `.padding()`, `.margin()`, `.gap()`, `.frame()` |
+| Color and surface | `.background()`, `.foreground()`, `.style()` |
+| Typography | `.font()`, `.fontSize()`, `.bold()` |
+| Attributes and identity | `.className()`, `.withProps()`, `.keyed()`, `.elementRef()` |
 
 Numbers used for dimensions are converted to pixels:
 
 ```ts
-Text('Card').padding(16).radius(8).width(240)
+Text('Card').padding(16).style({ borderRadius: 8, width: 240 })
 ```
 
 CSS length strings remain available when a relative or calculated value is needed:
@@ -87,7 +87,7 @@ Use `.className()` for selectors, responsive rules, pseudo-classes, keyframes, a
 
 ```ts
 import './styles.css'
-import { Text } from 'react-muse-ui'
+import { Text } from 'muse'
 
 Text('Interactive card')
   .className('card')
@@ -124,13 +124,36 @@ Text('Composed')
 
 This produces `card card--featured u-shadow` when `isFeatured` is true, and `card u-shadow` otherwise.
 
+## Vite stylesheet interoperability
+
+The Muse compiler leaves stylesheet imports untouched, so Vite's normal CSS
+pipeline remains authoritative. CSS Modules, Sass, PostCSS, and Tailwind can be
+used without a Muse-specific transform:
+
+```ts
+import styles from './Card.module.css'
+import './tokens.scss'
+import { Text } from 'muse'
+
+Text('Card').className([styles.card, 'text-slate-900'])
+```
+
+Install and configure the relevant Vite/PostCSS/Tailwind plugins in the host
+application. `@muse/vite` lowers `.muse.ts` syntax and Muse code inside Vue
+`<script>` blocks, while deliberately skipping `.css`, `.module.css`, `.scss`,
+and other stylesheet modules.
+
+The repository's host demo exercises all four paths: `demo.module.css`, Sass,
+PostCSS/autoprefixer, and Tailwind through Vite. These remain optional host
+dependencies; no renderer package imports them.
+
 ## JSX modifier attributes
 
 The automatic runtime accepts the same common modifier values as JSX
 attributes on intrinsic elements:
 
 ```tsx
-/** @jsxImportSource muse */
+/** @jsxImportSource react-muse-ui */
 
 <div
   padding={12}
@@ -142,11 +165,10 @@ attributes on intrinsic elements:
 </div>
 ```
 
-Set `jsxImportSource: "react-muse-ui"` in `tsconfig.json` for project-wide support.
-Muse's declarations type-check these attributes, while native `style`,
-`className`, event handlers, and element-specific attributes keep React's
-normal types. The modifier attributes are applied through the same pipeline as
-function-DSL modifiers.
+The automatic JSX runtime remains a React compatibility feature. Enable it with
+`jsxImportSource: "react-muse-ui"` and import the runtime from the legacy
+compatibility entry point; canonical renderer-independent code should use the
+function DSL and `className`/`style` modifiers above.
 
 ## Styling React components
 
@@ -169,7 +191,9 @@ The external stylesheet should target the host class:
 }
 ```
 
-Use `Component()` or `Raw()` when styling an existing React component or element.
+Use `Component()` from `@muse/react` when styling an existing React component or
+element. `Raw()` is available from `@muse/react` as an explicit compatibility
+escape hatch for an already-created React node.
 
 ## Choosing a style level
 

@@ -1,6 +1,9 @@
 # Muse React design
 
-Muse is a declarative TypeScript UI layer that uses React as its renderer rather than introducing a second rendering engine.
+Muse is a declarative TypeScript UI framework. `muse` and `@muse/core` define
+the language and immutable View graph; renderers such as `@muse/react`,
+`@muse/vue`, and `@muse/web` consume that graph. The root `react-muse-ui`
+package is kept as a compatibility layer.
 
 ## Layout
 
@@ -9,6 +12,19 @@ The normal API expresses relationships rather than coordinates. `VStack`, `HStac
 Muse's layout is SwiftUI-inspired, not a promise to reproduce SwiftUI's
 proposal-based geometry algorithm. `frame`, infinity sizing, and stacks map
 the relationship into web-native CSS semantics.
+
+`ScrollView` is a graph View with native `overflow-x`/`overflow-y` behavior.
+`SafeArea` is a graph View that applies the selected CSS environment insets.
+`GeometryReader` is a graph boundary with a renderer-neutral `GeometryProxy`.
+React, Vue, and direct DOM adapters own host measurement and feed the proxy back
+into the same body, including normalized CSS safe-area insets; renderer-less
+traversal and SSR use zero geometry.
+
+## Renderer boundary
+
+`Muse View !== React Element` and `Muse View !== Vue VNode`. A call such as
+`VStack { Text("Hello") }` first produces a graph. A renderer decides how that
+graph becomes a DOM, HTML string, React element, or Vue VNode.
 
 ## React ownership boundary
 
@@ -37,12 +53,17 @@ replacement, nested insertion/deletion, unsubscribe, and re-subscription
 reconcile that graph, so old objects do not retain stale records indefinitely.
 Circular graphs are traversed with identity tracking.
 
-With the Vite macro, top-level State declarations are moved into `view({ state, body })`. The state factory runs once per mounted Muse component instance, so two instances of the same View do not share local state.
+With the compatibility React Vite macro, top-level State declarations are moved
+into `view({ state, body })`. The canonical `@muse/vite` compiler lowers View
+syntax and leaves renderer-independent state ownership to the selected adapter.
+The state factory runs once per mounted Muse component instance, so two instances
+of the same View do not share local state.
 
 ## Macros
 
-The macro is build-time sugar only. It does not replace React at runtime. The
-Vite macro is parsed with the TypeScript AST and returns source maps.
+The compatibility macro is build-time sugar only. It does not replace React at
+runtime. The canonical compiler and the compatibility React macro both return
+source maps, but they serve different syntax layers.
 
 - `State(initial)` becomes per-view state by moving the declaration into the View state factory.
 - `view(expression)` becomes a reactive render body.
@@ -58,12 +79,21 @@ The explicit runtime APIs remain available when macros are undesirable.
 
 ## Interoperability
 
-`Component()` creates normal React component elements. `Raw()` accepts existing React elements. Because Muse ultimately returns React elements and components, existing React libraries can be mixed in rather than wrapped behind a separate renderer.
+Raw HTML is represented by graph `Element` nodes and retains ordinary HTML
+attributes. `Component()` in `@muse/react` or `@muse/vue` creates a renderer-
+owned component node; the Vue adapter also supports default/named slots and
+explicit `toVueRef`/`fromVueRef` bridges. Renderer-specific interop does not
+enter `@muse/core`.
 
 ## Public surface
 
-The root `react-muse-ui` entry point intentionally contains the stable function DSL. The
-automatic JSX runtimes and `react-muse-ui/vite` are supported integration entry points.
+The canonical function-DSL entry points are `@muse/core` and `@muse/react`.
+The root `react-muse-ui` entry point intentionally remains the stable compatibility
+surface, but it is only a facade: its implementation is provided by
+`@muse/react/legacy`. `react-muse-ui/core` and `react-muse-ui/muse` expose the
+canonical graph and React layers without requiring consumers to migrate all imports
+at once. The automatic JSX runtimes and `react-muse-ui/vite` remain supported
+integration entry points.
 Coordinate spaces expose `CoordinateNode` values, while the proposal-based
 measurement experiment exposes `LayoutNode` values; keeping those concepts
 distinct avoids silently treating observed DOM geometry as a layout proposal.

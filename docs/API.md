@@ -1,10 +1,31 @@
 # Muse public API
 
-This page describes the public contract for the current React release.
+This page describes the public contract for the current Muse release. New code
+should import graph values from `muse` and choose `@muse/react`, `@muse/vue`, or
+`@muse/web` as the renderer; `react-muse-ui` remains a facade for the legacy
+React-compatible API.
 
 ## Stable entry points
 
-The root `react-muse-ui` entry point is the stable function-DSL surface:
+The canonical `muse` entry point is the renderer-independent graph surface:
+
+- Core Views and state: `Text`, `VStack`, `HStack`, `ZStack`, `ScrollView`,
+  `SafeArea`, `GeometryReader`, `Button`, `Element`, `ForEach`, `defineView`, `View`,
+  `ViewBuilder`, `State`, `Binding`, and `Action`.
+  View modifiers include immutable `padding`, `margin`, `gap`, `frame`,
+  `style`, `className`, `withProps`, `keyed`, and `elementRef` operations.
+
+Renderer-specific entry points add only materialization and runtime bridges:
+
+- `@muse/react` — React materialization and optional React compatibility APIs.
+- `@muse/vue` — Vue VNodes, `MuseView`, `createVueView`, `Component`, slots, and
+  explicit `toVueRef`/`fromVueRef` bridges. `mount(value, target, { hydrate: true })`
+  hydrates Vue SSR markup.
+- `@muse/web` — HTML serialization and DOM mounting. `mount(value, target,
+  { hydrate: true })` reuses matching SSR markup, attaches DOM events/refs, and
+  keeps subsequent State invalidations live.
+
+The root `react-muse-ui` entry point remains the legacy compatibility surface:
 
 - Core views and state: `view`, `defineView`, `View`, `ViewBuilder`, `State`,
   `Binding`, and `Action`.
@@ -26,7 +47,7 @@ layout host.
 
 ## View model and compiler
 
-`defineView(name, definition)` creates a `ViewType` plus a callable compatibility
+`defineView(name, definition)` creates a `ViewType` plus a callable
 constructor with explicit initializer metadata and a `body(props)` function.
 Built-in layout, control, collection, and presentation constructors use the same
 boundary; `Element`, `Component`, and `Group` are native compatibility views
@@ -38,7 +59,7 @@ React is involved; calling the constructor remains the compatibility path that
 materializes that node as a React element. User View nodes can be traversed by a
 custom renderer through the optional `view` hook or by recursively lowering
 their body graph. `initializer()`
-describes overload matching, labels, and `value`/`viewBuilder`/`action`
+describes overload matching, labels, and `value`/`binding`/`viewBuilder`/`action`
 parameters; `valueClosure()`, `viewBuilderClosure()`, and `actionClosure()`
 retain those roles at runtime as well. `resolveInitializer()`
 is the same overload boundary used by built-in Views. `structView` is an alias
@@ -46,7 +67,7 @@ for this model.
 
 `ViewBuilder.buildBlock`, `buildOptional`, `buildEither`, and `buildArray` are
 the runtime intermediate representation for builder composition. The compiler
-entry point `react-muse-ui/compiler` transforms trailing blocks, labeled arguments,
+entry point `@muse/compiler` transforms trailing blocks, labeled arguments,
 conditionals, `ForEach` item closures, and the supported `struct ...: View`
 syntax. `parseMuseBuilder()` and `parseMuseStructs()` expose the source-ranged
 AST used by the lowering pass; it does not classify calls by a `VStack`-style
@@ -76,10 +97,16 @@ hook only supplies mount lifetime.
 
 ## Supported integration entry points
 
+- `@muse/vite` — the canonical Muse compiler adapter for builder blocks,
+  labeled initializers, shorthand modifiers, raw HTML, and `struct ...: View`.
+  Put `musePlugin()` before `@vitejs/plugin-react`; transformed modules include
+  token-anchored source maps.
+- `@muse/compiler` — the renderer-independent compiler and language-service
+  primitives used by the Vite and editor adapters.
 - `react-muse-ui/vite` — the TypeScript AST macro for `State`, `Action`, `view`,
   builder blocks, labeled arguments, shorthand modifiers, and `struct ...: View`.
-  Put `museMacro()` before `@vitejs/plugin-react`. Transformed modules include
-  source maps.
+  This is the compatibility React workflow; put `museMacro()` before
+  `@vitejs/plugin-react` when that state-hoisting behavior is required.
 - `react-muse-ui/jsx-runtime` and `react-muse-ui/jsx-dev-runtime` — the automatic JSX runtimes.
   With `jsxImportSource: "react-muse-ui"`, Muse modifier attributes on intrinsic elements
   are type-checked as well as applied at runtime.
@@ -95,7 +122,7 @@ Import exploratory infrastructure explicitly from `react-muse-ui/experimental`:
 - coordinate runtime helpers;
 - builder collection helpers and the block-builder transform.
 
-The builder/compiler adapters are also available from `react-muse-ui/compiler` for
+The builder/compiler adapters are also available from `@muse/compiler` for
 experimentation. They are not part of the stable root API and may change as
 the layout and JSX integration contracts are consolidated.
 
@@ -114,6 +141,11 @@ windowed virtualization. Use a React virtualization library through
 Muse layout is SwiftUI-inspired and web-native. `frame`, `Spacer`, stacks, and
 infinity sizing express relationships through CSS; they do not promise
 pixel-equivalent behavior to SwiftUI's proposal-based layout algorithm.
+`ScrollView` maps its axis to native overflow behavior, while `SafeArea` maps
+selected edges to `env(safe-area-inset-*)`. Geometry observation remains a
+renderer-owned observation boundary: React and Vue measure the host after mount,
+web DOM mount remeasures it, and all DOM adapters also read the CSS environment
+insets into `GeometryProxy.safeAreaInsets`; SSR uses a deterministic zero proxy.
 
 `Sheet` provides Escape dismissal, initial focus, focus wrapping, focus
 restoration, and deterministic stacking for nested portals. Presentation hosts

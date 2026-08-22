@@ -1,14 +1,19 @@
 import { fileURLToPath, URL } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { museMacro } from '../src/vite.ts'
+import { musePlugin } from '@muse/vite'
 
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [
-    museMacro(),
+    musePlugin(),
+    tailwindcss(),
     react(),
   ],
+  optimizeDeps: {
+    entries: ["./index.html"],
+  },
   build: {
     outDir: '../demo-dist',
     emptyOutDir: true,

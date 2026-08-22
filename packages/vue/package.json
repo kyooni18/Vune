@@ -1,0 +1,28 @@
+{
+  "name": "@muse/vue",
+  "version": "0.1.0",
+  "description": "Vue renderer and explicit interop bridges for the renderer-independent Muse core.",
+  "type": "module",
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@muse/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "vue": ">=3.4 <4"
+  },
+  "devDependencies": {
+    "vue": "^3.5.0"
+  }
+}

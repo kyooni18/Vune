@@ -1,2 +1,1 @@
-export { Fragment, jsxDEV } from './jsx-runtime.js'
-export type { JSX, MuseJSXProps } from './jsx-runtime.js'
+export * from "@muse/react/legacy/jsx-dev-runtime"

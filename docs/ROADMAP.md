@@ -7,6 +7,21 @@ syntax, nesting, or the API layer that created it.
 
 ## View-system foundation
 
+The first workspace architecture slice is now implemented:
+
+- `@muse/core` is React-free and owns graph nodes, initializer metadata,
+  `ViewBuilder`, immutable modifiers, `State`, `Binding`, and closure roles.
+- `@muse/compiler` and `@muse/vite` handle `.muse.ts` builder/struct lowering.
+- `@muse/react`, `@muse/vue`, and `@muse/web` consume the same graph through
+  renderer interfaces, with layout primitives and native controls migrated first.
+- Core-owned `Text`, stacks, `ScrollView`, `SafeArea`, `Button`, `ForEach`,
+  `Element`, and custom View definitions are available without React.
+  `.muse.ts` raw HTML lowers to those graph `Element` nodes, including
+  arbitrary `class`, `for`, `aria-*`, and `data-*` attributes.
+- `editors/vscode` provides `.muse.ts` Muse/HTML highlighting, diagnostics,
+  formatting, completion, hover, definition, rename, and optional `.vue`
+  provider coverage.
+
 The first View-system slice is implemented and covered by `tests/view-system.test.mjs`:
 
 - initializer metadata selects overloads from arguments and rejects an
@@ -16,26 +31,29 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   composition;
 - `State` and `Binding` remain reactive while modifier chains retain value
   semantics and an inspectable graph;
+- `@muse/vue` bridges graph values to Vue VNodes, Vue components and slots, with
+  explicit `toVueRef`/`fromVueRef` reactivity conversion;
 - the builder compiler has a source-ranged builder/struct AST, labeled
   arguments, struct lowering, diagnostics, formatter hooks, source-map output,
   and an original-source language-service adapter without a component-name
   registry.
 
-All public view constructors now share the `ViewType`/initializer boundary,
-including native elements, collections, and presentation hosts. The remaining
-work is deeper host integration: a packaged VS Code extension can build on the
-TypeScript language-service adapter, and React-specific portal/context behavior
-can acquire first-class hooks in additional renderers.
+The collection, presentation, and control implementations are available from
+the canonical `@muse/react` package. The old root entry points are preserved as
+`@muse/react/legacy` compatibility exports; new work should target the canonical
+graph and renderer APIs instead of extending that legacy surface.
 
 ## Correctness release
 
 The first correctness pass covers the parts most likely to change program
 behavior silently:
 
-- The Vite macro uses a TypeScript AST transform. Only top-level `State(...)`
-  declarations are made instance-local; generic calls, nested lexical scopes,
-  comments, templates, and unusual whitespace are preserved. `Action(() => ...)`
-  keeps its callback semantics, and transformed files include source maps.
+- The canonical `@muse/compiler` lowers builder/struct syntax with original-source
+  diagnostics and token-anchored source maps. The compatibility React Vite macro
+  remains a TypeScript AST transform: only top-level `State(...)` declarations
+  are made instance-local; generic calls, nested lexical scopes, comments,
+  templates, and unusual whitespace are preserved. `Action(() => ...)` keeps its
+  callback semantics, and transformed files include source maps.
 - The complete example app is compiled in regression tests, alongside focused
   cases for nested functions, arrow functions, callbacks, generics,
   destructuring, and formatting variations.
@@ -75,10 +93,10 @@ is settled:
 
 - `LazyVStack` and related APIs use `content-visibility: auto`. This is a
   browser-assisted rendering optimization, not virtualization or windowing.
-- Layout-engine, coordinate-runtime, observer, builder, and plugin facilities
-  are available from `react-muse-ui/experimental`; their geometry types now distinguish
-  observed `CoordinateNode` values from measured `LayoutNode` values, but they
-  are not part of the stable root API yet.
+- Legacy layout-engine, coordinate-runtime, observer, builder, and plugin
+  facilities remain available from `react-muse-ui/experimental`; canonical
+  `GeometryReader` now owns the cross-renderer measured-host contract while the
+  older coordinate types remain compatibility-only.
 - JSX runtime support is available, but its modifier typing and plugin behavior
   must stay aligned with the function DSL before it is treated as the primary
   authoring path.

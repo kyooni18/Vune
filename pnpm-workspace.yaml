@@ -1,0 +1,8 @@
+packages:
+  - "."
+  - "packages/*"
+  - "editors/*"
+allowBuilds:
+  '@parcel/watcher': false
+minimumReleaseAgeExclude:
+  - sass@1.103.1

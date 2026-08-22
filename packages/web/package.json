@@ -1,0 +1,22 @@
+{
+  "name": "@muse/web",
+  "version": "0.1.0",
+  "description": "DOM and HTML renderers for the renderer-independent Muse core.",
+  "type": "module",
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@muse/core": "workspace:*"
+  }
+}

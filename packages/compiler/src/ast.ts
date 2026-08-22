@@ -1,0 +1,469 @@
+/** Half-open offsets in the original Muse source. */
+export interface MuseSourceRange {
+  readonly start: number
+  readonly end: number
+}
+
+export interface MuseRawExpression {
+  readonly kind: "raw"
+  readonly source: string
+  readonly range: MuseSourceRange
+}
+
+export interface MuseClosureExpression {
+  readonly kind: "closure"
+  readonly parameter?: string
+  readonly bodySource: string
+  readonly body: MuseBuilderProgram
+  readonly range: MuseSourceRange
+}
+
+export interface MuseArgument {
+  readonly label?: string
+  readonly value: MuseRawExpression | MuseClosureExpression
+  readonly range: MuseSourceRange
+}
+
+export interface MuseCallExpression {
+  readonly kind: "call"
+  readonly callee: string
+  readonly arguments: readonly MuseArgument[]
+  readonly trailing?: MuseClosureExpression
+  readonly range: MuseSourceRange
+}
+
+export interface MuseConditionalExpression {
+  readonly kind: "conditional"
+  readonly condition: MuseRawExpression
+  readonly then: MuseBuilderProgram
+  readonly otherwise?: MuseBuilderProgram | MuseConditionalExpression
+  readonly range: MuseSourceRange
+}
+
+export type MuseBuilderNode = MuseRawExpression | MuseCallExpression | MuseConditionalExpression
+
+export interface MuseBuilderProgram {
+  readonly kind: "program"
+  readonly source: string
+  readonly range: MuseSourceRange
+  readonly statements: readonly MuseBuilderNode[]
+}
+
+interface Slice { readonly source: string; readonly start: number; readonly end: number }
+type Delimiter = "(" | "{" | "["
+const closing: Record<Delimiter, string> = { "(": ")", "{": "}", "[": "]" }
+
+function syntaxError(message: string, offset: number): SyntaxError & { readonly offset: number } {
+  const error = new SyntaxError(message) as SyntaxError & { offset: number }
+  error.offset = offset
+  return error
+}
+
+function identifierPart(value: string | undefined): boolean {
+  return !!value && /[A-Za-z0-9_$]/.test(value)
+}
+
+function skipQuoted(source: string, index: number): number {
+  const quote = source[index]
+  for (let cursor = index + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === "\\") { cursor += 1; continue }
+    if (source[cursor] === quote) return cursor + 1
+  }
+  throw syntaxError(`Unclosed ${quote} string in Muse source`, index)
+}
+
+function skipTemplate(source: string, index: number): number {
+  for (let cursor = index + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === "\\") { cursor += 1; continue }
+    if (source[cursor] === "`") return cursor + 1
+  }
+  throw syntaxError("Unclosed template literal in Muse source", index)
+}
+
+function skipTrivia(source: string, index: number): number {
+  let cursor = index
+  while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1
+  return cursor
+}
+
+function skipComment(source: string, index: number): number {
+  if (source.startsWith("//", index)) {
+    const end = source.indexOf("\n", index + 2)
+    return end < 0 ? source.length : end
+  }
+  const end = source.indexOf("*/", index + 2)
+  if (end < 0) throw syntaxError("Unclosed block comment in Muse source", index)
+  return end + 2
+}
+
+function regexCanStart(source: string, index: number): boolean {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (/\s/.test(source[cursor])) continue
+    return "([{=,:;!?&|+-*%^~<>".includes(source[cursor])
+  }
+  return true
+}
+
+function skipRegex(source: string, index: number): number {
+  let inClass = false
+  for (let cursor = index + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === "\\") { cursor += 1; continue }
+    if (source[cursor] === "[") inClass = true
+    if (source[cursor] === "]") inClass = false
+    if (source[cursor] === "/" && !inClass) {
+      cursor += 1
+      while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor += 1
+      return cursor
+    }
+    if (source[cursor] === "\n") return index + 1
+  }
+  return index + 1
+}
+
+function findMatching(source: string, openIndex: number, open: Delimiter): number {
+  const stack: string[] = [open]
+  for (let cursor = openIndex + 1; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    const next = source[cursor + 1]
+    if (character === "\"" || character === "'") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "`") { cursor = skipTemplate(source, cursor) - 1; continue }
+    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (character === "(" || character === "{" || character === "[") { stack.push(character); continue }
+    if (character === ")" || character === "}" || character === "]") {
+      const expected = closing[stack[stack.length - 1] as Delimiter]
+      if (character !== expected) throw syntaxError(`Unexpected ${character} in Muse source`, cursor)
+      stack.pop()
+      if (stack.length === 0) return cursor
+    }
+  }
+  throw syntaxError(`Unclosed ${open} block in Muse source`, openIndex)
+}
+
+function lineBreakBoundary(source: string, index: number): boolean {
+  const previous = source.slice(0, index).trimEnd().at(-1)
+  const nextIndex = skipTrivia(source, index + 1)
+  const next = source[nextIndex]
+  if (!previous || !next) return true
+  if (source.slice(nextIndex, nextIndex + 4) === "else") return false
+  if (",([{.=:+-*/%!&|?<>".includes(previous)) return false
+  if (".),]}:;".includes(next)) return false
+  return true
+}
+
+function splitTopLevel(source: string, separators: string, baseOffset: number): Slice[] {
+  const parts: Slice[] = []
+  let start = 0
+  const stack: string[] = []
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    const next = source[cursor + 1]
+    if (character === "\"" || character === "'") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "`") { cursor = skipTemplate(source, cursor) - 1; continue }
+    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (character === "(" || character === "{" || character === "[") stack.push(character)
+    else if (character === ")" || character === "}" || character === "]") stack.pop()
+    const boundary = stack.length === 0 && (separators.includes(character) || (character === "\n" && lineBreakBoundary(source, cursor)))
+    if (boundary) {
+      parts.push({ source: source.slice(start, cursor), start: baseOffset + start, end: baseOffset + cursor })
+      start = cursor + 1
+    }
+  }
+  parts.push({ source: source.slice(start), start: baseOffset + start, end: baseOffset + source.length })
+  return parts.filter(part => part.source.trim().length > 0)
+}
+
+function trimSlice(slice: Slice): Slice {
+  const leading = slice.source.search(/\S|$/)
+  const trimmed = slice.source.trimEnd()
+  return { source: trimmed.slice(leading), start: slice.start + leading, end: slice.start + trimmed.length }
+}
+
+function raw(slice: Slice): MuseRawExpression {
+  const value = trimSlice(slice)
+  return { kind: "raw", source: value.source, range: { start: value.start, end: value.end } }
+}
+
+function parseClosure(slice: Slice): MuseClosureExpression | undefined {
+  const value = trimSlice(slice)
+  if (value.source[0] !== "{") return undefined
+  const close = findMatching(value.source, 0, "{")
+  if (close !== value.source.length - 1) return undefined
+  const inner = value.source.slice(1, close)
+  const parameter = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+/.exec(inner)
+  const bodySource = parameter ? inner.slice(parameter[0].length) : inner
+  const bodyOffset = value.start + 1 + (parameter ? parameter[0].length : 0)
+  return {
+    kind: "closure",
+    parameter: parameter?.[1],
+    bodySource,
+    body: parseMuseBuilder(bodySource, bodyOffset),
+    range: { start: value.start, end: value.end },
+  }
+}
+
+function topLevelColon(source: string): number {
+  const slices = splitTopLevel(source, ":", 0)
+  return slices.length > 1 ? slices[0].source.length : -1
+}
+
+function parseArgument(slice: Slice): MuseArgument {
+  const value = trimSlice(slice)
+  const colon = topLevelColon(value.source)
+  const label = colon < 0 ? undefined : value.source.slice(0, colon).trim()
+  if (label && !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(label)) return { value: raw(value), range: { start: value.start, end: value.end } }
+  const valueSlice: Slice = colon < 0
+    ? value
+    : { source: value.source.slice(colon + 1), start: value.start + colon + 1, end: value.end }
+  return { label, value: parseClosure(valueSlice) ?? raw(valueSlice), range: { start: value.start, end: value.end } }
+}
+
+function parseCall(slice: Slice): MuseCallExpression | undefined {
+  const value = trimSlice(slice)
+  const identifier = /^([A-Za-z_$][A-Za-z0-9_$]*)/.exec(value.source)
+  if (!identifier) return undefined
+  const open = skipTrivia(value.source, identifier[0].length)
+  if (value.source[open] !== "(") return undefined
+  const close = findMatching(value.source, open, "(")
+  const afterClose = skipTrivia(value.source, close + 1)
+  let trailing: MuseClosureExpression | undefined
+  let end = close + 1
+  if (value.source[afterClose] === "{") {
+    const trailingClose = findMatching(value.source, afterClose, "{")
+    if (skipTrivia(value.source, trailingClose + 1) !== value.source.length) return undefined
+    trailing = parseClosure({ source: value.source.slice(afterClose, trailingClose + 1), start: value.start + afterClose, end: value.start + trailingClose + 1 })
+    end = trailingClose + 1
+  }
+  if (skipTrivia(value.source, end) !== value.source.length) return undefined
+  return {
+    kind: "call",
+    callee: identifier[1],
+    arguments: splitTopLevel(value.source.slice(open + 1, close), ",", value.start + open + 1).map(parseArgument),
+    trailing,
+    range: { start: value.start, end: value.end },
+  }
+}
+
+function parseConditional(slice: Slice): MuseConditionalExpression | undefined {
+  const value = trimSlice(slice)
+  if (!/^if\b/.test(value.source)) return undefined
+  const open = value.source.indexOf("(")
+  if (open < 0) return undefined
+  const close = findMatching(value.source, open, "(")
+  const thenOpen = skipTrivia(value.source, close + 1)
+  if (value.source[thenOpen] !== "{") return undefined
+  const thenClose = findMatching(value.source, thenOpen, "{")
+  const afterThen = skipTrivia(value.source, thenClose + 1)
+  const condition = raw({ source: value.source.slice(open + 1, close), start: value.start + open + 1, end: value.start + close })
+  let otherwise: MuseBuilderProgram | MuseConditionalExpression | undefined
+  if (value.source.slice(afterThen, afterThen + 4) === "else") {
+    const elseStart = skipTrivia(value.source, afterThen + 4)
+    const rest = { source: value.source.slice(elseStart), start: value.start + elseStart, end: value.end }
+    if (/^if\b/.test(rest.source)) otherwise = parseConditional(rest)
+    else if (rest.source[0] === "{") {
+      const elseClose = findMatching(rest.source, 0, "{")
+      if (skipTrivia(rest.source, elseClose + 1) !== rest.source.length) return undefined
+      otherwise = parseMuseBuilder(rest.source.slice(1, elseClose), rest.start + 1)
+    }
+  }
+  return {
+    kind: "conditional",
+    condition,
+    then: parseMuseBuilder(value.source.slice(thenOpen + 1, thenClose), value.start + thenOpen + 1),
+    otherwise,
+    range: { start: value.start, end: value.end },
+  }
+}
+
+function parseNode(slice: Slice): MuseBuilderNode {
+  return parseConditional(slice) ?? parseCall(slice) ?? raw(slice)
+}
+
+export function parseMuseBuilder(source: string, baseOffset = 0): MuseBuilderProgram {
+  return { kind: "program", source, range: { start: baseOffset, end: baseOffset + source.length }, statements: splitTopLevel(source, ",;", baseOffset).map(parseNode) }
+}
+
+export interface MuseStructDeclaration {
+  readonly kind: "struct"
+  readonly name: string
+  readonly genericParameters?: string
+  readonly source: string
+  readonly bodySource: string
+  readonly bodyExpressionSource: string
+  readonly range: MuseSourceRange
+  readonly bodyRange: MuseSourceRange
+  readonly bodyExpressionRange: MuseSourceRange
+  readonly fields: readonly MuseStructField[]
+  readonly initializers: readonly MuseStructInitializer[]
+  readonly nested?: readonly MuseStructDeclaration[]
+}
+
+export interface MuseStructField {
+  readonly name: string
+  readonly kind: "stored" | "state" | "binding"
+  readonly type?: string
+  readonly initializer?: string
+  readonly range: MuseSourceRange
+}
+
+export interface MuseStructInitializer {
+  readonly parametersSource: string
+  readonly bodySource: string
+  readonly range: MuseSourceRange
+  readonly parametersRange: MuseSourceRange
+  readonly bodyRange: MuseSourceRange
+}
+
+function findStructs(source: string, start: number): number {
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    const next = source[cursor + 1]
+    if (character === "\"" || character === "'") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "`") { cursor = skipTemplate(source, cursor) - 1; continue }
+    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (!source.startsWith("struct", cursor)) continue
+    if (identifierPart(source[cursor - 1]) || identifierPart(source[cursor + 6])) continue
+    return cursor
+  }
+  return -1
+}
+
+interface StructBodyExpression {
+  readonly declarationStart: number
+  readonly open: number
+  readonly close: number
+}
+
+function findTopLevelBodyExpression(source: string): StructBodyExpression | undefined {
+  let braces = 0
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]
+    const next = source[cursor + 1]
+    if (character === "\"" || character === "'") { cursor = skipQuoted(source, cursor) - 1; continue }
+    if (character === "`") { cursor = skipTemplate(source, cursor) - 1; continue }
+    if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
+    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (braces === 0 && source.startsWith("var", cursor) && !identifierPart(source[cursor - 1]) && !identifierPart(source[cursor + 3])) {
+      const match = /^var\s+body\s*:[^{]*\{/.exec(source.slice(cursor))
+      if (match) {
+        const open = cursor + match[0].lastIndexOf("{")
+        return { declarationStart: cursor, open, close: findMatching(source, open, "{") }
+      }
+    }
+    if (character === "{") braces += 1
+    else if (character === "}") braces -= 1
+  }
+  return undefined
+}
+
+function maskNestedStructs(source: string): string {
+  const characters = [...source]
+  let cursor = 0
+  while (cursor < source.length) {
+    const index = findStructs(source, cursor)
+    if (index < 0) break
+    const header = /^struct\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*<([^>{}]*)>)?\s*:\s*View\b/.exec(source.slice(index))
+    if (!header) { cursor = index + 6; continue }
+    const brace = source.indexOf("{", index + header[0].length)
+    if (brace < 0) break
+    const close = findMatching(source, brace, "{")
+    for (let position = index; position <= close; position += 1) {
+      if (characters[position] !== "\n" && characters[position] !== "\r") characters[position] = " "
+    }
+    cursor = close + 1
+  }
+  return characters.join("")
+}
+
+function parseStructMembers(body: string, baseOffset: number): { fields: MuseStructField[]; initializers: MuseStructInitializer[] } {
+  const fields: MuseStructField[] = []
+  const initializers: MuseStructInitializer[] = []
+  const maskedBody = maskNestedStructs(body)
+  const fieldPattern = /(?:^|[;\n])\s*(?:(@State|@Binding)\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([^=\n;]+))?(?:\s*=\s*([^\n;]+))?/g
+  const firstInitializer = maskedBody.search(/\binit\s*\(/)
+  const fieldSource = maskedBody.slice(0, firstInitializer < 0 ? maskedBody.length : firstInitializer)
+  for (const match of fieldSource.matchAll(fieldPattern)) {
+    if (match[2] === "body") continue
+    const start = baseOffset + (match.index ?? 0) + match[0].indexOf(match[2])
+    fields.push({ name: match[2], kind: match[1] === "@State" ? "state" : match[1] === "@Binding" ? "binding" : "stored", type: match[3]?.trim(), initializer: match[4]?.trim(), range: { start, end: start + match[2].length } })
+  }
+  const initPattern = /\binit\s*\(/g
+  let match: RegExpExecArray | null
+  while ((match = initPattern.exec(maskedBody))) {
+    const open = maskedBody.indexOf("(", match.index)
+    const close = findMatching(maskedBody, open, "(")
+    const blockOpen = skipTrivia(maskedBody, close + 1)
+    if (maskedBody[blockOpen] !== "{") continue
+    const blockClose = findMatching(maskedBody, blockOpen, "{")
+    initializers.push({
+      parametersSource: body.slice(open + 1, close),
+      bodySource: body.slice(blockOpen + 1, blockClose),
+      range: { start: baseOffset + match.index, end: baseOffset + blockClose + 1 },
+      parametersRange: { start: baseOffset + open + 1, end: baseOffset + close },
+      bodyRange: { start: baseOffset + blockOpen + 1, end: baseOffset + blockClose },
+    })
+    initPattern.lastIndex = blockClose + 1
+  }
+  return { fields, initializers }
+}
+
+export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseStructDeclaration[] {
+  const declarations: MuseStructDeclaration[] = []
+  let cursor = 0
+  while (cursor < source.length) {
+    const index = findStructs(source, cursor)
+    if (index < 0) break
+    const header = /^struct\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*<([^>{}]*)>)?\s*:\s*View\b/.exec(source.slice(index))
+    if (!header) { cursor = index + 6; continue }
+    const brace = source.indexOf("{", index + header[0].length)
+    if (brace < 0) throw syntaxError(`Missing body for struct ${header[1]}`, baseOffset + index)
+    const close = findMatching(source, brace, "{")
+    const bodySource = source.slice(brace + 1, close)
+    const bodyExpression = findTopLevelBodyExpression(bodySource)
+    if (!bodyExpression) throw syntaxError(`struct ${header[1]} must declare var body`, baseOffset + index)
+    const members = parseStructMembers(bodySource.slice(0, bodyExpression.declarationStart), baseOffset + brace + 1)
+    const nested = parseMuseStructs(bodySource, baseOffset + brace + 1)
+    declarations.push({
+      kind: "struct",
+      name: header[1],
+      genericParameters: header[2]?.trim(),
+      source: source.slice(index, close + 1),
+      bodySource,
+      bodyExpressionSource: bodySource.slice(bodyExpression.open + 1, bodyExpression.close),
+      range: { start: baseOffset + index, end: baseOffset + close + 1 },
+      bodyRange: { start: baseOffset + brace + 1, end: baseOffset + close },
+      bodyExpressionRange: { start: baseOffset + brace + 1 + bodyExpression.open + 1, end: baseOffset + brace + 1 + bodyExpression.close },
+      fields: members.fields,
+      initializers: members.initializers,
+      nested,
+    })
+    cursor = close + 1
+  }
+  return declarations
+}
+
+export interface MuseAstLowering {
+  readonly transformRaw: (source: string) => string
+  readonly closure: (bodySource: string, parameter?: string) => string
+}
+
+function lowerProgram(program: MuseBuilderProgram, lowering: MuseAstLowering): string[] {
+  return program.statements.map(node => {
+    if (node.kind === "raw") return lowering.transformRaw(node.source)
+    if (node.kind === "call") {
+      const positional = node.arguments.filter(argument => !argument.label).map(argument => argument.value.kind === "closure" ? lowering.closure(argument.value.bodySource, argument.value.parameter) : lowering.transformRaw(argument.value.source))
+      const named = node.arguments.filter(argument => argument.label).map(argument => `${argument.label}: ${argument.value.kind === "closure" ? lowering.closure(argument.value.bodySource, argument.value.parameter) : lowering.transformRaw(argument.value.source)}`)
+      const args = [...positional, ...(named.length ? [`namedArguments({ ${named.join(", ")} })`] : []), ...(node.trailing ? [lowering.closure(node.trailing.bodySource, node.trailing.parameter)] : [])]
+      return `${node.callee}(${args.join(", ")})`
+    }
+    const thenBranch = lowerProgram(node.then, lowering).join(", ")
+    const otherwise = !node.otherwise ? "[]" : node.otherwise.kind === "conditional" ? lowerProgram({ ...node.otherwise.then, statements: [node.otherwise] }, lowering)[0] : `[${lowerProgram(node.otherwise, lowering).join(", ")}]`
+    return `(${lowering.transformRaw(node.condition.source)} ? [${thenBranch}] : ${otherwise})`
+  })
+}
+
+export function lowerMuseBuilderAst(program: MuseBuilderProgram, lowering: MuseAstLowering): string[] {
+  return lowerProgram(program, lowering)
+}

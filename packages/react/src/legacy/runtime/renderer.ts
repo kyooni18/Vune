@@ -1,5 +1,6 @@
 import { Fragment, cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { isViewNode, markViewNode, viewGraphChild, type ViewGraphValue, type ViewHostNode, type ViewModifierNode, type ViewNode } from './view-graph.js'
+import { zeroGeometry } from '@muse/core'
 
 export type RendererChild<Output> = Output | readonly RendererChild<Output>[]
 
@@ -43,6 +44,9 @@ export function renderViewNode<Output>(
   }
   if (value.kind === 'fragment') {
     return renderer.fragment(value.children.map(child => renderViewNode(child, renderer)))
+  }
+  if (value.kind === 'geometry') {
+    return renderViewNode(value.content(zeroGeometry), renderer)
   }
   return renderer.element(
     value.type,
