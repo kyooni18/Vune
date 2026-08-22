@@ -38,6 +38,8 @@ export type {
 export type {
   SemanticArgument,
   SemanticArgumentKind,
+  SemanticCallResolution,
+  SemanticClosureRole,
   SemanticBindingSymbol,
   SemanticBuilderTypeSymbol,
   SemanticFieldSymbol,
@@ -54,12 +56,13 @@ export type {
   SemanticInitializerResolutionFailure,
   SemanticInitializerResolutionResult,
   SemanticInitializerSymbol,
+  SemanticResolutionDiagnostic,
   SemanticStateSymbol,
   SemanticStructSymbol,
   SemanticSymbol,
   SemanticViewTypeSymbol,
 } from "@muse/core"
-export { resolveSemanticInitializer, SemanticModel, semanticHtmlAttributeNames, semanticHtmlAttributeSpec, semanticHtmlTagNames, semanticHtmlTagSpec } from "@muse/core"
+export { resolveSemanticCall, resolveSemanticInitializer, SemanticModel, semanticHtmlAttributeNames, semanticHtmlAttributeSpec, semanticHtmlTagNames, semanticHtmlTagSpec } from "@muse/core"
 export { mapGeneratedPosition, mapOriginalPosition } from "./source-map.js"
 export type { MuseSourceMapAnchor, MuseSourcePosition } from "./source-map.js"
 

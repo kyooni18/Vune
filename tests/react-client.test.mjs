@@ -88,7 +88,7 @@ test('React consumes core keyed View identity for reorder and remount State sema
     })
     const App = defineView('ReactIdentityApp', {
       initializers: [initializer('App()', args => args.length === 0)],
-      body: () => viewElement('section', null, [ForEach(items.value, item => Row(item.id))]),
+      body: () => viewElement('section', null, [ForEach(items.value, item => item.id, item => Row(item.id))]),
     })
     const root = createRoot(document.getElementById('root'))
     await act(async () => { root.render(canonicalRender(App())) })

@@ -94,13 +94,18 @@ function htmlTagAtPosition(document, position) {
 }
 
 function signatureMap(document) {
-  const signatures = Object.fromEntries(Object.entries(VIEW_SIGNATURES))
+  const signatures = {}
+  let usedSemanticModel = false
   for (const candidate of openMuseDocuments(document)) {
     const source = candidate.getText()
     const semantic = semanticModel(candidate)
     if (semantic) {
-      for (const view of semantic.model.views ?? []) {
-        if (view.initializers?.length) signatures[view.name] = view.initializers.map(initializer => initializer.signature)
+      usedSemanticModel = true
+      for (const symbol of semantic.model.symbols ?? []) {
+        if (symbol.kind !== 'view' || !symbol.initializers?.length) continue
+        signatures[symbol.name] = symbol.initializers.map(initializer => initializer.signature.startsWith(`${symbol.name}(`)
+          ? initializer.signature
+          : `${symbol.name}(${initializer.signature})`)
       }
       continue
     }
@@ -114,6 +119,9 @@ function signatureMap(document) {
       if (initializers.length > 0) signatures[match[1]] = initializers
     }
   }
+  // Keep a minimal degraded-mode catalog only when the compiler package is
+  // unavailable. Normal VS Code sessions consume the canonical symbol table.
+  if (!usedSemanticModel) Object.assign(signatures, VIEW_SIGNATURES)
   return signatures
 }
 

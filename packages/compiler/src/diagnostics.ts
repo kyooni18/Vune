@@ -41,7 +41,19 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
         column: position.column,
       }
     })
-    return [...typescriptDiagnostics, ...htmlDiagnostics]
+    const initializerDiagnostics = model.calls.flatMap(call => call.resolution.diagnostics.map(diagnostic => {
+      const position = sourcePositionAt(source, call.range.start)
+      return {
+        severity: "error" as const,
+        // Keep the public diagnostic code stable while preserving ambiguity
+        // as a richer code in the shared semantic call result.
+        code: "MUSE_INITIALIZER" as const,
+        message: diagnostic.message,
+        line: position.line,
+        column: position.column,
+      }
+    }))
+    return [...typescriptDiagnostics, ...htmlDiagnostics, ...initializerDiagnostics]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const offset = typeof error === "object" && error !== null && "offset" in error && typeof error.offset === "number" ? error.offset : 0

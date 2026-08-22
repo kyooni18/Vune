@@ -22,7 +22,7 @@ test("Vue consumes core keyed View identity for reorder and remount State semant
     })
     const App = defineView("VueIdentityApp", {
       initializers: [initializer("App()", args => args.length === 0)],
-      body: () => viewElement("section", null, [ForEach(items.value, item => Row(item.id))]),
+      body: () => viewElement("section", null, [ForEach(items.value, item => item.id, item => Row(item.id))]),
     })
     const app = createApp(MuseView, { render: () => App() })
     app.mount(dom.window.document.getElementById("app"))

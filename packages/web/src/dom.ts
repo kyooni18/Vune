@@ -77,9 +77,7 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   const lazyKey = context.lazyKeys.get(nextElement)
   if (lazyKey) context.lazyKeys.set(currentElement, lazyKey)
   patchDomProps(currentElement, context.domProps.get(nextElement), context)
-  context.domKeys.set(currentElement, typeof context.domProps.get(nextElement)?.key === "string" || typeof context.domProps.get(nextElement)?.key === "number"
-    ? context.domProps.get(nextElement)?.key as string | number
-    : undefined)
+  context.domKeys.set(currentElement, nodeKey(nextElement, context))
   reconcileDomChildren(currentElement, [...nextElement.childNodes], context)
   return current
 }
@@ -209,12 +207,20 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       }
       const extraStyle = styleOf(modifier)
       const extraProps = propsOf(modifier)
+      const key = modifier.name === "keyed" && (typeof modifier.arguments[0] === "string" || typeof modifier.arguments[0] === "number")
+        ? modifier.arguments[0]
+        : undefined
+      if (Object.keys(extraProps).length === 0 && Object.keys(extraStyle).length === 0 && key === undefined) return content
       const style = Object.keys(extraStyle).length > 0 || extraProps.style
         ? { ...extraStyle, ...(extraProps.style && typeof extraProps.style === "object" ? extraProps.style : {}) }
         : undefined
       const props = { ...extraProps, ...(style ? { style } : {}) }
       const nodes = content.nodeType === 11 ? [...content.childNodes] : [content]
-      nodes.forEach(node => { if (node.nodeType === 1) applyDomProps(node as HTMLElement, props, context) })
+      nodes.forEach(node => {
+        if (node.nodeType !== 1) return
+        if (key !== undefined) context.domKeys.set(node, key)
+        if (Object.keys(props).length > 0) applyDomProps(node as HTMLElement, props, context)
+      })
       return content
     },
     view(node, render, identity) {

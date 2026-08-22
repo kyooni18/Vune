@@ -29,6 +29,7 @@ import {
   modifier,
   modifierGraphOf,
   modifiedContent,
+  namedArguments,
   renderViewNode,
   resolveBuilderClosure,
   resolveSemanticInitializer,
@@ -193,6 +194,39 @@ test("@muse/core gives ForEach children stable identity keys", () => {
   const value = ForEach([{ id: "a", label: "A" }, { id: "b", label: "B" }], item => CoreText(item.label))
   assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["a:0"]])
   assert.deepEqual(modifierGraphOf(value.children[1]).map(item => item.arguments), [["b:0"]])
+})
+
+test("ForEach accepts an explicit deterministic key selector and preserves it across reorder", () => {
+  const renderItems = items => ForEach(items, item => item.id, item => CoreText(item.label))
+  const first = renderItems([{ id: "a", label: "A" }, { id: "b", label: "B" }])
+  const reordered = renderItems([{ id: "b", label: "B" }, { id: "a", label: "A" }])
+  assert.deepEqual(first.children.map(child => modifierGraphOf(child)[0].arguments), [["a:0"], ["b:0"]])
+  assert.deepEqual(reordered.children.map(child => modifierGraphOf(child)[0].arguments), [["b:0"], ["a:0"]])
+
+  const named = ForEach(
+    [{ id: "named" }],
+    namedArguments({ key: item => item.id }),
+    item => CoreText(item.id),
+  )
+  assert.deepEqual(modifierGraphOf(named.children[0])[0].arguments, ["named:0"])
+})
+
+test("ForEach warns for inferred object identity and duplicate keys without process-local IDs", () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = message => warnings.push(String(message))
+  try {
+    const first = ForEach([{ label: "same" }, { label: "same" }], item => CoreText(item.label))
+    const second = ForEach([{ label: "same" }], item => CoreText(item.label))
+    const firstKey = modifierGraphOf(first.children[0])[0].arguments[0]
+    const secondKey = modifierGraphOf(second.children[0])[0].arguments[0]
+    assert.equal(firstKey, secondKey)
+    assert.match(String(firstKey), /^object:/)
+    assert.ok(warnings.some(message => message.includes("no id/key")))
+    assert.ok(warnings.some(message => message.includes("duplicate key")))
+  } finally {
+    console.warn = originalWarn
+  }
 })
 
 test("lazy containers are distinct graph constructors with browser lazy metadata", () => {

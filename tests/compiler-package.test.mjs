@@ -60,6 +60,49 @@ struct Card<Content: View>: View {
   assert.equal(createMuseLanguageService().semantic(source, "Card.muse.ts").view("Card")?.name, "Card")
 })
 
+test("every known Muse call exposes the shared initializer answer", () => {
+  const source = `import { Text, VStack } from "@muse/core"
+struct Card: View {
+  let title: string
+  init(title: string) { self.title = title }
+  var body: some View { VStack(spacing: 8) { Text(title) } }
+}
+const items = [{ id: "a", label: "A" }]
+VStack(spacing: 12) { Text("Root") }
+ForEach(items, key: item => item.id) { item in Text(item.label) }
+Card(title: "Card")`
+  const model = createMuseSemanticModel(source, "ResolvedCalls.muse.ts")
+  const root = model.calls.find(call => call.callee === "VStack" && call.range.start >= source.indexOf("VStack(spacing: 12)"))
+  assert.equal(root?.resolution.resolvedViewType?.name, "VStack")
+  assert.equal(root?.resolution.resolvedInitializer?.signature, "options, @ViewBuilder content")
+  assert.deepEqual(root?.resolution.argumentTypes, ["number", "function"])
+  assert.deepEqual(root?.resolution.closureRoles, [undefined, "viewBuilder"])
+  assert.deepEqual(root?.resolution.inferredGenerics, { Content: "View" })
+  assert.deepEqual(root?.resolution.diagnostics, [])
+
+  const each = model.calls.find(call => call.callee === "ForEach")
+  assert.equal(each?.resolution.resolvedInitializer?.signature, "ForEach(items, key: (item) => string | number, @ViewBuilder content)")
+  assert.deepEqual(each?.resolution.closureRoles, ["value", "value", "viewBuilder"])
+  assert.deepEqual(each?.resolution.diagnostics, [])
+
+  const card = model.calls.find(call => call.callee === "Card")
+  assert.equal(card?.resolution.resolvedViewType?.name, "Card")
+  assert.equal(card?.resolution.resolvedInitializer?.signature, "Card(title: string)")
+  assert.deepEqual(card?.resolution.argumentTypes, ["string"])
+})
+
+test("compiler diagnostics consume shared call resolution without rejecting legacy variadic Views", () => {
+  const service = createMuseLanguageService()
+  assert.deepEqual(service.diagnose("Text(true)"), [{
+    severity: "error",
+    code: "MUSE_INITIALIZER",
+    message: "No matching initializer for Text. Available initializers: Text(value).",
+    line: 1,
+    column: 1,
+  }])
+  assert.deepEqual(service.diagnose("VStack()"), [])
+})
+
 test("semantic model exposes lowered HTML and foreign component symbols", () => {
   const source = `import VueChart from "./VueChart.vue"
 Element("section", { id: "root", "aria-label": title })

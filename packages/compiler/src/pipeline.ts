@@ -17,7 +17,7 @@ import {
   type BuilderCall,
 } from "./scanner.js"
 import * as Core from "@muse/core"
-import { resolveSemanticInitializer, type SemanticArgument, type SemanticInitializerSymbol } from "@muse/core"
+import { resolveSemanticCall, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@muse/core"
 import { lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
 
 const nonBindingDollarNames = new Set([
@@ -73,22 +73,29 @@ function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument
 function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): {
   readonly symbols: readonly SemanticInitializerSymbol[]
   readonly initializerIndex: number
+  readonly resolution: SemanticCallResolution
 } | undefined {
   const symbols = symbolsForCall(call, registry)
   if (!symbols) return undefined
-  const result = resolveSemanticInitializer(symbols, knownCallArguments(call))
-  if (!result.ok) {
+  const viewType: SemanticViewTypeSymbol = {
+    kind: "view",
+    name: call.callee,
+    qualifiedName: call.callee,
+    initializers: symbols,
+    fields: [],
+  }
+  const result = resolveSemanticCall(viewType, knownCallArguments(call))
+  if (!result.resolvedInitializer) {
     if (call.callee === "Button") throw new MuseInitializerSyntaxError(buttonInitializerMessage(call), call.range.start)
     if (call.trailing && canonicalInitializerSymbols.get(call.callee) !== symbols) {
-      const signatures = result.failure.candidates.map(candidate => candidate.signature).join("; ")
       throw new MuseInitializerSyntaxError(
-        `No matching initializer for ${call.callee}.${signatures ? ` Available initializers: ${signatures}.` : ""}`,
+        result.diagnostics[0]?.message ?? `No matching initializer for ${call.callee}.`,
         call.range.start,
       )
     }
     return undefined
   }
-  return { symbols, initializerIndex: result.resolution.initializerIndex }
+  return { symbols, initializerIndex: result.resolvedInitializer.index, resolution: result }
 }
 
 function validateKnownCalls(program: MuseBuilderProgram, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
@@ -135,6 +142,13 @@ function closureRoleForKnownCall(
   registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
 ): "value" | "viewBuilder" | "action" | undefined {
   const resolved = resolveKnownCall(call, registry)
+  const resolvedArgumentIndex = context.position === "trailing"
+    ? call.arguments.length
+    : context.label
+      ? call.arguments.findIndex(argument => argument.label === context.label)
+      : context.argumentIndex ?? 0
+  const sharedRole = resolved?.resolution.closureRoles[resolvedArgumentIndex]
+  if (sharedRole) return sharedRole === "binding" ? undefined : sharedRole
   const symbols = resolved?.symbols ?? symbolsForCall(call, registry) ?? []
   const parameters = resolved?.symbols[resolved.initializerIndex]?.parameters
     ?? (context.position === "trailing"
@@ -495,18 +509,22 @@ function semanticInitializerSymbol(name: string, plan: StructInitializerPlan, in
 function staticInitializerIndex(declaration: MuseStruct, argumentSource: string, offset = 0): number | undefined {
   const plans = structInitializerPlans(declaration)
   const arguments_ = compilerInitializerArguments(argumentSource).map(compilerSemanticArgument)
-  const result = resolveSemanticInitializer(
-    plans.map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index)),
-    arguments_,
-    declaration.genericParameters,
+  const initializers = plans.map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index))
+  const viewType: SemanticViewTypeSymbol = {
+    kind: "view",
+    name: declaration.name,
+    qualifiedName: declaration.name,
+    genericParameters: declaration.genericParameters,
+    fields: [],
+    initializers,
+  }
+  const result = resolveSemanticCall(viewType, arguments_)
+  if (result.resolvedInitializer) return result.resolvedInitializer.index
+  if (result.diagnostics[0]?.code === "MUSE_INITIALIZER" && arguments_.some(argument => argument.type === "unknown")) return undefined
+  throw new MuseInitializerSyntaxError(
+    result.diagnostics[0]?.message ?? `No matching initializer for ${declaration.name}.`,
+    offset,
   )
-  if (result.ok) return result.resolution.initializerIndex
-  if (result.failure.kind !== "ambiguous" && arguments_.some(argument => argument.type === "unknown")) return undefined
-  const signatures = result.failure.candidates.map(candidate => candidate.signature).join("; ")
-  const message = result.failure.kind === "ambiguous"
-    ? `Ambiguous initializer for ${declaration.name}. Candidates: ${signatures}.`
-    : `No matching initializer for ${declaration.name}.${signatures ? ` Available initializers: ${signatures}.` : ""}`
-  throw new MuseInitializerSyntaxError(message, offset)
 }
 
 function findDelegatedInitializer(plans: readonly StructInitializerPlan[], arguments_: readonly string[], excludedIndex: number): { plan: StructInitializerPlan; values: Map<string, string> } | undefined {

@@ -1,6 +1,8 @@
 import * as ts from "typescript"
+import * as Core from "@muse/core"
 import {
   SemanticModel,
+  resolveSemanticCall,
   semanticHtmlAttributeSpec,
   semanticHtmlTagSpec,
   type SemanticBuilderTypeSymbol,
@@ -9,6 +11,8 @@ import {
   type SemanticHtmlElementSymbol,
   type SemanticInitializerParameter,
   type SemanticInitializerSymbol,
+  type SemanticArgument,
+  type SemanticCallResolution,
   type SemanticStateSymbol,
   type SemanticSymbol,
   type SemanticViewTypeSymbol,
@@ -56,10 +60,13 @@ export interface MuseSemanticCall {
   readonly arguments: readonly {
     readonly label?: string
     readonly kind: "expression" | "closure"
+    readonly source: string
     readonly range: MuseSourceRange
   }[]
   readonly trailingClosure: boolean
   readonly range: MuseSourceRange
+  /** The shared semantic answer consumed by compiler and IDE clients. */
+  readonly resolution: SemanticCallResolution
 }
 
 export interface MuseSemanticImport {
@@ -278,10 +285,12 @@ function collectCalls(program: MuseBuilderProgram, output: MuseSemanticCall[]): 
         arguments: node.arguments.map(argument => ({
           label: argument.label,
           kind: argument.value.kind === "closure" ? "closure" as const : "expression" as const,
+          source: argument.value.kind === "closure" ? "" : argument.value.source,
           range: argument.range,
         })),
         trailingClosure: node.trailing !== undefined,
         range: node.range,
+        resolution: resolveSemanticCall(undefined, []),
       })
       for (const argument of node.arguments) {
         if (argument.value.kind === "closure") collectCalls(argument.value.body, output)
@@ -300,6 +309,77 @@ function collectCalls(program: MuseBuilderProgram, output: MuseSemanticCall[]): 
   for (const node of program.statements) visit(node)
 }
 
+function canonicalViewSymbols(): Map<string, SemanticViewTypeSymbol> {
+  const result = new Map<string, SemanticViewTypeSymbol>()
+  for (const [name, value] of Object.entries(Core)) {
+    if (typeof value !== "function") continue
+    const symbol = (value as { readonly viewType?: { readonly semanticSymbol?: SemanticViewTypeSymbol } }).viewType?.semanticSymbol
+    if (symbol) result.set(name, symbol)
+  }
+  return result
+}
+
+function checkerTypeForExpression(source: string, checker: ts.TypeChecker, sourceFile: ts.SourceFile): string | undefined {
+  const wanted = source.trim()
+  if (!wanted) return undefined
+  let candidate: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (candidate || !ts.isExpression(node)) {
+      if (!candidate) ts.forEachChild(node, visit)
+      return
+    }
+    if (node.getText(sourceFile).trim() === wanted) candidate = node
+    if (!candidate) ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!candidate) return undefined
+  const type = checker.getTypeAtLocation(candidate)
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
+  return checker.typeToString(type)
+}
+
+function compilerSemanticArgument(
+  source: string,
+  label: string | undefined,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  declaredTypes: ReadonlyMap<string, string> = new Map(),
+): SemanticArgument {
+  const value = source.trim()
+  if (/^(?:\$[A-Za-z_$][A-Za-z0-9_$]*|Binding\s*\()/.test(value)) return { label, kind: "binding", type: "binding" }
+  if (/^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)$/.test(value)) return { label, type: "string" }
+  if (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return { label, type: "number" }
+  if (/^(?:true|false)$/.test(value)) return { label, type: "boolean" }
+  if (/^null$/.test(value)) return { label, type: "null" }
+  if (/^undefined$/.test(value)) return { label, type: "undefined" }
+  if (/^(?:\[|Array\s*\()/.test(value)) return { label, type: "array" }
+  if (/=>|^function\b/.test(value)) return { label, type: "function" }
+  const declared = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) ? declaredTypes.get(value) : undefined
+  return { label, type: checkerTypeForExpression(value, checker, sourceFile) ?? declared ?? "unknown" }
+}
+
+function resolvedCalls(
+  calls: readonly MuseSemanticCall[],
+  views: readonly MuseSemanticView[],
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): MuseSemanticCall[] {
+  const symbols = canonicalViewSymbols()
+  for (const view of views) symbols.set(view.name, view.symbol)
+  const declaredTypes = new Map<string, string>()
+  for (const view of views) for (const field of view.fields) if (field.type) declaredTypes.set(field.name, field.type)
+  return calls.map(call => {
+    const arguments_: SemanticArgument[] = call.arguments.map(argument => argument.kind === "closure"
+      ? { label: argument.label, type: "function" }
+      : compilerSemanticArgument(argument.source, argument.label, checker, sourceFile, declaredTypes))
+    if (call.trailingClosure) arguments_.push({ type: "function", trailing: true })
+    return {
+      ...call,
+      resolution: resolveSemanticCall(symbols.get(call.callee), arguments_),
+    }
+  })
+}
+
 function builderProgramsFor(source: string, structs: readonly MuseStructDeclaration[]): MuseBuilderProgram[] {
   const programs: MuseBuilderProgram[] = []
   const seen = new Set<string>()
@@ -314,6 +394,16 @@ function builderProgramsFor(source: string, structs: readonly MuseStructDeclarat
       add(parseMuseBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start))
       visit(declaration.nested ?? [])
     }
+  }
+  if (structs.length > 0) {
+    // Struct bodies are indexed separately above. Mask declarations while
+    // preserving offsets so top-level builder calls are not lost when a file
+    // also contains custom Views.
+    let masked = source
+    for (const declaration of [...structs].sort((left, right) => right.range.start - left.range.start)) {
+      masked = masked.slice(0, declaration.range.start) + " ".repeat(declaration.range.end - declaration.range.start) + masked.slice(declaration.range.end)
+    }
+    add(parseMuseBuilder(masked))
   }
   visit(structs)
   if (programs.length === 0 && /\b[A-Z][A-Za-z0-9_$]*\s*\(/.test(source)) add(parseMuseBuilder(source))
@@ -596,12 +686,17 @@ export function createSemanticModel(source: string, fileName: string, generatedS
   const typescript = snapshot.sourceFile
   const structs = parseMuseStructs(source)
   const builderPrograms = builderProgramsFor(source, structs)
-  const calls: MuseSemanticCall[] = []
-  for (const program of builderPrograms) collectCalls(program, calls)
+  const collectedCalls: MuseSemanticCall[] = []
+  for (const program of builderPrograms) collectCalls(program, collectedCalls)
   const views = flattenStructs(structs)
+  const calls = resolvedCalls(collectedCalls, views, snapshot.checker, typescript)
   const sourceMap = createMuseSourceMap(source, generatedSource, fileName)
   const graphSymbols = typescriptGraphSymbols(source, generatedSource, typescript, snapshot.checker, sourceMap)
   const symbolTable = new SemanticModel()
+  for (const view of canonicalViewSymbols().values()) {
+    symbolTable.register(view)
+    for (const initializer of view.initializers) symbolTable.register(initializer)
+  }
   for (const view of views) {
     symbolTable.register(view.symbol)
     for (const initializer of view.symbol.initializers) symbolTable.register(initializer)

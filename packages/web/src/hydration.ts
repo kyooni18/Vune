@@ -28,6 +28,7 @@ export function hydrateNode(source: Node, target: Node, context: DomRenderContex
   const targetElement = target as HTMLElement
   if (sourceElement.tagName !== targetElement.tagName) return false
   activateHydratedProps(sourceElement, targetElement, context)
+  context.domKeys.set(targetElement, context.domKeys.get(sourceElement))
   const sourceChildren = [...source.childNodes]
   const targetChildren = [...target.childNodes]
   if (sourceChildren.length !== targetChildren.length) return false

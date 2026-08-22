@@ -241,7 +241,7 @@ test("@muse/web preserves keyed child State across reorder and resets it after r
   })
   const App = defineView("IdentityApp", {
     initializers: [initializer("IdentityApp()", args => args.length === 0)],
-    body: () => Element("section", null, ForEach(items.value, item => Row(item.id))),
+    body: () => Element("section", null, ForEach(items.value, item => item.id, item => Row(item.id))),
   })
   const unmount = mount(App(), container)
   container.querySelector('[data-row="a"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
@@ -276,6 +276,35 @@ test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", a
   container.querySelector("button")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
   await Promise.resolve()
   assert.equal(container.textContent, "1")
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web keeps explicit ForEach identity through SSR hydration and reorder", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a" }, { id: "b" }])
+  const Row = defineView("HydratedIdentityRow", {
+    initializers: [initializer("Row(id)", args => args.length === 1, args => ({ id: args[0] }))],
+    state: () => ({ count: State(0) }),
+    body: ({ id, count }) => Element("button", { "data-row": id, onclick: () => { count.value += 1 } }, `${id}:${count.value}`),
+  })
+  const App = defineView("HydratedIdentityApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => Element("section", null, ForEach(items.value, item => item.id, item => Row(item.id))),
+  })
+  const value = App()
+  container.innerHTML = renderToHTML(value)
+  const serverA = container.querySelector('[data-row="a"]')
+  const unmount = mount(value, container, { hydrate: true })
+  serverA?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(serverA?.textContent, "a:1")
+  items.value = [items.value[1], items.value[0]]
+  await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="a"]'), serverA)
+  assert.deepEqual([...container.querySelectorAll("button")].map(button => button.textContent), ["b:0", "a:1"])
   unmount()
   dom.window.close()
 })

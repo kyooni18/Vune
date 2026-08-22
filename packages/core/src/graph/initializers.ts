@@ -160,12 +160,15 @@ export class MuseInitializerAmbiguityError extends MuseInitializerError {
 }
 
 function semanticInitializerSymbol(initializer: InitializerMatch, index: number): SemanticInitializerSymbol | undefined {
-  if (!initializer.parameters) return undefined
   return {
     kind: "initializer",
     index,
     signature: initializer.signature,
-    parameters: initializer.parameters,
+    // Legacy variadic initializers predate explicit parameter metadata. Keep
+    // them in the shared semantic model as an unconstrained optional value
+    // parameter so zero-argument calls are resolved instead of diagnosed as
+    // unknown, while typed overloads still outrank them when applicable.
+    parameters: initializer.parameters ?? [{ kind: "value", required: false, variadic: true }],
   }
 }
 

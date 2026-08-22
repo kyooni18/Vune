@@ -346,22 +346,85 @@ export const Button = defineBuiltinView<ButtonProps>(
   ({ label, action }) => viewElement("button", { type: "button", onClick: action }, label),
 ) as TypedViewConstructor<ButtonProps, ButtonCall>
 
-const objectIdentityKeys = new WeakMap<object, number>()
-let nextObjectIdentityKey = 0
+type CollectionKey = string | number
+type CollectionKeySelector<Item> = (item: Item, index: number) => CollectionKey
 
-function collectionKey(item: unknown, index: number): string | number {
-  if (typeof item === "string" || typeof item === "number") return item
+const warnedForEachIdentity = new Set<string>()
+
+function warnForEachIdentity(message: string): void {
+  if (warnedForEachIdentity.has(message)) return
+  warnedForEachIdentity.add(message)
+  const runtime = globalThis as unknown as { readonly console?: { readonly warn?: (message: string) => void } }
+  runtime.console?.warn?.(`[Muse] ${message}`)
+}
+
+function deterministicIdentityPart(value: unknown, seen = new Set<object>(), depth = 0): string | undefined {
+  if (depth > 8) return undefined
+  if (value === null) return "null"
+  if (value === undefined) return "undefined"
+  if (typeof value === "string") return `string:${JSON.stringify(value)}`
+  if (typeof value === "number") return `number:${Number.isNaN(value) ? "NaN" : String(value)}`
+  if (typeof value === "boolean") return `boolean:${String(value)}`
+  if (typeof value === "bigint") return `bigint:${String(value)}`
+  if (typeof value === "symbol") return `symbol:${String(value)}`
+  if (typeof value === "function") return undefined
+  if (seen.has(value)) return undefined
+  seen.add(value)
+  if (Array.isArray(value)) {
+    const values = value.map(item => deterministicIdentityPart(item, seen, depth + 1))
+    return values.some(item => item === undefined) ? undefined : `array:[${values.join(",")}]`
+  }
+  const entries = Object.keys(value as Record<string, unknown>).sort().map(key => {
+    const item = deterministicIdentityPart((value as Record<string, unknown>)[key], seen, depth + 1)
+    return item === undefined ? undefined : `${JSON.stringify(key)}=${item}`
+  })
+  return entries.some(item => item === undefined) ? undefined : `object:{${entries.join(",")}}`
+}
+
+function primitiveCollectionKey(value: unknown): CollectionKey | undefined {
+  if (typeof value === "string" || typeof value === "number") return value
+  if (typeof value === "boolean" || value === null || value === undefined || typeof value === "bigint") return `${typeof value}:${String(value)}`
+  return undefined
+}
+
+function explicitCollectionKey(value: unknown): CollectionKey | undefined {
+  return typeof value === "string" || typeof value === "number" ? value : undefined
+}
+
+function collectionKey<Item>(item: Item, index: number, selector?: CollectionKeySelector<Item>): CollectionKey {
+  const selected = selector ? selector(item, index) : undefined
+  const selectedKey = typeof selected === "string" || typeof selected === "number" ? selected : undefined
+  if (selector && selectedKey !== undefined) return selectedKey
+  if (selector) warnForEachIdentity("ForEach key selector must return a stable string or number; falling back to inferred identity.")
+  const primitive = primitiveCollectionKey(item)
+  if (primitive !== undefined) return primitive
   if (item && typeof item === "object") {
     const candidate = item as { readonly id?: unknown; readonly key?: unknown }
-    if (typeof candidate.id === "string" || typeof candidate.id === "number") return candidate.id
-    if (typeof candidate.key === "string" || typeof candidate.key === "number") return candidate.key
-    const existing = objectIdentityKeys.get(item)
-    if (existing !== undefined) return `object:${existing}`
-    const assigned = nextObjectIdentityKey++
-    objectIdentityKeys.set(item, assigned)
-    return `object:${assigned}`
+    const explicit = explicitCollectionKey(candidate.id) ?? explicitCollectionKey(candidate.key)
+    if (explicit !== undefined) return explicit
+    const deterministic = deterministicIdentityPart(item)
+    if (deterministic !== undefined) {
+      warnForEachIdentity("ForEach item has no id/key; inferred identity is value-based and cannot distinguish equal duplicate objects.")
+      return `object:${deterministic}`
+    }
   }
-  return `${typeof item}:${String(item)}:${index}`
+  warnForEachIdentity("ForEach item has no stable identity. Provide key: item => item.id (or another stable primitive key).")
+  return `unstable:${typeof item}:${String(item)}:${index}`
+}
+
+function collectionKeys<Item>(collection: readonly Item[], selector?: CollectionKeySelector<Item>): CollectionKey[] {
+  const occurrences = new Map<string, number>()
+  return collection.map((item, index) => {
+    const key = collectionKey(item, index, selector)
+    const identity = `${typeof key}:${String(key)}`
+    const occurrence = occurrences.get(identity) ?? 0
+    occurrences.set(identity, occurrence + 1)
+    if (occurrence > 0) {
+      warnForEachIdentity(`ForEach contains duplicate key "${String(key)}"; state identity is ambiguous.`)
+      return `${String(key)}:duplicate:${occurrence}`
+    }
+    return key
+  })
 }
 
 function keyedCollectionChildren(value: ViewValue, key: string | number): ViewValue[] {
@@ -372,24 +435,40 @@ function keyedCollectionChildren(value: ViewValue, key: string | number): ViewVa
 
 interface ForEachProps<Item> {
   readonly items: readonly Item[] | StateRef<readonly Item[]>
+  readonly key?: CollectionKeySelector<Item>
   readonly content: (item: Item, index: number) => ViewValue
 }
 
 interface ForEachCall {
   <Item>(items: readonly Item[] | StateRef<readonly Item[]>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, key: CollectionKeySelector<Item>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, options: NamedArguments<{ readonly key: CollectionKeySelector<Item> }>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
 }
 
 const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
   "ForEach",
-  [initializer(
-    "ForEach(items, @ViewBuilder content)",
-    args => args.length === 2 && typeof args[1] === "function",
-    args => ({ items: args[0] as readonly unknown[] | StateRef<readonly unknown[]>, content: args[1] as (item: unknown, index: number) => ViewValue }),
-    [initializerKinds.value(true, "items", undefined, "array"), initializerKinds.viewBuilder(true, "content", "(item: Item, index: number) => View")],
-  )],
-  ({ items, content }) => {
+  [
+    initializer(
+      "ForEach(items, @ViewBuilder content)",
+      args => args.length === 2 && typeof args[1] === "function",
+      args => ({ items: args[0] as readonly unknown[] | StateRef<readonly unknown[]>, content: args[1] as (item: unknown, index: number) => ViewValue }),
+      [initializerKinds.value(true, "items", undefined, "array"), initializerKinds.viewBuilder(true, "content", "(item: Item, index: number) => View")],
+    ),
+    initializer(
+      "ForEach(items, key: (item) => string | number, @ViewBuilder content)",
+      args => args.length === 3 && typeof args[1] === "function" && typeof args[2] === "function",
+      args => ({ items: args[0] as readonly unknown[] | StateRef<readonly unknown[]>, key: args[1] as CollectionKeySelector<unknown>, content: args[2] as (item: unknown, index: number) => ViewValue }),
+      [
+        initializerKinds.value(true, "items", undefined, "array"),
+        initializerKinds.value(false, "key", undefined, "function", false, "key"),
+        initializerKinds.viewBuilder(true, "content", "(item: Item, index: number) => View"),
+      ],
+    ),
+  ],
+  ({ items, key, content }) => {
     const collection = (isStateRef(items) ? items.value : items) as readonly unknown[]
-    return viewFragment(collection.flatMap((item, index) => keyedCollectionChildren(content(item, index), collectionKey(item, index))))
+    const keys = collectionKeys(collection, key as CollectionKeySelector<unknown> | undefined)
+    return viewFragment(collection.flatMap((item, index) => keyedCollectionChildren(content(item, index), keys[index])))
   },
   "Item",
 )

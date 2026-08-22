@@ -245,7 +245,7 @@ function keyedFixture() {
   })
   const App = defineView("ConformanceIdentityApp", {
     initializers: [initializer("App()", args => args.length === 0)],
-    body: () => Element("section", null, ForEach(items.value, item => Row(item.id))),
+    body: () => Element("section", null, ForEach(items.value, item => item.id, item => Row(item.id))),
   })
   return { value: App(), items }
 }
