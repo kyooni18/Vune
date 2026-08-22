@@ -719,17 +719,27 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       context.lazyNodes.clear()
       const dependencies = new Set<StateRef<unknown>>()
       context.hydrating = Boolean(options.hydrate && !hasMounted)
-      const output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+      let output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
       for (const key of context.states.keys()) {
         if (!context.visitedStateIdentities.has(key)) context.states.delete(key)
       }
-      const outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
+      let outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
       const existingChildren = [...container.childNodes]
       const hydrated = context.hydrating
         && existingChildren.length === outputChildren.length
         && outputChildren.every((child, index) => hydrateNode(child, existingChildren[index], context))
       if (!hydrated) {
         context.hydrating = false
+        // A failed structural match may already have activated refs/listeners
+        // on the prefix that matched. Release those bindings before replacing
+        // or reconciling the server tree, then materialize a fresh client tree
+        // with normal DOM prop activation enabled.
+        context.refs.splice(0).forEach(cleanup => cleanup())
+        context.geometryIndex = 0
+        context.visitedLazyIdentities.clear()
+        context.lazyNodes.clear()
+        output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+        outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
         reconcileDomChildren(container, outputChildren, context)
       }
       for (const [parent, position] of scrollPositions) {

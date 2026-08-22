@@ -28,7 +28,6 @@ import {
   ForeignComponent,
   frameStyle,
   initializer,
-  initializerKinds,
   isForeignComponent,
   renderViewNode,
   subscribeState,
@@ -116,6 +115,7 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
   if (foreign) {
     normalizedProps = { ...foreign.props, ...foreign.events, ...(normalizedProps ?? {}) }
     if (foreign.ref !== undefined) normalizedProps.ref = foreign.ref
+    if (foreign.key !== undefined) normalizedProps.key = foreign.key
   }
   if (typeof type === "string") return h(type, normalizedProps, children)
   const slots = foreign?.slots
@@ -323,7 +323,6 @@ export function vueComponent<C extends VueComponentType>(type: C): VueComponentV
       "VueComponent(props?)",
       args => args.length <= 1 && (args.length === 0 || (typeof args[0] === "object" && args[0] !== null && !Array.isArray(args[0]))),
       args => ({ props: args[0] ?? null }),
-      [initializerKinds.value(false, "props", undefined, "object")],
     )],
     intrinsic: true,
     body: ({ props }: { readonly props: Record<string, unknown> | null }) => Component(type, (props ?? {}) as MuseVueComponentProps<C>),

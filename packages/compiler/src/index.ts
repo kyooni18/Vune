@@ -1,6 +1,7 @@
 import { createMuseSourceMap, mapGeneratedPosition } from "./source-map.js"
 import { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
 import { createSemanticModel, type MuseSemanticModel } from "./semantic.js"
+import { resolveSemanticInitializer, type SemanticArgument, type SemanticInitializerSymbol } from "@muse/core"
 import * as ts from "typescript"
 
 export { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
@@ -22,12 +23,38 @@ export type {
   MuseSemanticCall,
   MuseSemanticField,
   MuseSemanticForeignComponent,
+  MuseSemanticHtmlDiagnostic,
   MuseSemanticHtmlElement,
   MuseSemanticImport,
   MuseSemanticInitializer,
   MuseSemanticModel,
   MuseSemanticView,
 } from "./semantic.js"
+export type {
+  SemanticArgument,
+  SemanticArgumentKind,
+  SemanticBindingSymbol,
+  SemanticBuilderTypeSymbol,
+  SemanticFieldSymbol,
+  SemanticForeignComponentTypeSymbol,
+  SemanticHtmlAttributeSpec,
+  SemanticHtmlAttributeSymbol,
+  SemanticHtmlElementSymbol,
+  SemanticHtmlTagSpec,
+  SemanticHtmlAttributeCategory,
+  SemanticHtmlAttributeValueType,
+  SemanticInitializerParameter,
+  SemanticInitializerParameterKind,
+  SemanticInitializerResolution,
+  SemanticInitializerResolutionFailure,
+  SemanticInitializerResolutionResult,
+  SemanticInitializerSymbol,
+  SemanticStateSymbol,
+  SemanticStructSymbol,
+  SemanticSymbol,
+  SemanticViewTypeSymbol,
+} from "@muse/core"
+export { resolveSemanticInitializer, SemanticModel, semanticHtmlAttributeNames, semanticHtmlAttributeSpec, semanticHtmlTagNames, semanticHtmlTagSpec } from "@muse/core"
 export { mapGeneratedPosition, mapOriginalPosition } from "./source-map.js"
 export type { MuseSourceMapAnchor, MuseSourcePosition } from "./source-map.js"
 
@@ -51,7 +78,7 @@ export interface MuseTransformResult {
 
 export interface MuseDiagnostic {
   readonly severity: "error"
-  readonly code: "MUSE_SYNTAX" | "MUSE_TYPESCRIPT"
+  readonly code: "MUSE_SYNTAX" | "MUSE_TYPESCRIPT" | "MUSE_HTML_ATTRIBUTE" | "MUSE_HTML_VALUE"
   readonly message: string
   readonly line: number
   readonly column: number
@@ -761,12 +788,36 @@ function compilerInitializerArguments(source: string): readonly string[] {
   })
 }
 
+function compilerSemanticArgument(source: string): SemanticArgument {
+  const argument = structArgument(source)
+  const value = argument.value.trim()
+  if (/^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)$/.test(value)) return { label: argument.label, type: "string" }
+  if (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return { label: argument.label, type: "number" }
+  if (/^(?:true|false)$/.test(value)) return { label: argument.label, type: "boolean" }
+  if (/^(?:overloadClosure|function)\s*\(/.test(value) || /=>/.test(value)) return { label: argument.label, type: "function" }
+  if (/^Binding\s*\(/.test(value)) return { label: argument.label, kind: "binding", type: "binding" }
+  if (/^State\s*\(/.test(value)) return { label: argument.label, type: "state" }
+  return { label: argument.label, type: "unknown" }
+}
+
+function semanticInitializerSymbol(name: string, plan: StructInitializerPlan, index: number): SemanticInitializerSymbol {
+  return {
+    kind: "initializer",
+    index,
+    signature: `${name}(${plan.parameters.map(parameter => `${parameter.kind === "viewBuilder" ? "@ViewBuilder " : parameter.kind === "action" ? "@Action " : parameter.kind === "binding" ? "@Binding " : ""}${parameter.label ?? parameter.name}`).join(", ")})`,
+    parameters: plan.parameters,
+  }
+}
+
 function staticInitializerIndex(declaration: MuseStruct, argumentSource: string): number | undefined {
-  const arguments_ = compilerInitializerArguments(argumentSource)
-  const matches = structInitializerPlans(declaration).flatMap((plan, index) => (
-    delegatedParameterValues(plan.parameters, arguments_) ? [index] : []
-  ))
-  return matches.length === 1 ? matches[0] : undefined
+  const plans = structInitializerPlans(declaration)
+  const arguments_ = compilerInitializerArguments(argumentSource).map(compilerSemanticArgument)
+  const result = resolveSemanticInitializer(
+    plans.map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index)),
+    arguments_,
+    declaration.genericParameters,
+  )
+  return result.ok ? result.resolution.initializerIndex : undefined
 }
 
 function findDelegatedInitializer(plans: readonly StructInitializerPlan[], arguments_: readonly string[], excludedIndex: number): { plan: StructInitializerPlan; values: Map<string, string> } | undefined {
@@ -1188,23 +1239,35 @@ function lowerNamedMuseCalls(source: string): string {
   }
 }
 
-/**
- * Vue SFC imports are Vue component values, not callable Muse Views. Wrap the
- * default import at the compiler boundary so a .vue value can participate in
- * the same graph and labeled-argument path as every other View.
- */
 function lowerVueComponentImports(source: string): string {
-  const pattern = /^([ \t]*)import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+(['"])([^'"]+\.vue)\3[ \t]*;?[ \t]*$/gm
+  const file = ts.createSourceFile("muse-vue-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const existingNames = new Set<string>()
+  const collectNames = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) existingNames.add(node.text)
+    ts.forEachChild(node, collectNames)
+  }
+  collectNames(file)
   const replacements: Array<{ start: number; end: number; value: string }> = []
-  let match: RegExpExecArray | null
   let index = 0
-  while ((match = pattern.exec(source))) {
-    const importedName = match[2]
-    const adapterName = `__museForeignComponent${index++}`
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    if (!/\.vue$/i.test(statement.moduleSpecifier.text) || statement.importClause?.isTypeOnly) continue
+    const importedName = statement.importClause?.name?.text
+      ?? (statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
+        ? statement.importClause.namedBindings.elements.find(element => element.propertyName?.text === "default")?.name.text
+        : undefined)
+    if (!importedName) continue
+    let adapterName = `__museForeignComponent${index++}`
+    while (existingNames.has(adapterName)) adapterName = `__museForeignComponent${index++}`
+    existingNames.add(adapterName)
+    const quote = source[statement.moduleSpecifier.getStart(file)]
+    const module = statement.moduleSpecifier.text
+    const lineStart = source.lastIndexOf("\n", statement.getStart(file) - 1) + 1
+    const indent = source.slice(lineStart, statement.getStart(file)).match(/^[ \t]*/)?.[0] ?? ""
     replacements.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      value: `${match[1]}import ${adapterName} from ${match[3]}${match[4]}${match[3]}\n${match[1]}const ${importedName} = __museForeignComponent(${adapterName})`,
+      start: statement.getStart(file),
+      end: statement.end,
+      value: `${indent}import ${adapterName} from ${quote}${module}${quote}\n${indent}const ${importedName} = __museForeignComponent(${adapterName})`,
     })
   }
   if (replacements.length === 0) return source
@@ -1282,9 +1345,8 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
     const fileName = "muse-source.muse.ts"
     const generatedSource = transformMuseSource(source, fileName)
     const model = createSemanticModel(source, fileName, generatedSource)
-    if (model.typescriptDiagnostics.length === 0) return []
     const map = createMuseSourceMap(source, generatedSource, fileName)
-    return model.typescriptDiagnostics.map(diagnostic => {
+    const typescriptDiagnostics = model.typescriptDiagnostics.map(diagnostic => {
       const start = diagnostic.start ?? 0
       const position = model.typescript.getLineAndCharacterOfPosition(start)
       const mapped = mapGeneratedPosition(map, { line: position.line + 1, column: position.character + 1 })
@@ -1296,6 +1358,17 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
         column: mapped.column,
       }
     })
+    const htmlDiagnostics = model.htmlDiagnostics.map(diagnostic => {
+      const position = sourcePositionAt(source, diagnostic.range.start)
+      return {
+        severity: "error" as const,
+        code: diagnostic.code,
+        message: diagnostic.message,
+        line: position.line,
+        column: position.column,
+      }
+    })
+    return [...typescriptDiagnostics, ...htmlDiagnostics]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const offset = typeof error === "object" && error !== null && "offset" in error && typeof error.offset === "number" ? error.offset : 0
@@ -1309,6 +1382,12 @@ function tsDiagnosticMessage(diagnostic: { readonly messageText: unknown }): str
   if (!diagnostic.messageText || typeof diagnostic.messageText !== "object") return String(diagnostic.messageText)
   const chain = diagnostic.messageText as { readonly messageText?: unknown; readonly next?: readonly { readonly messageText?: unknown }[] }
   return [chain.messageText, ...(chain.next ?? []).map(item => item.messageText)].filter(Boolean).join(" ")
+}
+
+function sourcePositionAt(source: string, offset: number): { readonly line: number; readonly column: number } {
+  const bounded = Math.max(0, Math.min(source.length, offset))
+  const lines = source.slice(0, bounded).split("\n")
+  return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 }
 }
 
 export interface MuseLanguageService {

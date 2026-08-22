@@ -20,7 +20,7 @@ const coreRuntimeExports = [
   "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
   "keyedViewIdentity", "layoutLength", "lazyView", "markMuseClosure", "modifiedContent", "modifier", "modifierGraphOf", "museClosureKind", "museClosureVariants",
   "museForeignComponent", "museInitializers", "museNamedArguments", "museView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
-  "resolveBuilderClosure", "resolveInitializer", "resolveValue", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure",
+  "resolveBuilderClosure", "resolveInitializer", "resolveSemanticInitializer", "resolveValue", "SemanticModel", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure", "viewBuilderSemanticSymbol",
   "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "zeroGeometry",
 ].sort()
 
@@ -29,7 +29,8 @@ const coreTypeOnlyExports = [
   "GeometryFrame", "GeometryProxy", "GeometryReaderCall", "GeometryReaderProps", "GeometryViewNode", "GridOptions", "GridProps", "HStackOptions",
   "HStackProps", "ImageOptions", "ImageProps", "InitializerMatch", "InitializerParameter", "InitializerParameterKind", "InitializerResolution",
   "LabelProps", "LazyGridOptions", "LazyGridProps", "LazyHStackOptions", "LazyHStackProps", "LazyOptions", "LazyVStackOptions", "LazyVStackProps", "LazyViewNode", "LazyViewRange", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "MuseClosure", "MuseClosureKind",
-  "ForeignComponentDescriptor", "ForeignComponentOptions", "ForeignComponentSlot", "MuseClosureVariants", "MuseCustomElementAttributes", "MuseDOMEvent", "MuseEventHandler", "MuseEventTarget", "MuseGlobalHtmlAttributes",
+  "ForeignComponentDescriptor", "ForeignComponentOptions", "ForeignComponentSchema", "ForeignComponentSlot", "MuseClosureVariants", "MuseCustomElementAttributes", "MuseDOMEvent", "MuseEventHandler", "MuseEventTarget", "MuseGlobalHtmlAttributes",
+  "SemanticArgument", "SemanticArgumentKind", "SemanticBindingSymbol", "SemanticBuilderTypeSymbol", "SemanticFieldSymbol", "SemanticForeignComponentTypeSymbol", "SemanticHtmlAttributeCategory", "SemanticHtmlAttributeSpec", "SemanticHtmlAttributeSymbol", "SemanticHtmlAttributeValueType", "SemanticHtmlElementSymbol", "SemanticHtmlTagSpec", "SemanticInitializerParameter", "SemanticInitializerParameterKind", "SemanticInitializerResolution", "SemanticInitializerResolutionFailure", "SemanticInitializerResolutionResult", "SemanticInitializerSymbol", "SemanticStateSymbol", "SemanticStructSymbol", "SemanticSymbol", "SemanticViewTypeSymbol",
   "MuseHtmlAttributes", "MuseHtmlEventAttributes", "MuseHtmlTagName", "MuseRenderer", "MuseStyleProperties", "MuseStyleValue", "NavigationLinkProps",
   "NavigationStackProps", "PickerOption", "PickerProps", "ProgressViewOptions", "ProgressViewProps", "RoundedRectangleProps", "SafeAreaCall",
   "SafeAreaEdge", "SafeAreaProps", "ScrollAxis", "ScrollViewCall", "ScrollViewProps", "SheetProps", "SliderOptions", "SliderProps", "SpacerCall",
@@ -70,8 +71,8 @@ test("Vue, Web, and compiler renderer surfaces remain intentionally narrow", () 
   assert.deepEqual(Object.keys(vue).sort(), ["Component", "MuseView", "createVueView", "foreignComponent", "fromVueRef", "mount", "render", "toVueRef", "vueComponent"])
   assert.deepEqual(Object.keys(web).sort(), ["mount", "renderToHTML"])
   assert.deepEqual(Object.keys(compiler).sort(), [
-    "compileMuseFile", "createMuseLanguageService", "createMuseSemanticModel", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource", "lowerMuseBuilderAst",
-    "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "transformMuseSource",
+    "SemanticModel", "compileMuseFile", "createMuseLanguageService", "createMuseSemanticModel", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource", "lowerMuseBuilderAst",
+    "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "resolveSemanticInitializer", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "transformMuseSource",
   ])
 })
 
@@ -110,10 +111,10 @@ test("the 1.0 candidate declaration surface includes type-only exports in the fr
   assert.deepEqual(declarationExports("packages/compiler/dist/index.d.ts"), [
     "MuseArgument", "MuseAstLowering", "MuseBuilderNode", "MuseBuilderProgram", "MuseCallExpression", "MuseClosureExpression",
     "MuseConditionalExpression", "MuseDiagnostic", "MuseLanguageService", "MuseRawExpression", "MuseSemanticCall", "MuseSemanticField",
-    "MuseSemanticForeignComponent", "MuseSemanticHtmlElement", "MuseSemanticImport", "MuseSemanticInitializer", "MuseSemanticModel", "MuseSemanticView", "MuseSourceMap", "MuseSourceMapAnchor",
+    "MuseSemanticForeignComponent", "MuseSemanticHtmlDiagnostic", "MuseSemanticHtmlElement", "MuseSemanticImport", "MuseSemanticInitializer", "MuseSemanticModel", "MuseSemanticView", "MuseSourceMap", "MuseSourceMapAnchor",
     "MuseSourcePosition", "MuseSourceRange", "MuseStructDeclaration", "MuseStructField", "MuseStructInitializer", "MuseTransformResult",
-    "MuseVitePluginOptions",
+    "MuseVitePluginOptions", "SemanticArgument", "SemanticArgumentKind", "SemanticBindingSymbol", "SemanticBuilderTypeSymbol", "SemanticFieldSymbol", "SemanticForeignComponentTypeSymbol", "SemanticHtmlAttributeCategory", "SemanticHtmlAttributeSpec", "SemanticHtmlAttributeSymbol", "SemanticHtmlAttributeValueType", "SemanticHtmlElementSymbol", "SemanticHtmlTagSpec", "SemanticInitializerParameter", "SemanticInitializerParameterKind", "SemanticInitializerResolution", "SemanticInitializerResolutionFailure", "SemanticInitializerResolutionResult", "SemanticInitializerSymbol", "SemanticModel", "SemanticStateSymbol", "SemanticStructSymbol", "SemanticSymbol", "SemanticViewTypeSymbol",
     "compileMuseFile", "createMuseLanguageService", "createMuseSemanticModel", "createMuseVitePlugin", "diagnoseMuseSource", "formatMuseSource",
-    "lowerMuseBuilderAst", "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "transformMuseSource",
+    "lowerMuseBuilderAst", "mapGeneratedPosition", "mapOriginalPosition", "parseMuseBuilder", "parseMuseStructs", "resolveSemanticInitializer", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "transformMuseSource",
   ])
 })

@@ -14,6 +14,7 @@ import {
   State,
   Text as CoreText,
   VStack as CoreVStack,
+  ViewBuilder,
   defineBuiltinView,
   createViewIdentityStore,
   defineView,
@@ -30,6 +31,7 @@ import {
   modifiedContent,
   renderViewNode,
   resolveBuilderClosure,
+  resolveSemanticInitializer,
   subscribeState,
   viewElement,
 } from "../packages/core/dist/index.js"
@@ -172,12 +174,18 @@ test("@muse/core represents foreign components as explicit graph descriptors", (
     events: { onSave: () => undefined },
     slots: { header: () => CoreText("Header") },
     ref: reference,
+    key: "profile",
+    adapter: "vue",
+    schema: { props: { label: "string" }, events: { onSave: "() => void" }, slots: { header: "View" } },
   }, CoreText("Body"))
   assert.equal(value.kind, "element")
   assert.equal(isForeignComponent(value.type), true)
   assert.equal(value.type.component, component)
   assert.deepEqual(value.type.props, { label: "Muse" })
   assert.deepEqual(Object.keys(value.type.events), ["onSave"])
+  assert.equal(value.type.key, "profile")
+  assert.equal(value.type.adapter, "vue")
+  assert.deepEqual(value.type.schema, { props: { label: "string" }, events: { onSave: "() => void" }, slots: { header: "View" } })
   assert.equal(value.props.ref, reference)
 })
 
@@ -262,4 +270,31 @@ test("@muse/core resolves declared union value types without overload-order bias
 test("@muse/core applies Content: View constraints to built-in stack builders", () => {
   assert.doesNotThrow(() => CoreVStack(() => [CoreText("valid")]))
   assert.throws(() => CoreVStack(() => ["not a View"]), /No matching initializer for VStack/)
+})
+
+test("@muse/core exposes the same View symbol consumed by compiler adapters", () => {
+  assert.equal(CoreText.viewType.semanticSymbol.kind, "view")
+  assert.equal(CoreText.viewType.semanticSymbol.name, "Text")
+  assert.equal(CoreText.viewType.semanticSymbol.initializers[0].parameters[0].type, "string | number")
+  assert.deepEqual(ViewBuilder.semanticSymbol.operations, ["buildBlock", "buildOptional", "buildEither", "buildArray"])
+})
+
+test("the shared semantic resolver applies labels, roles, types, and ambiguity as one contract", () => {
+  const symbols = [
+    { kind: "initializer", index: 0, signature: "Probe(value: string)", parameters: [{ kind: "value", label: "value", required: true, type: "string" }] },
+    { kind: "initializer", index: 1, signature: "Probe(@Action action)", parameters: [{ kind: "action", label: "action", required: true, type: "() => void" }] },
+  ]
+  const stringResult = resolveSemanticInitializer(symbols, [{ label: "value", type: "string" }])
+  assert.equal(stringResult.ok, true)
+  assert.equal(stringResult.ok && stringResult.resolution.initializerIndex, 0)
+  const actionResult = resolveSemanticInitializer(symbols, [{ label: "action", type: "function", closureRole: "action" }])
+  assert.equal(actionResult.ok, true)
+  assert.equal(actionResult.ok && actionResult.resolution.initializerIndex, 1)
+
+  const ambiguous = resolveSemanticInitializer([
+    symbols[0],
+    { ...symbols[0], index: 2, signature: "Probe(value: string) [duplicate]" },
+  ], [{ type: "string" }])
+  assert.equal(ambiguous.ok, false)
+  assert.equal(!ambiguous.ok && ambiguous.failure.kind, "ambiguous")
 })

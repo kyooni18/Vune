@@ -9,6 +9,13 @@ import { keyedViewIdentity, type ViewIdentity } from "./identity.js"
 import type { FrameOptions } from "./layout.js"
 import type { MuseStyleProperties } from "./html.js"
 import { isBinding, isStateRef } from "./state.js"
+import {
+  resolveSemanticInitializer,
+  type SemanticArgument,
+  type SemanticBuilderTypeSymbol,
+  type SemanticInitializerSymbol,
+  type SemanticViewTypeSymbol,
+} from "./semantic.js"
 
 export const museView = Symbol.for("muse.view")
 export const museInitializers = Symbol.for("muse.initializers")
@@ -91,11 +98,21 @@ export const museForeignComponent = Symbol.for("muse.foreign.component")
 
 export type ForeignComponentSlot = ViewGraphValue | ((...args: any[]) => ViewGraphValue)
 
+export interface ForeignComponentSchema {
+  readonly props?: Record<string, unknown>
+  readonly events?: Record<string, unknown>
+  readonly slots?: Record<string, unknown>
+}
+
 export interface ForeignComponentOptions {
   readonly props?: Record<string, unknown>
   readonly events?: Record<string, unknown>
   readonly slots?: Record<string, ForeignComponentSlot>
   readonly ref?: unknown
+  readonly key?: string | number
+  /** Renderer-owned adapter metadata; core never invokes it. */
+  readonly adapter?: unknown
+  readonly schema?: ForeignComponentSchema
   readonly name?: string
 }
 
@@ -106,6 +123,9 @@ export interface ForeignComponentDescriptor {
   readonly events: Record<string, unknown>
   readonly slots: Record<string, ForeignComponentSlot>
   readonly ref?: unknown
+  readonly key?: string | number
+  readonly adapter?: unknown
+  readonly schema?: ForeignComponentSchema
   readonly name: string
 }
 
@@ -277,6 +297,9 @@ export function ForeignComponent(
     events: Object.freeze({ ...(options.events ?? {}) }),
     slots: Object.freeze({ ...(options.slots ?? {}) }),
     ...(options.ref === undefined ? {} : { ref: options.ref }),
+    ...(options.key === undefined ? {} : { key: options.key }),
+    ...(options.adapter === undefined ? {} : { adapter: options.adapter }),
+    ...(options.schema === undefined ? {} : { schema: Object.freeze({ ...options.schema }) }),
     name: options.name ?? (typeof component === "function" && component.name ? component.name : "ForeignComponent"),
   })
   return viewElement(descriptor, {
@@ -378,7 +401,11 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<
   if (!isViewNode(value)) return renderer.value ? renderer.value(value) : value as Output
   switch (value.kind) {
     case "element":
-      return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "element", index])))
+      {
+        const foreign = isForeignComponent(value.type) ? value.type : undefined
+        const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
+        return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...elementIdentity, "element", index])))
+      }
     case "fragment":
       return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "fragment", index])))
     case "modified":
@@ -511,6 +538,84 @@ export class MuseInitializerAmbiguityError extends MuseInitializerError {
     this.name = "MuseInitializerAmbiguityError"
     this.message = `Ambiguous initializer for ${typeName}(${args.map(value => typeof value === "function" ? "closure" : typeof value).join(", ")}). Candidates: ${ordered.join("; ")}.`
   }
+}
+
+function semanticInitializerSymbol(initializer: InitializerMatch, index: number): SemanticInitializerSymbol | undefined {
+  if (!initializer.parameters) return undefined
+  return {
+    kind: "initializer",
+    index,
+    signature: initializer.signature,
+    parameters: initializer.parameters,
+  }
+}
+
+function semanticRuntimeArgument(value: unknown): SemanticArgument {
+  if (isBinding(value)) return { value, kind: "binding", type: "binding", underlyingType: typeof value.value }
+  if (isStateRef(value)) return { value, kind: "value", type: "state", underlyingType: Array.isArray(value.value) ? "array" : typeof value.value }
+  const closureKind = closureKindOf(value)
+  if (closureKind === "action" || closureKind === "viewBuilder") {
+    return { value, kind: closureKind, closureRole: closureKind, type: "function" }
+  }
+  if (typeof value === "function") return { value, type: "function" }
+  if (isViewNode(value)) return { value, type: "View" }
+  return { value }
+}
+
+function semanticRuntimeArguments(candidate: InitializerMatch, args: readonly unknown[]): readonly SemanticArgument[] {
+  void candidate
+  return args.flatMap(value => {
+    if (!value || typeof value !== "object" || !(value as Record<PropertyKey, unknown>)[museNamedArguments]) return [semanticRuntimeArgument(value)]
+    return Object.entries(value as Record<string, unknown>).map(([label, item]) => ({ label, ...semanticRuntimeArgument(item) }))
+  })
+}
+
+function sharedRuntimeResolution(target: unknown, candidates: readonly InitializerMatch[], args: readonly unknown[]): InitializerResolution | undefined {
+  if (candidates.length === 0 || candidates.some(candidate => !candidate.parameters)) return undefined
+  const symbols = candidates.map(semanticInitializerSymbol).filter((item): item is SemanticInitializerSymbol => item !== undefined)
+  const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  const supplied = suppliedInitializerArguments(args)
+  const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
+  const result = resolveSemanticInitializer(symbols, runtimeArguments, genericParameters)
+  if (!result.ok) {
+    // Unmarked JavaScript functions cannot carry contextual closure roles. For
+    // legacy positional APIs such as Button(action, label), preserve the
+    // declaration's first distinct closure ordering at runtime; duplicate
+    // signatures still produce the required ambiguity error.
+    const roleShapes = result.failure.candidates.map(candidate => candidate.parameters.map(parameter => parameter.kind).join("/"))
+    const unmarkedClosureOverloads = supplied.length > 0
+      && supplied.every(value => typeof value === "function")
+      && new Set(roleShapes).size === roleShapes.length
+    if (result.failure.kind === "ambiguous" && unmarkedClosureOverloads) {
+      const chosen = candidates.find(candidate => result.failure.candidates.some(item => item.signature === candidate.signature))
+      const chosenIndex = chosen ? candidates.indexOf(chosen) : -1
+      const chosenSymbol = chosenIndex < 0 ? undefined : symbols[chosenIndex]
+      const fallback = chosenSymbol ? resolveSemanticInitializer([chosenSymbol], runtimeArguments, genericParameters) : undefined
+      if (fallback?.ok && chosen) {
+        const normalized = fallback.resolution.arguments.map(argument => argument.value)
+        const typed = normalized.map((item, index) => {
+          const parameter = chosen.parameters?.[index]
+          return typeof item === "function" && parameter && parameter.kind !== "binding"
+            ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
+            : item
+        })
+        return { initializer: chosen, args: typed }
+      }
+    }
+    const signatures = result.failure.candidates.map(candidate => candidate.signature)
+    if (result.failure.kind === "ambiguous") throw new MuseInitializerAmbiguityError(displayNameOf(target), supplied, signatures)
+    throw new MuseInitializerError(displayNameOf(target), supplied, signatures)
+  }
+  const candidate = candidates[result.resolution.initializerIndex]
+  if (!candidate) return undefined
+  const normalized = result.resolution.arguments.map(argument => argument.value)
+  const typed = normalized.map((item, index) => {
+    const parameter = candidate.parameters?.[index]
+    return typeof item === "function" && parameter && parameter.kind !== "binding"
+      ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
+      : item
+  })
+  return { initializer: candidate, args: typed }
 }
 
 function displayNameOf(target: unknown): string {
@@ -811,6 +916,8 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
   }
   const candidates = metadataOf(target)
   const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  const shared = sharedRuntimeResolution(target, candidates, supplied)
+  if (shared) return shared
   if (candidates.length === 1 && candidates[0].parameters) {
     return resolveSingleDeclaredInitializer(target, candidates[0], supplied, genericParameters)
   }
@@ -863,6 +970,13 @@ export type ViewBuilderClosure = () => ViewBuilderContent
 /** Runtime normalization input retained for renderer and compatibility boundaries. */
 export type ViewBuilderResult = ViewValue | readonly ViewBuilderResult[] | false
 
+export const viewBuilderSemanticSymbol: SemanticBuilderTypeSymbol = Object.freeze({
+  kind: "builder",
+  name: "ViewBuilder",
+  contentType: "View",
+  operations: ["buildBlock", "buildOptional", "buildEither", "buildArray"] as const,
+})
+
 export function flattenViewBuilder(value: ViewBuilderResult): ViewValue[] {
   if (value === null || value === undefined || value === false) return []
   if (Array.isArray(value)) return value.flatMap(item => flattenViewBuilder(item))
@@ -870,6 +984,7 @@ export function flattenViewBuilder(value: ViewBuilderResult): ViewValue[] {
 }
 
 export const ViewBuilder = Object.freeze({
+  semanticSymbol: viewBuilderSemanticSymbol,
   buildBlock: (...values: ViewBuilderResult[]) => values.flatMap(flattenViewBuilder),
   buildOptional: (value: ViewBuilderResult | null | undefined) => flattenViewBuilder(value as ViewBuilderResult),
   buildEither: (first: ViewBuilderResult, second?: ViewBuilderResult) => flattenViewBuilder(second === undefined ? first : second),
@@ -886,6 +1001,8 @@ export class ViewType<Props extends object = Record<string, unknown>> {
   readonly fields: readonly ViewFieldDefinition[]
   readonly definition: ViewDefinition<Props>
   readonly initializers: readonly InitializerMatch[]
+  /** Canonical semantic symbol consumed by compiler/IDE/runtime adapters. */
+  readonly semanticSymbol: SemanticViewTypeSymbol
   private target: unknown
 
   constructor(name: string, definition: ViewDefinition<Props>) {
@@ -894,15 +1011,24 @@ export class ViewType<Props extends object = Record<string, unknown>> {
     this.fields = definition.fields ?? []
     this.definition = definition
     this.initializers = definition.initializers
+    this.semanticSymbol = {
+      kind: "view",
+      name,
+      qualifiedName: name,
+      genericParameters: definition.genericParameters,
+      fields: this.fields,
+      initializers: this.initializers.flatMap((item, index) => {
+        const symbol = semanticInitializerSymbol(item, index)
+        return symbol ? [symbol] : []
+      }),
+    }
   }
 
   bind(target: unknown): void { this.target = target }
 
   createNode(args: readonly unknown[]): ModifiableViewNode {
     if (!this.target) throw new TypeError(`View type ${this.name} is not bound to a constructor`)
-    const resolution = this.initializers.length === 1 && this.initializers[0].parameters
-      ? resolveSingleDeclaredInitializer(this.target, this.initializers[0], args, this.genericParameters)
-      : resolveInitializer(this.target, args)
+    const resolution = resolveInitializer(this.target, args)
     return this.createNodeFromResolution(resolution)
   }
 

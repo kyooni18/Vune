@@ -24,6 +24,12 @@ The core owns graph construction, initializer resolution, builder normalization,
 State/Binding behavior, and identity paths. Renderers own only materialization,
 native event/ref wiring, measurement, and host lifecycle.
 
+The public semantic symbol layer is renderer-neutral. Compiler snapshots expose a
+TypeScript `TypeChecker` and register their `StructSymbol`, `ViewType`,
+`InitializerSymbol`, `State<T>`, `Binding<T>`, `ViewBuilder`, and
+`ForeignComponentType` entries in the same symbol shape that runtime `ViewType`
+instances expose.
+
 ## 2. Initializer resolution
 
 Every callable View declares its valid call forms in initializer metadata. A
@@ -100,6 +106,14 @@ Raw HTML lowers to typed `ElementViewNode` values. Native names such as `class`,
 `for`, `aria-*`, and `data-*` are preserved in the graph. Events, refs, children,
 modifiers, keys, and renderer materialization follow the same rules as any
 other View.
+
+The core semantic layer also publishes the tag/attribute schema used by
+`@muse/compiler` and the VS Code extension. Standard elements validate known
+attributes and literal value types; `aria-*`, `data-*`, spreads, and hyphenated
+custom elements remain extensible. Each lowered element has an
+`SemanticHtmlElementSymbol` with per-attribute category and inferred value type,
+so HTML diagnostics and completion/hover use the same contract as runtime
+`Element` typing.
 
 Foreign component adapters are graph boundaries with props, events, slots,
 refs, and a renderer adapter. Vue is an adapter implementation; its lifecycle,

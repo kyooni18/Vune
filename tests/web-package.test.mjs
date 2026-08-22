@@ -306,3 +306,28 @@ test("@muse/web hydrates the frame host without replacing its child", async () =
   unmount()
   dom.window.close()
 })
+
+test("@muse/web falls back to a fresh client tree when hydration structure mismatches", async () => {
+  const dom = new JSDOM("<div id=app><div data-stale>stale</div></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  let reference = null
+  const count = State(0)
+  const Counter = defineView("HydrationMismatchCounter", {
+    initializers: [initializer("Counter()", args => args.length === 0)],
+    body: () => Element("button", {
+      ref: node => { reference = node },
+      onclick: () => { count.value += 1 },
+    }, String(count.value)),
+  })
+  const unmount = mount(Counter(), container, { hydrate: true })
+  const button = container.querySelector("button")
+  assert.ok(button)
+  assert.equal(reference, button)
+  button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(container.textContent, "1")
+  unmount()
+  assert.equal(reference, null)
+  dom.window.close()
+})

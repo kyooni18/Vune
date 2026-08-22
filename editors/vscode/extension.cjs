@@ -27,8 +27,8 @@ const VIEW_SIGNATURES = Object.freeze({
   Element: ['Element(tag, props?, ...children)'],
 })
 
-const HTML_TAGS = Object.freeze(['a', 'article', 'button', 'div', 'form', 'h1', 'h2', 'h3', 'header', 'img', 'input', 'label', 'main', 'nav', 'p', 'section', 'select', 'span', 'textarea', 'ul', 'li'])
-const HTML_ATTRIBUTES = Object.freeze(['class', 'for', 'id', 'style', 'title', 'role', 'onclick', 'onchange', 'oninput', 'onkeydown', 'disabled', 'name', 'placeholder', 'aria-label', 'aria-hidden', 'data-testid'])
+const FALLBACK_HTML_TAGS = Object.freeze(['a', 'article', 'button', 'div', 'form', 'h1', 'h2', 'h3', 'header', 'img', 'input', 'label', 'main', 'nav', 'p', 'section', 'select', 'span', 'textarea', 'ul', 'li'])
+const FALLBACK_HTML_ATTRIBUTES = Object.freeze(['class', 'for', 'id', 'style', 'title', 'role', 'onclick', 'onchange', 'oninput', 'onkeydown', 'disabled', 'name', 'placeholder', 'aria-label', 'aria-hidden', 'data-testid'])
 const SEMANTIC_TOKEN_TYPES = Object.freeze(['class', 'function', 'parameter', 'property', 'keyword', 'decorator'])
 const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(SEMANTIC_TOKEN_TYPES)
 
@@ -71,6 +71,28 @@ function semanticModel(document) {
   } catch { return undefined }
 }
 
+function htmlTagNames() {
+  return semanticCompiler?.semanticHtmlTagNames ?? FALLBACK_HTML_TAGS
+}
+
+function htmlAttributeNames(tag) {
+  return typeof semanticCompiler?.semanticHtmlAttributeNames === 'function'
+    ? semanticCompiler.semanticHtmlAttributeNames(tag)
+    : FALLBACK_HTML_ATTRIBUTES
+}
+
+function htmlAttributeSpec(tag, name) {
+  return typeof semanticCompiler?.semanticHtmlAttributeSpec === 'function'
+    ? semanticCompiler.semanticHtmlAttributeSpec(tag, name)
+    : undefined
+}
+
+function htmlTagAtPosition(document, position) {
+  const line = document.lineAt(position.line).text.slice(0, position.character)
+  const match = /<([A-Za-z][A-Za-z0-9:._-]*)[^>]*$/.exec(line)
+  return match?.[1]
+}
+
 function signatureMap(document) {
   const signatures = Object.fromEntries(Object.entries(VIEW_SIGNATURES))
   for (const candidate of openMuseDocuments(document)) {
@@ -97,8 +119,14 @@ function signatureMap(document) {
 
 function completions(document, position) {
   const line = document.lineAt(position.line).text.slice(0, position.character)
-  if (/<[A-Za-z0-9-]*$/.test(line)) return HTML_TAGS.map(tag => completionItem(tag, 'Raw HTML element', vscode.CompletionItemKind.Property))
-  if (/<[A-Za-z0-9-]+\s+[A-Za-z0-9:-]*$/.test(line)) return HTML_ATTRIBUTES.map(attribute => completionItem(attribute, 'HTML attribute', vscode.CompletionItemKind.Value))
+  if (/<[A-Za-z0-9-]*$/.test(line)) return htmlTagNames().map(tag => completionItem(tag, 'Raw HTML element', vscode.CompletionItemKind.Property))
+  const attributeContext = /<([A-Za-z0-9-]+)\s+[A-Za-z0-9:-]*$/.exec(line)
+  if (attributeContext) {
+    return htmlAttributeNames(attributeContext[1]).map(attribute => {
+      const spec = htmlAttributeSpec(attributeContext[1], attribute)
+      return completionItem(attribute, `HTML attribute${spec ? ` (${spec.type})` : ''}`, vscode.CompletionItemKind.Value)
+    })
+  }
   const items = []
   for (const [name, signatures] of Object.entries(signatureMap(document))) {
     items.push(completionItem(name, signatures.join(' | '), vscode.CompletionItemKind.Function))
@@ -117,8 +145,13 @@ function hover(document, position) {
     markdown.isTrusted = false
     return new vscode.Hover(markdown, token.range)
   }
-  if (HTML_TAGS.includes(token.name)) return new vscode.Hover(new vscode.MarkdownString(`Raw HTML element \`<${token.name}>\``), token.range)
-  if (HTML_ATTRIBUTES.includes(token.name) || /^aria-|^data-/.test(token.name)) return new vscode.Hover(new vscode.MarkdownString(`HTML attribute \`${token.name}\``), token.range)
+  if (htmlTagNames().includes(token.name)) return new vscode.Hover(new vscode.MarkdownString(`Raw HTML element \`<${token.name}>\``), token.range)
+  const htmlTag = htmlTagAtPosition(document, position)
+  const attribute = htmlTag ? htmlAttributeSpec(htmlTag, token.name) : undefined
+  if (attribute || /^aria-|^data-/.test(token.name)) {
+    const detail = attribute ? ` — ${attribute.type}` : ''
+    return new vscode.Hover(new vscode.MarkdownString(`HTML attribute \`${token.name}\`${detail}`), token.range)
+  }
   return undefined
 }
 

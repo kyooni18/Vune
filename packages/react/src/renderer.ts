@@ -113,6 +113,7 @@ function normalizeForeignProps(
 ): Record<string, unknown> | null {
   if (!isForeignComponent(type)) return normalizeElementProps(props)
   const next = normalizeElementProps({ ...type.props, ...type.events, ...(props ?? {}) }) ?? {}
+  if (type.key !== undefined) next.key = type.key
   for (const [name, slot] of Object.entries(type.slots)) {
     next[name] = (...args: unknown[]) => renderViewNode(typeof slot === "function" ? slot(...args) : slot, renderer)
   }

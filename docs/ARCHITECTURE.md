@@ -55,9 +55,22 @@ modifier value semantics, and state ownership independent from React.
 stores props, events, slots, and refs as one renderer-neutral descriptor;
 React, Vue, and Web choose only how to materialize that descriptor.
 
+The core also owns the renderer-neutral semantic symbols used by this graph:
+`ViewType`/`StructSymbol`, `InitializerSymbol`, `State<T>`, `Binding<T>`,
+`ViewBuilder`, and `ForeignComponentType`. `@muse/compiler` adapts Muse AST and
+the TypeScript `TypeChecker` into the same symbol table; its static initializer
+selection calls the core semantic resolver, so IDE and runtime do not invent a
+second overload contract.
+
 Raw HTML is graph input too. In a `.muse.ts` file the compiler lowers this
 without a tag allow-list, retaining attributes such as `class`, `for`, `aria-*`,
 and `data-*`:
+
+The core semantic schema describes standard tags, global/event attributes, and
+custom-element extension points. The compiler records
+`SemanticHtmlElementSymbol` symbols and source-ranged diagnostics from that schema; the VS Code completion
+and hover providers consume the same exported schema rather than maintaining a
+second HTML attribute list.
 
 ```ts
 VStack() {

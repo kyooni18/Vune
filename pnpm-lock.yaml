@@ -80,6 +80,9 @@ importers:
 
   packages/compiler:
     dependencies:
+      '@muse/core':
+        specifier: workspace:*
+        version: link:../core
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

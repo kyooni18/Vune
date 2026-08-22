@@ -52,6 +52,11 @@ struct Card<Content: View>: View {
   assert.ok(model.calls.some(call => call.callee === "Text"))
   assert.ok(model.imports.some(item => item.module === "@muse/core"))
   assert.equal(model.typescriptDiagnostics.length, 0)
+  assert.equal(typeof model.typeChecker.typeToString(model.typeChecker.getTypeAtLocation(model.typescript.statements[0])), "string")
+  assert.equal(model.symbol("Card")?.kind, "view")
+  assert.equal(model.symbol("ViewBuilder")?.kind, "builder")
+  assert.deepEqual(model.symbol("ViewBuilder")?.operations, ["buildBlock", "buildOptional", "buildEither", "buildArray"])
+  assert.equal(model.symbol("Card(@ViewBuilder content: () => Content)")?.kind, "initializer")
   assert.equal(createMuseLanguageService().semantic(source, "Card.muse.ts").view("Card")?.name, "Card")
 })
 
@@ -62,9 +67,33 @@ VueChart(values: values)`
   const model = createMuseSemanticModel(source, "Interop.muse.ts")
   assert.deepEqual(model.htmlElements.map(element => [element.tag, element.attributes]), [["section", ["id", "aria-label"]]])
   assert.deepEqual(model.foreignComponents.map(component => [component.localName, component.module]), [["VueChart", "./VueChart.vue"]])
+  assert.equal(model.symbol("VueChart")?.kind, "foreign-component")
+  assert.equal(model.symbol("VueChart")?.rendererAdapter, "@muse/vue")
   assert.equal(source.slice(model.htmlElements[0].range.start, model.htmlElements[0].range.end), 'Element("section", { id: "root", "aria-label": title })')
   assert.equal(source.slice(model.foreignComponents[0].range.start, model.foreignComponents[0].range.end), "VueChart(values: values)")
   assert.equal(model.typescriptDiagnostics.length, 0)
+})
+
+test("HTML semantic symbols validate standard attributes while preserving custom elements", () => {
+  const validSource = `const id = "email"
+<input type="email" aria-label="Email" data-test-id={id} oninput={event => save(event)} />
+<x-card framework-prop={{ ready: true }} data-kind="hero" />`
+  const valid = createMuseSemanticModel(validSource, "Html.muse.ts")
+  assert.equal(valid.htmlDiagnostics.length, 0)
+  assert.equal(valid.htmlElements[0].symbol.custom, false)
+  assert.deepEqual(valid.htmlElements[0].attributeSymbols.map(attribute => [attribute.name, attribute.category]), [
+    ["type", "tag"], ["aria-label", "aria"], ["data-test-id", "data"], ["oninput", "event"],
+  ])
+  assert.equal(valid.htmlElements[1].symbol.custom, true)
+  assert.equal(valid.symbol(valid.htmlElements[0].symbol.name)?.kind, "html-element")
+
+  const invalidSource = `<input href="/wrong" disabled="yes" />
+<button type="link">Save</button>`
+  const invalid = createMuseSemanticModel(invalidSource, "InvalidHtml.muse.ts")
+  assert.deepEqual(invalid.htmlDiagnostics.map(diagnostic => diagnostic.code), ["MUSE_HTML_ATTRIBUTE", "MUSE_HTML_VALUE", "MUSE_HTML_VALUE"])
+  assert.match(invalid.htmlDiagnostics[0].message, /Unknown attribute/)
+  assert.match(invalid.htmlDiagnostics[2].message, /expects/)
+  assert.deepEqual(createMuseLanguageService().diagnose(invalidSource).map(diagnostic => diagnostic.code), ["MUSE_HTML_ATTRIBUTE", "MUSE_HTML_VALUE", "MUSE_HTML_VALUE"])
 })
 
 test("@muse/compiler preserves empty, optional, and array builder results", () => {
@@ -229,6 +258,17 @@ VueChart(values: values)`, "VueChart.muse.ts")
   assert.match(output, /const VueChart = __museForeignComponent\(__museForeignComponent0\)/)
   assert.match(output, /VueChart\(namedArguments\(\{ values: values \}\)\)/)
   assert.equal(ts.createSourceFile("VueChart.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("Vue foreign wrapping follows TypeScript import nodes, not import-line matching", () => {
+  const source = `// import Ignored from "./Ignored.vue"
+import /* keep the module AST-bound */ Chart from "./Chart.vue";
+Chart(values: values)`
+  const output = transformMuseSource(source, "AstVueImport.muse.ts")
+  assert.match(output, /const Chart = __museForeignComponent\(__museForeignComponent0\)/)
+  assert.doesNotMatch(output, /const Ignored\s*=/)
+  assert.match(output, /Chart\(namedArguments\(\{ values: values \}\)\)/)
+  assert.equal(ts.createSourceFile("AstVueImport.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("the canonical compiler preserves host stylesheet imports", () => {

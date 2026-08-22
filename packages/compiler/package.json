@@ -17,6 +17,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@muse/core": "workspace:*",
     "typescript": "^5.8.3"
   }
 }
