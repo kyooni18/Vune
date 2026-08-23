@@ -462,7 +462,12 @@ function declaredParametersAccept(candidate: InitializerMatch, args: readonly un
   for (let index = 0; index < parameters.length; index += 1) {
     const value = args[index]
     if (value === undefined) continue
-    if (typeMatches(parameters[index], value, genericParameters) === false) return false
+    const parameter = parameters[index]
+    const variants = closureVariantsOf(value)
+    if (variants && (parameter.kind === "viewBuilder" || parameter.kind === "action") && !variants[parameter.kind]) return false
+    const kind = closureKindOf(value)
+    if (kind !== undefined && kind !== parameter.kind) return false
+    if (typeMatches(parameter, value, genericParameters) === false) return false
   }
   return true
 }
@@ -478,20 +483,19 @@ function resolveSingleDeclaredInitializer(
   candidate: InitializerMatch,
   args: readonly unknown[],
   genericParameters?: string,
+  scoreCandidate = true,
 ): InitializerResolution {
   const supplied = suppliedInitializerArguments(args)
   const normalized = normalizeNamedArguments(candidate, supplied)
-  if (declaredParametersAccept(candidate, normalized, genericParameters) !== false) {
-    const candidateScore = score(candidate, supplied, normalized, genericParameters)
-    if (Number.isFinite(candidateScore)) {
-      const typed = normalized.map((item, index) => {
-        const parameter = candidate.parameters?.[index]
-        return typeof item === "function" && parameter && parameter.kind !== "binding"
-          ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
-          : item
-      })
-      return { initializer: candidate, args: typed }
-    }
+  if (declaredParametersAccept(candidate, normalized, genericParameters) !== false
+    && (!scoreCandidate || Number.isFinite(score(candidate, supplied, normalized, genericParameters)))) {
+    const typed = normalized.map((item, index) => {
+      const parameter = candidate.parameters?.[index]
+      return typeof item === "function" && parameter && parameter.kind !== "binding"
+        ? markMuseClosure(closureForKind(item as (...args: any[]) => any, parameter.kind as MuseClosureKind), parameter.kind)
+        : item
+    })
+    return { initializer: candidate, args: typed }
   }
   throw new MuseInitializerError(displayNameOf(target), supplied, [candidate.signature])
 }
@@ -643,7 +647,7 @@ export class ViewType<Props extends object = Record<string, unknown>> {
     if (!this.target) throw new TypeError(`View type ${this.name} is not bound to a constructor`)
     const candidate = this.initializers[initializerIndex]
     if (!candidate?.parameters) return this.createNode(args)
-    return this.createNodeFromResolution(resolveSingleDeclaredInitializer(this.target, candidate, args, this.genericParameters))
+    return this.createNodeFromResolution(resolveSingleDeclaredInitializer(this.target, candidate, args, this.genericParameters, false))
   }
 
   private createNodeFromResolution(resolution: InitializerResolution): ModifiableViewNode {

@@ -360,3 +360,156 @@ test("@muse/web falls back to a fresh client tree when hydration structure misma
   assert.equal(reference, null)
   dom.window.close()
 })
+
+test("@muse/web commits refs only after live DOM reconciliation and keeps stable refs stable", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const value = State("one")
+  const calls = []
+  const reference = node => calls.push(node ? { node, connected: node.isConnected } : null)
+  const App = defineView("CommittedRef", {
+    initializers: [initializer("CommittedRef()", args => args.length === 0)],
+    body: () => Element("button", { ref: reference }, value.value),
+  })
+  const unmount = mount(App(), container)
+  const button = container.querySelector("button")
+  assert.ok(button)
+  assert.deepEqual(calls, [{ node: button, connected: true }])
+  value.value = "two"
+  await Promise.resolve()
+  assert.equal(container.querySelector("button"), button)
+  assert.deepEqual(calls, [{ node: button, connected: true }])
+  unmount()
+  assert.deepEqual(calls, [{ node: button, connected: true }, null])
+  dom.window.close()
+})
+
+test("@muse/web normalizes DOM event names and boolean, ARIA, and enumerated attributes", () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  let doubleClicks = 0
+  const value = Element("button", {
+    onDoubleClick: () => { doubleClicks += 1 },
+    disabled: false,
+    "aria-expanded": false,
+    draggable: false,
+    contentEditable: false,
+  }, "Open")
+  const unmount = mount(value, container)
+  const button = container.querySelector("button")
+  assert.ok(button)
+  button.dispatchEvent(new dom.window.MouseEvent("dblclick", { bubbles: true }))
+  assert.equal(doubleClicks, 1)
+  assert.equal(button.hasAttribute("disabled"), false)
+  assert.equal(button.getAttribute("aria-expanded"), "false")
+  assert.equal(button.getAttribute("draggable"), "false")
+  assert.equal(button.getAttribute("contenteditable"), "false")
+  const html = renderToHTML(value)
+  assert.doesNotMatch(html, /\sdisabled(?:[= >])/)
+  assert.match(html, /aria-expanded="false"/)
+  assert.match(html, /draggable="false"/)
+  assert.match(html, /contenteditable="false"/)
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web hydration reconciles stale server attributes without replacing matching nodes", () => {
+  const dom = new JSDOM('<div id=app><div class="server" title="old" style="width:10px" data-stale="yes">server</div></div>')
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const server = container.firstElementChild
+  const value = Element("div", { class: "client", title: "new", style: { width: "20px" } }, "client")
+  const unmount = mount(value, container, { hydrate: true })
+  assert.equal(container.firstElementChild, server)
+  assert.equal(server.getAttribute("class"), "client")
+  assert.equal(server.getAttribute("title"), "new")
+  assert.equal(server.getAttribute("style"), "width: 20px;")
+  assert.equal(server.hasAttribute("data-stale"), false)
+  assert.equal(server.textContent, "client")
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web creates contextual SVG namespaces and returns to HTML inside foreignObject", () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const value = [
+    Element("a", { "data-html-link": true }, "html"),
+    Element("svg", { viewBox: "0 0 10 10" },
+      Element("a", { "data-svg-link": true, xlinkHref: "#target" },
+        Element("title", null, "svg title"),
+      ),
+      Element("path", { d: "M0 0L10 10" }),
+      Element("foreignObject", null, Element("div", { "data-html-child": true }, "html child")),
+    ),
+  ]
+  const unmount = mount(value, container)
+  const HTML_NS = "http://www.w3.org/1999/xhtml"
+  const SVG_NS = "http://www.w3.org/2000/svg"
+  const XLINK_NS = "http://www.w3.org/1999/xlink"
+  assert.equal(container.querySelector("[data-html-link]").namespaceURI, HTML_NS)
+  const svg = container.querySelector("svg")
+  assert.equal(svg.namespaceURI, SVG_NS)
+  assert.equal(svg.querySelector("[data-svg-link]").namespaceURI, SVG_NS)
+  assert.equal(svg.querySelector("title").namespaceURI, SVG_NS)
+  assert.equal(svg.querySelector("path").namespaceURI, SVG_NS)
+  assert.equal(svg.querySelector("foreignObject").namespaceURI, SVG_NS)
+  assert.equal(svg.querySelector("[data-html-child]").namespaceURI, HTML_NS)
+  assert.equal(svg.querySelector("[data-svg-link]").getAttributeNS(XLINK_NS, "href"), "#target")
+  unmount()
+  dom.window.close()
+})
+
+test("@muse/web preserves State for logically present offscreen lazy rows and drops removed rows", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  container.style.overflowY = "auto"
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: 100 })
+  const items = State(Array.from({ length: 50 }, (_, index) => `row-${index}`))
+  const Row = defineView("LazyStateRow", {
+    initializers: [initializer("Row(id)", args => args.length === 1, args => ({ id: args[0] }))],
+    state: () => ({ count: State(0) }),
+    body: ({ id, count }) => Element("button", {
+      "data-row": id,
+      onclick: () => { count.value += 1 },
+    }, `${id}:${count.value}`),
+  })
+  const App = defineView("LazyStateApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => LazyVStack(
+      { estimatedItemSize: 20, overscan: 0 },
+      ...items.value.map(id => Row(id).keyed(id)),
+    ),
+  })
+  const unmount = mount(App(), container)
+  container.querySelector('[data-row="row-0"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="row-0"]')?.textContent, "row-0:1")
+
+  container.scrollTop = 400
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="row-0"]'), null)
+  container.scrollTop = 0
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="row-0"]')?.textContent, "row-0:1")
+
+  container.scrollTop = 400
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve(); await Promise.resolve()
+  items.value = items.value.filter(id => id !== "row-0")
+  await Promise.resolve(); await Promise.resolve()
+  items.value = ["row-0", ...items.value]
+  await Promise.resolve(); await Promise.resolve()
+  container.scrollTop = 0
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(container.querySelector('[data-row="row-0"]')?.textContent, "row-0:0")
+  unmount()
+  dom.window.close()
+})

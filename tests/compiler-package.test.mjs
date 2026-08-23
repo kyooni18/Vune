@@ -9,8 +9,8 @@ import { readFileSync } from "node:fs"
 test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax", () => {
   const source = `VStack(spacing: 12) {\n  Text("Header")\n  if (enabled) { Text("On") } else { Text("Off") }\n  ForEach(items) { item in Row(item) }\n  Each(items) { item in Row(item) }\n}`
   const output = transformMuseSource(source, "Counter.muse.ts")
-  assert.match(output, /VStack\(namedArguments\(\{ spacing: 12 \}\), \(\) => \[/)
-  assert.match(output, /enabled \? \[Text\("On"\)\] : \[Text\("Off"\)\]/)
+  assert.match(output, /VStack\(namedArguments\(\{ spacing: 12 \}\), \(\) =>/)
+  assert.match(output, /if \(enabled\)[\s\S]*Text\("On"\)[\s\S]*Text\("Off"\)/)
   assert.match(output, /ForEach\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /Each\(items, \(item\) => \[Row\(item\)\]\)/)
   assert.match(output, /import \{ namedArguments \} from "@muse\/core"/)
@@ -48,7 +48,7 @@ test("@muse/compiler lowers ViewBuilder statements and children in one executabl
   assert.match(output, /const __museChildren = \[\]/)
   assert.match(output, /const title = "Hello"/)
   assert.match(output, /__museChildren\.push\(Text\(title\)\)/)
-  assert.match(output, /if \(enabled\) \{ __museChildren\.push\(Text\("Enabled"\)\); \}/)
+  assert.match(output, /if \(enabled\)[\s\S]*__museChildren\.push\(Text\("Enabled"\)\)/)
   assert.doesNotMatch(output, /\[const title/)
   assert.equal(ts.createSourceFile("StatementBody.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 
@@ -64,8 +64,8 @@ test("@muse/compiler lowers ViewBuilder statements and children in one executabl
   }
 }`, "StatementControlFlow.muse.ts")
   assert.match(controlFlow, /switch \(mode\)/)
-  assert.match(controlFlow, /case "enabled": __museChildren\.push\(Text\("Enabled"\)\); break;/)
-  assert.match(controlFlow, /if \(fallback\) \{ return Text\("Fallback"\); \}/)
+  assert.match(controlFlow, /case "enabled":[\s\S]*__museChildren\.push\(Text\("Enabled"\)\)[\s\S]*break;/)
+  assert.match(controlFlow, /if \(fallback\)[\s\S]*return Text\("Fallback"\);/)
   assert.equal(ts.createSourceFile("StatementControlFlow.ts", controlFlow, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
@@ -81,7 +81,11 @@ const state = State({
   count: 0,
   text: ""
 })
-export default view(() => Text(String(count.value)))`
+export default view(() => [
+  Text(String(count.value)),
+  Text(String(value.value?.value ?? "")),
+  Text(String(state.value.count)),
+])`
   const output = transformMuseSource(source, "StateShapes.muse.ts")
   assert.match(output, /state: \(\) => \{[\s\S]*const count = State\(\n  0\n\);[\s\S]*const value = State<Foo \| null>\(null\);[\s\S]*const state = State\(\{\n  count: 0,\n  text: ""\n\}\);/)
   assert.doesNotMatch(output, /^const count = State/m)
@@ -232,9 +236,9 @@ test("@muse/compiler preserves empty, optional, and array builder results", () =
   [Text("A"), [Text("B")]]
 }`
   const output = transformMuseSource(source, "Builder.muse.ts")
-  assert.match(output, /showHeader \? \[Text\("Header"\)\] : \[\]/)
-  assert.match(output, /showEmpty \? \[\] : \[\]/)
-  assert.match(output, /\[Text\("A"\), \[Text\("B"\)\]\]/)
+  assert.match(output, /if \(showHeader\)[\s\S]*__museChildren\.push\(Text\("Header"\)\)/)
+  assert.match(output, /if \(showEmpty\)/)
+  assert.match(output, /__museChildren\.push\(\[Text\("A"\), \[Text\("B"\)\]\]\)/)
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 

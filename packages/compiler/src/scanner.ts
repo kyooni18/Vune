@@ -137,10 +137,23 @@ function isRawHtmlCandidate(source: string, start: number): boolean {
     let afterClose = possibleGenericClose + 1
     while (afterClose < source.length && /\s/.test(source[afterClose])) afterClose += 1
     if (source[afterClose] === "(") return false
+    const tagName = /^[A-Za-z][A-Za-z0-9:._-]*/.exec(source.slice(start + 1))?.[0]
+    const hasMatchingClosingTag = tagName ? source.slice(possibleGenericClose + 1).includes(`</${tagName}`) : false
+    // TypeScript's angle-bracket assertion `<Foo>value` is still valid in
+    // `.ts` files. Prefer that interpretation for an uppercase type name
+    // when no matching closing tag exists. Actual `<Foo>...</Foo>` raw HTML
+    // remains unambiguous.
+    if (tagName && /^[A-Z]/.test(tagName)
+      && !hasMatchingClosingTag
+      && /[A-Za-z_$0-9('"`[!+~-]/.test(source[afterClose] ?? "")) return false
   }
   let cursor = start - 1
   while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
   if (cursor < 0) return true
+  const openingName = /^[A-Za-z][A-Za-z0-9:._-]*/.exec(source.slice(start + 1))?.[0]
+  const openingClose = source.indexOf(">", start + 1)
+  if (source.slice(cursor + 1, start).includes("\n") && openingName && openingClose >= 0
+    && source.slice(openingClose + 1).includes(`</${openingName}`)) return true
   // A tag at the beginning of a new statement may follow a completed call,
   // array, or object expression on the previous line.
   if (source.slice(cursor + 1, start).includes("\n") && new Set([")", "]", "}"]).has(source[cursor])) return true
@@ -152,30 +165,83 @@ function isRawHtmlCandidate(source: string, start: number): boolean {
   return new Set(["await", "case", "else", "return", "throw", "yield"]).has(word)
 }
 
+
+function previousSignificantCharacter(source: string, index: number): string | undefined {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (!/\s/.test(source[cursor])) return source[cursor]
+  }
+  return undefined
+}
+
+type BraceContext = "class" | "object" | "block"
+
+interface BraceFrame {
+  readonly context: BraceContext
+  readonly parenDepth: number
+  readonly bracketDepth: number
+}
+
+function braceContext(source: string, index: number): BraceContext {
+  const prefix = source.slice(Math.max(0, index - 160), index).trimEnd()
+  if (/\b(?:class|interface|enum|namespace)\s+[A-Za-z_$][A-Za-z0-9_$]*(?:\s+extends[^{]+)?$/.test(prefix)) return "class"
+  const previous = previousSignificantCharacter(source, index)
+  if (previous && "=(:,[".includes(previous)) return "object"
+  if (/\b(?:return|yield)\s*$/.test(prefix)) return "object"
+  if (/\btype\s+[A-Za-z_$][A-Za-z0-9_$]*(?:<[^>]*>)?\s*=\s*$/.test(prefix)) return "object"
+  return "block"
+}
+
 function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCall | undefined {
   const excluded = new Set(["if", "for", "while", "switch", "catch", "function"])
+  const braces: BraceFrame[] = []
+  let parenDepth = 0
+  let bracketDepth = 0
   let steps = 0
-  for (let cursor = from; cursor < source.length; cursor += 1) {
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
     if (++steps > source.length + 1) throw syntaxError("Unable to scan builder expressions in Muse source", from)
     const character = source[cursor]
     if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
     if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
+    if (character === "(") { parenDepth += 1; continue }
+    if (character === ")") { parenDepth = Math.max(0, parenDepth - 1); continue }
+    if (character === "[") { bracketDepth += 1; continue }
+    if (character === "]") { bracketDepth = Math.max(0, bracketDepth - 1); continue }
+    if (character === "{") { braces.push({ context: braceContext(source, cursor), parenDepth, bracketDepth }); continue }
+    if (character === "}") { braces.pop(); continue }
+    if (cursor < from) continue
     const identifier = identifierAt(source, cursor)
     if (!identifier) continue
+    const start = cursor
     cursor = identifier.end - 1
     if (excluded.has(identifier.name)) continue
     if (uppercaseOnly && !/^[A-Z]/.test(identifier.name)) continue
-    const preceding = source.slice(0, identifier.end - identifier.name.length).trimEnd()
-    if (/\bfunction$/.test(preceding)) continue
+    const preceding = source.slice(0, start).trimEnd()
+    if (/\bfunction\s*\*?$/.test(preceding)) continue
     const open = skipTrivia(source, identifier.end)
     if (source[open] !== "(") continue
     const close = matching(source, open, "(", ")")
     const brace = skipTrivia(source, close + 1)
     if (source[brace] !== "{") continue
+
+    // A call-shaped token at member position inside a class/object is a
+    // JavaScript/TypeScript method declaration, not Muse trailing-closure
+    // syntax. Property initializers (`field = Card() { ... }`) remain valid
+    // Muse expressions because their preceding token is `=`/`:`.
+    const frame = braces.at(-1)
+    const container = frame?.context
+    const atMemberLevel = frame !== undefined
+      && parenDepth === frame.parenDepth
+      && bracketDepth === frame.bracketDepth
+    const before = previousSignificantCharacter(source, start)
+    const memberPrefix = source.slice(Math.max(0, start - 120), start)
+    const followsMemberModifier = /\b(?:public|private|protected|static|abstract|override|async|get|set|readonly|declare|accessor)\s+$/.test(memberPrefix)
+    if (atMemberLevel && (container === "class" || container === "object")
+      && (before === undefined || "{,;}*".includes(before) || followsMemberModifier)) continue
+
     const braceClose = matching(source, brace, "{", "}")
     return {
-      start: cursor - identifier.name.length + 1,
+      start,
       open,
       close,
       brace,
@@ -207,6 +273,27 @@ function htmlAttributeNameAt(source: string, start: number): { name: string; end
 type ExpressionLowerer = (source: string) => string
 const identityExpression: ExpressionLowerer = source => source
 
+
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    quot: '"',
+  }
+  return value.replace(/&(#(?:x[0-9A-Fa-f]+|[0-9]+)|[A-Za-z][A-Za-z0-9]+);/g, (match, entity: string) => {
+    if (entity[0] === "#") {
+      const hexadecimal = entity[1]?.toLowerCase() === "x"
+      const digits = entity.slice(hexadecimal ? 2 : 1)
+      const codePoint = Number.parseInt(digits, hexadecimal ? 16 : 10)
+      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match
+      try { return String.fromCodePoint(codePoint) } catch { return match }
+    }
+    return named[entity] ?? match
+  })
+}
+
 function htmlAttributes(source: string, baseOffset = 0, lower: ExpressionLowerer = identityExpression): string {
   const attributes: string[] = []
   let cursor = 0
@@ -231,7 +318,7 @@ function htmlAttributes(source: string, baseOffset = 0, lower: ExpressionLowerer
       cursor = skipHtmlTrivia(source, cursor + 1)
       if (source[cursor] === "\"" || source[cursor] === "'") {
         const end = skipQuoted(source, cursor)
-        value = JSON.stringify(source.slice(cursor + 1, end - 1))
+        value = JSON.stringify(decodeHtmlEntities(source.slice(cursor + 1, end - 1)))
         cursor = end
       } else if (source[cursor] === "{") {
         const end = matching(source, cursor, "{", "}")
@@ -240,7 +327,7 @@ function htmlAttributes(source: string, baseOffset = 0, lower: ExpressionLowerer
       } else {
         const match = /^[^\s/>]+/.exec(source.slice(cursor))
         if (!match) throw syntaxError(`Invalid value for raw HTML attribute ${name.name}`, baseOffset + cursor)
-        value = JSON.stringify(match[0])
+        value = JSON.stringify(decodeHtmlEntities(match[0]))
         cursor += match[0].length
       }
     }
@@ -318,7 +405,7 @@ function rawHtmlAt(source: string, start: number, lower: ExpressionLowerer = ide
     const nextExpression = source.indexOf("{", cursor)
     const end = [nextTag, nextExpression].filter(value => value >= 0).sort((left, right) => left - right)[0] ?? source.length
     const text = source.slice(cursor, end)
-    if (text.length > 0) children.push(JSON.stringify(text))
+    if (text.length > 0) children.push(JSON.stringify(decodeHtmlEntities(text)))
     cursor = end
   }
   return undefined

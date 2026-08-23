@@ -32,6 +32,8 @@ jobs:
       - run: pnpm run demo:build
       - run: pnpm run demo:vue:build
       - run: pnpm run demo:web:build
+      - run: pnpm run demo:parity:build
+      - run: pnpm run demo:showcase:build
 
   browser:
     name: Browser interaction
@@ -47,18 +49,34 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      - name: Build production browser fixtures
+        run: pnpm run demo:all:build
+      - name: Validate production browser fixtures
+        run: pnpm run test:browser:built
       - name: Start demo server
         run: pnpm exec vite --config examples/vite.config.ts --host 127.0.0.1 > muse-vite.log 2>&1 &
       - name: Start Vue demo server
         run: pnpm exec vite --config examples/vue.vite.config.ts --host 127.0.0.1 --port 5175 > muse-vue-vite.log 2>&1 &
       - name: Start Web demo server
         run: pnpm exec vite --config examples/web.vite.config.ts --host 127.0.0.1 --port 5174 > muse-web-vite.log 2>&1 &
+      - name: Start parity React server
+        run: pnpm exec vite --config examples/parity-react.vite.config.ts --host 127.0.0.1 --port 5180 > muse-parity-react.log 2>&1 &
+      - name: Start parity Vue server
+        run: pnpm exec vite --config examples/parity-vue.vite.config.ts --host 127.0.0.1 --port 5181 > muse-parity-vue.log 2>&1 &
+      - name: Start parity Web server
+        run: pnpm exec vite --config examples/parity-web.vite.config.ts --host 127.0.0.1 --port 5182 > muse-parity-web.log 2>&1 &
+      - name: Start Showcase server
+        run: pnpm exec vite --config examples/showcase.vite.config.ts --host 127.0.0.1 --port 5183 > muse-showcase-vite.log 2>&1 &
       - name: Wait for renderer demo servers
         run: |
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:5173/ >/dev/null \
               && curl --fail --silent http://127.0.0.1:5175/vue-index.html >/dev/null \
-              && curl --fail --silent http://127.0.0.1:5174/web-index.html >/dev/null; then
+              && curl --fail --silent http://127.0.0.1:5174/web-index.html >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5180/parity-react-index.html >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5181/parity-vue-index.html >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5182/parity-web-index.html >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5183/showcase-index.html >/dev/null; then
               exit 0
             fi
             sleep 1
@@ -66,10 +84,16 @@ jobs:
           cat muse-vite.log
           cat muse-vue-vite.log
           cat muse-web-vite.log
+          cat muse-parity-react.log
+          cat muse-parity-vue.log
+          cat muse-parity-web.log
+          cat muse-showcase-vite.log
           exit 1
       - run: MUSE_BROWSER_URL=http://127.0.0.1:5173 pnpm run test:browser
       - run: MUSE_VUE_BROWSER_URL=http://127.0.0.1:5175/vue-index.html pnpm run test:browser:vue
       - run: MUSE_WEB_BROWSER_URL=http://127.0.0.1:5174/web-index.html pnpm run test:browser:web
+      - run: MUSE_PARITY_REACT_URL=http://127.0.0.1:5180/parity-react-index.html MUSE_PARITY_VUE_URL=http://127.0.0.1:5181/parity-vue-index.html MUSE_PARITY_WEB_URL=http://127.0.0.1:5182/parity-web-index.html pnpm run test:browser:parity
+      - run: MUSE_SHOWCASE_URL=http://127.0.0.1:5183/showcase-index.html pnpm run test:browser:showcase
 
   benchmark:
     name: Modifier benchmark

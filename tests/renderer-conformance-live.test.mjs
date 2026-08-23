@@ -323,3 +323,35 @@ test("the same conditional View type remount contract holds across all live rend
     }
   }
 })
+
+test("same-name concrete View type changes remount State identically in React, Vue, and Web", async () => {
+  for (const renderer of ["react", "vue", "web"]) {
+    const restore = installDOM()
+    try {
+      const branch = State("a")
+      const SameA = defineView("SameConcreteName", {
+        name: "SameConcreteName",
+        initializers: [initializer("SameConcreteName()", args => args.length === 0)],
+        state: () => ({ local: State("A") }),
+        body: ({ local }) => Element("span", { "data-branch": "value" }, local.value),
+      })
+      const SameB = defineView("SameConcreteName", {
+        name: "SameConcreteName",
+        initializers: [initializer("SameConcreteName()", args => args.length === 0)],
+        state: () => ({ local: State("B") }),
+        body: ({ local }) => Element("span", { "data-branch": "value" }, local.value),
+      })
+      const Root = defineView("SameNameRoot", {
+        initializers: [initializer("Root()", args => args.length === 0)],
+        body: () => Element("section", null, branch.value === "a" ? SameA() : SameB()),
+      })
+      const mounted = await mountLiveValue(renderer, Root())
+      assert.equal(document.querySelector("[data-branch=value]")?.textContent, "A")
+      await mounted.dispatch(() => { branch.value = "b" })
+      assert.equal(document.querySelector("[data-branch=value]")?.textContent, "B")
+      await mounted.unmount()
+    } finally {
+      restore()
+    }
+  }
+})

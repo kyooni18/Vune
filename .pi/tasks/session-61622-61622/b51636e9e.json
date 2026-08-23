@@ -1,0 +1,20 @@
+{
+  "id": "b51636e9e",
+  "name": "Validate package rename",
+  "command": "pnpm run test:types && pnpm run test:packages",
+  "description": "Validate TypeScript and package tests after renaming the root package to vune-ui.",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-61622-61622/b51636e9e.output",
+  "cwd": "/Users/kyooni18/Code/Web/React/Muse",
+  "startTime": 1787475847352,
+  "endTime": 1787475851886,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 63058,
+  "bytesWritten": 17715,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

@@ -1,6 +1,47 @@
 import { classNameOf, frameStyle, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@muse/core"
 export { classNameOf }
 
+
+const htmlAttributeAliases: Readonly<Record<string, string>> = Object.freeze({
+  allowFullScreen: "allowfullscreen",
+  autoFocus: "autofocus",
+  autoPlay: "autoplay",
+  className: "class",
+  contentEditable: "contenteditable",
+  formNoValidate: "formnovalidate",
+  htmlFor: "for",
+  itemScope: "itemscope",
+  noModule: "nomodule",
+  noValidate: "novalidate",
+  playsInline: "playsinline",
+  readOnly: "readonly",
+  spellCheck: "spellcheck",
+  tabIndex: "tabindex",
+  xlinkHref: "xlink:href",
+  xmlLang: "xml:lang",
+  xmlSpace: "xml:space",
+})
+
+const booleanHtmlAttributes = new Set([
+  "allowfullscreen", "async", "autofocus", "autoplay", "checked", "controls", "default", "defer",
+  "disabled", "formnovalidate", "hidden", "inert", "ismap", "itemscope", "loop", "multiple", "muted",
+  "nomodule", "novalidate", "open", "playsinline", "readonly", "required", "reversed", "selected",
+])
+
+const enumeratedBooleanAttributes = new Set(["contenteditable", "draggable", "spellcheck", "translate"])
+
+export function htmlAttributeName(key: string): string {
+  return htmlAttributeAliases[key] ?? key
+}
+
+export function isBooleanHtmlAttribute(name: string): boolean {
+  return booleanHtmlAttributes.has(name.toLowerCase())
+}
+
+export function isEnumeratedBooleanAttribute(name: string): boolean {
+  return enumeratedBooleanAttributes.has(name.toLowerCase())
+}
+
 export function escape(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -67,17 +108,19 @@ export interface DomRenderContext {
   readonly document: Document
   readonly states: Map<string, { readonly host: unknown; readonly value: Record<string, unknown> }>
   readonly visitedStateIdentities: Set<string>
-  readonly refs: Array<() => void>
   readonly geometries: Map<number, GeometryProxy>
   readonly hydrationProps: WeakMap<Element, Record<string, unknown> | null | undefined>
   readonly domProps: WeakMap<Element, Record<string, unknown>>
   readonly eventListeners: WeakMap<Element, Map<string, EventListener>>
   readonly domKeys: WeakMap<Node, string | number | undefined>
+  readonly domTags: WeakMap<Element, string>
   readonly lazyRanges: Map<string, LazyViewRange>
   readonly lazyMeasurements: Map<string, number>
   readonly lazyNodes: Map<string, LazyViewNode>
+  readonly preservedLazyStatePrefixes: Map<string, Set<string>>
   readonly visitedLazyIdentities: Set<string>
   readonly lazyKeys: WeakMap<Node, string>
   geometryIndex: number
+  hasRefs: boolean
   hydrating: boolean
 }

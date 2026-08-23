@@ -25,13 +25,13 @@ Muse source (.muse.ts)
 | `@muse/vite` | Vite plugin entry point for the compiler | View implementation details |
 
 The `muse` package is the renderer-independent canonical authoring entry point.
-The repository root remains the `react-muse-ui` compatibility package. New
+The repository root remains the `vune-ui` compatibility package. New
 language and graph behavior belongs in `@muse/core`; behavior that requires a
 specific runtime belongs in that renderer package.
 
 The canonical imports are `muse`, `@muse/core`, `@muse/compiler`, `@muse/react`,
 `@muse/vue`, `@muse/web`, and `@muse/vite`. The root package also exposes
-`react-muse-ui/core` and `react-muse-ui/muse` as compatibility aliases for the
+`vune-ui/core` and `vune-ui/muse` as compatibility aliases for the
 core and React surfaces. The old root API is implemented by the opt-in
 `@muse/react/legacy` surface; this keeps compatibility code inside the React
 renderer package while leaving the root package as a facade.
@@ -150,7 +150,7 @@ Button(action: { save() }, label: { Text("Save") })
 
 Missing titles, unlabeled closure pairs, trailing custom labels, and reversed
 `label:`/`action:` order are compiler diagnostics. The historical React DSL
-forms remain available only through the explicit `react-muse-ui` compatibility
+forms remain available only through the explicit `vune-ui` compatibility
 entry point; they are not part of the canonical compiler or editor surface.
 
 At the React boundary, call `render(viewValue)` or use `MuseView`; do not pass a

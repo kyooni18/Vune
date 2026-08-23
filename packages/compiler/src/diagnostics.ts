@@ -5,6 +5,95 @@ import { transformMuseSource } from "./pipeline.js"
 import { matching, regexCanStart, skipComment, skipRegex, skipString, validateRawHtmlSyntax } from "./scanner.js"
 import type { MuseDiagnostic } from "./types.js"
 
+
+
+function isMusePackageSource(value: string): boolean {
+  return value === "muse" || value.startsWith("@muse/")
+}
+
+function unwrapDiagnosticExpression(expression: ts.Expression): ts.Expression {
+  let current = expression
+  while (ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isSatisfiesExpression(current)) current = current.expression
+  return current
+}
+
+function topLevelStateScopeDiagnostics(source: string): MuseDiagnostic[] {
+  const file = ts.createSourceFile("muse-state-scope.muse.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const stateNames = new Set<string>()
+  const namespaces = new Set<string>()
+  let blockedCanonicalState = false
+
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement) && statement.importClause && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const fromMuse = isMusePackageSource(statement.moduleSpecifier.text)
+      const bindings = statement.importClause.namedBindings
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const imported = element.propertyName?.text ?? element.name.text
+          if (fromMuse && imported === "State") stateNames.add(element.name.text)
+          else if (!fromMuse && element.name.text === "State") blockedCanonicalState = true
+        }
+      } else if (bindings && ts.isNamespaceImport(bindings) && fromMuse) {
+        namespaces.add(bindings.name.text)
+      }
+      if (statement.importClause.name?.text === "State") blockedCanonicalState = true
+      continue
+    }
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === "State") blockedCanonicalState = true
+    if (ts.isClassDeclaration(statement) && statement.name?.text === "State") blockedCanonicalState = true
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === "State") blockedCanonicalState = true
+      }
+    }
+  }
+
+  const isStateCall = (expression: ts.Expression): boolean => {
+    const unwrapped = unwrapDiagnosticExpression(expression)
+    if (!ts.isCallExpression(unwrapped)) return false
+    const callee = unwrapDiagnosticExpression(unwrapped.expression)
+    if (ts.isIdentifier(callee)) {
+      if (stateNames.has(callee.text)) return true
+      return callee.text === "State" && stateNames.size === 0 && !blockedCanonicalState
+    }
+    return ts.isPropertyAccessExpression(callee)
+      && callee.name.text === "State"
+      && ts.isIdentifier(callee.expression)
+      && namespaces.has(callee.expression.text)
+  }
+
+  const diagnostics: MuseDiagnostic[] = []
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    const exported = statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false
+    const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    for (const declaration of statement.declarationList.declarations) {
+      if (!declaration.initializer || !isStateCall(declaration.initializer)) continue
+      if (!exported && isConst && ts.isIdentifier(declaration.name)) continue
+      const name = ts.isIdentifier(declaration.name) ? declaration.name.text : declaration.name.getText(file)
+      const reason = exported
+        ? "is exported"
+        : !isConst
+          ? "is mutable (let/var)"
+          : "uses a destructuring binding"
+      const start = declaration.name.getStart(file)
+      const position = file.getLineAndCharacterOfPosition(start)
+      diagnostics.push({
+        severity: "warning",
+        code: "MUSE_STATE_SCOPE",
+        message: `Top-level State ${JSON.stringify(name)} ${reason}, so it remains module-shared instead of becoming View instance-local.`,
+        line: position.line + 1,
+        column: position.character + 1,
+      })
+    }
+  }
+  return diagnostics
+}
+
 export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
   try {
     validateRawHtmlSyntax(source)
@@ -53,7 +142,7 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
         column: position.column,
       }
     }))
-    return [...typescriptDiagnostics, ...htmlDiagnostics, ...initializerDiagnostics]
+    return [...typescriptDiagnostics, ...htmlDiagnostics, ...initializerDiagnostics, ...topLevelStateScopeDiagnostics(source)]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const offset = typeof error === "object" && error !== null && "offset" in error && typeof error.offset === "number" ? error.offset : 0

@@ -6,7 +6,7 @@ import * as muse from "../dist/muse.js"
 import * as legacy from "@muse/react/legacy"
 import * as canonical from "../packages/muse/dist/index.js"
 
-test("react-muse-ui exposes the canonical core and Muse renderer subpaths", () => {
+test("vune-ui exposes the canonical core and Muse renderer subpaths", () => {
   const state = core.State(1)
   const value = muse.Text(`Value: ${state.value}`).padding(4)
   assert.equal(value.kind, "modified")

@@ -4,6 +4,7 @@ import { defineConfig } from "vite"
 import { musePlugin } from "@muse/vite"
 
 export default defineConfig({
+  cacheDir: '../node_modules/.vite-muse-parity-vue',
   root: fileURLToPath(new URL(".", import.meta.url)),
   plugins: [musePlugin(), vue()],
   build: {

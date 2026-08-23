@@ -412,24 +412,27 @@ function collectionKey<Item>(item: Item, index: number, selector?: CollectionKey
   return `unstable:${typeof item}:${String(item)}:${index}`
 }
 
-function collectionKeys<Item>(collection: readonly Item[], selector?: CollectionKeySelector<Item>): CollectionKey[] {
+function encodedCollectionKey(key: CollectionKey): string {
+  const value = String(key)
+  const type = typeof key === "number" ? "number" : "string"
+  return `${type}:${value.length}:${value}`
+}
+
+function collectionKeys<Item>(collection: readonly Item[], selector?: CollectionKeySelector<Item>): string[] {
   const occurrences = new Map<string, number>()
   return collection.map((item, index) => {
     const key = collectionKey(item, index, selector)
-    const identity = `${typeof key}:${String(key)}`
+    const identity = encodedCollectionKey(key)
     const occurrence = occurrences.get(identity) ?? 0
     occurrences.set(identity, occurrence + 1)
-    if (occurrence > 0) {
-      warnForEachIdentity(`ForEach contains duplicate key "${String(key)}"; state identity is ambiguous.`)
-      return `${String(key)}:duplicate:${occurrence}`
-    }
-    return key
+    if (occurrence > 0) warnForEachIdentity(`ForEach contains duplicate key "${String(key)}"; state identity is ambiguous.`)
+    return `${identity}|occurrence:${occurrence}`
   })
 }
 
-function keyedCollectionChildren(value: ViewValue, key: string | number): ViewValue[] {
+function keyedCollectionChildren(value: ViewValue, key: string): ViewValue[] {
   return ViewBuilder.buildBlock(value).map((child, index) => isViewNode(child)
-    ? modifier(child, "keyed", `${String(key)}:${index}`)
+    ? modifier(child, "keyed", `${key}|child:${index}`)
     : child)
 }
 

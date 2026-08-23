@@ -10,7 +10,7 @@ import {
   Toggle,
   VStack,
   view,
-} from 'react-muse-ui'
+} from 'vune-ui'
 import './App.css'
 
 const codeSample = `const App = view({

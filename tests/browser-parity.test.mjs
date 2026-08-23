@@ -9,7 +9,7 @@ const targets = [
 
 test("the same Muse graph preserves live parity in React, Vue, and Web", { skip: targets.some(([, url]) => !url) }, async () => {
   const { chromium } = await import("@playwright/test")
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: true, ...(process.env.MUSE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.MUSE_CHROMIUM_EXECUTABLE } : {}) })
   try {
     for (const [renderer, url] of targets) {
       const page = await browser.newPage()

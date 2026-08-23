@@ -456,7 +456,7 @@ function semanticDiagnostics(document, source, offset) {
     const column = Math.max(1, diagnostic.column)
     const sourceOffset = (offsets[line - 1] ?? source.length) + column - 1
     const start = document.positionAt(offset + sourceOffset)
-    return new vscode.Diagnostic(new vscode.Range(start, start.translate(0, 1)), diagnostic.message, vscode.DiagnosticSeverity.Error)
+    return new vscode.Diagnostic(new vscode.Range(start, start.translate(0, 1)), diagnostic.message, diagnostic.severity === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error)
   })
 }
 

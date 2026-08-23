@@ -5,7 +5,7 @@ const baseURL = process.env.MUSE_BROWSER_URL
 
 test('Muse demo is interactive in a real browser', { skip: !baseURL }, async () => {
   const { chromium } = await import('@playwright/test')
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: true, ...(process.env.MUSE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.MUSE_CHROMIUM_EXECUTABLE } : {}) })
   try {
     const page = await browser.newPage()
     const errors = []

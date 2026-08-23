@@ -3,7 +3,7 @@
 Muse now separates the renderer-independent graph from its runtime adapters.
 New code should define Views with `muse`, then choose `@muse/react`,
 `@muse/vue`, or `@muse/web` at the application boundary. The root
-`react-muse-ui` package remains available only as a compatibility layer.
+`vune-ui` package remains available only as a compatibility layer.
 
 ## Dependencies
 
@@ -59,7 +59,7 @@ Vite features; the Muse compiler preserves those imports for the host pipeline.
 Before:
 
 ```ts
-import { VStack, Text, view } from 'react-muse-ui'
+import { VStack, Text, view } from 'vune-ui'
 ```
 
 After:
@@ -114,7 +114,7 @@ stay at the Vue boundary.
 
 ## Compatibility macro
 
-Existing applications may continue using `react-muse-ui/vite` and its
+Existing applications may continue using `vune-ui/vite` and its
 `museMacro()` transform. It is intentionally separate from `@muse/vite`: the
 compatibility macro provides React-oriented `State` hoisting and legacy JSX
 behavior, while the canonical plugin lowers renderer-independent Muse syntax.

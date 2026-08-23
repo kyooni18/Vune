@@ -69,7 +69,7 @@ test("VS Code providers return Muse and HTML tooling results", async () => {
     SemanticTokensBuilder,
     TextEdit: { replace: (range, newText) => ({ range, newText }) },
     Diagnostic: class Diagnostic { constructor(range, message, severity) { this.range = range; this.message = message; this.severity = severity } },
-    DiagnosticSeverity: { Error: 0 },
+    DiagnosticSeverity: { Error: 0, Warning: 1 },
     languages: {
       createDiagnosticCollection: () => ({ set(uri, diagnostics) { diagnosticRuns.push({ uri, diagnostics }) }, dispose() {} }),
       registerDocumentFormattingEditProvider: (_language, provider) => { registrations.formatting.push(provider); return { dispose() {} } },
@@ -251,4 +251,9 @@ test("VS Code providers return Muse and HTML tooling results", async () => {
     Module._load = originalLoad
     delete require.cache[extensionPath]
   }
+})
+
+test("VS Code semantic diagnostics render Muse warnings as warnings", () => {
+  const source = readFileSync(new URL("extension.cjs", root), "utf8")
+  assert.match(source, /diagnostic\.severity === 'warning' \? vscode\.DiagnosticSeverity\.Warning/)
 })

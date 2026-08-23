@@ -1,9 +1,9 @@
-# Muse
+# Vune UI
 
-Muse is a renderer-independent declarative UI framework hosted by TypeScript.
+Vune UI is a renderer-independent declarative UI framework hosted by TypeScript.
 Its `muse` package and `@muse/core` build immutable Muse View graphs;
 `@muse/react`, `@muse/vue`, and `@muse/web` materialize those graphs for their
-respective runtimes. `react-muse-ui` remains an explicit compatibility package.
+respective runtimes. `vune-ui` remains an explicit compatibility package.
 
 The dependency direction is:
 
@@ -15,7 +15,7 @@ React is a renderer, not the definition of a Muse View.
 
 New framework code should import graph values from `muse` and select a renderer
 explicitly from `@muse/react`, `@muse/vue`, or `@muse/web`. The historical
-`react-muse-ui` entry point remains available as a compatibility facade backed
+`vune-ui` entry point remains available as a compatibility facade backed
 by the separate `@muse/legacy-react` package through preserved
 `@muse/react/legacy` proxy paths.
 
@@ -23,22 +23,28 @@ The canonical Vite workflow lowers Muse builders and custom `struct ...: View` d
 
 ## Quick start
 
-For a local sibling checkout:
+Create a complete canonical React + Vite + TypeScript project:
 
 ```bash
-pnpm add ../Muse
-pnpm add react react-dom
+pnpm dlx muse create my-muse-app
+cd my-muse-app
+pnpm dev
 ```
 
-To replace a newly-created Vite app's starter screen with the Muse demo:
+The command writes the project files, configures `musePlugin()` before the
+React plugin, installs `muse`, `@muse/react`, and `@muse/vite`, and gives you a
+small working counter as the first screen. Use `--no-install` when you want to
+inspect or edit the generated files before installing dependencies.
+
+For a local checkout, run the same canonical CLI directly:
 
 ```bash
-pnpm exec muse init --force
+node ../Muse/packages/muse/bin/muse.mjs create my-muse-app
 ```
 
-This explicitly writes `src/App.tsx`, `src/App.css`, and `src/index.css` in the
-current project and adds the compatibility `museMacro()` before the React plugin
-in `vite.config.ts`. Installing Muse alone never overwrites an existing app file.
+To add the canonical setup to an empty existing directory, run
+`muse init --no-install` from that directory. Existing files are preserved
+unless `--force` is explicitly provided.
 
 For the canonical Vite compiler, install the React plugin and put `musePlugin()` before it:
 
@@ -90,7 +96,7 @@ export default view(() => (
 `@muse/vite` is the canonical syntax-lowering plugin. It transforms builder
 blocks, labeled initializers, shorthand modifiers, raw HTML, and custom
 `struct ...: View` declarations, and returns token-anchored source maps. The
-compatibility `react-muse-ui/vite` entry point remains available for the legacy
+compatibility `vune-ui/vite` entry point remains available for the legacy
 TypeScript AST macro that hoists top-level `State()` declarations and rewrites
 `view(...)`/`Action(...)` wrappers.
 
@@ -246,13 +252,13 @@ metadata/plugin registry, and block-builder transform are experimental while
 their integration contract is being consolidated:
 
 ```ts
-import { layoutPass, registerMusePlugin } from 'react-muse-ui/experimental'
+import { layoutPass, registerMusePlugin } from 'vune-ui/experimental'
 ```
 
-The automatic JSX runtime remains available through `react-muse-ui/jsx-runtime` and
-`react-muse-ui/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
+The automatic JSX runtime remains available through `vune-ui/jsx-runtime` and
+`vune-ui/jsx-dev-runtime`. Function-DSL and JSX-created elements both pass through
 registered experimental plugins. The block-builder compiler adapter remains
-available through `react-muse-ui/compiler`; it is not part of the stable root DSL
+available through `vune-ui/compiler`; it is not part of the stable root DSL
 contract.
 
 ## Coordinate-free layout
@@ -327,7 +333,7 @@ CSS escape hatch through `.style()` and `.className()`.
 ## React compatibility JSX
 
 Automatic JSX remains an optional React compatibility surface. Set
-`jsxImportSource` to `react-muse-ui` when using its legacy JSX runtime. New
+`jsxImportSource` to `vune-ui` when using its legacy JSX runtime. New
 renderer-independent code should use the `muse` function DSL; the canonical
 graph does not depend on JSX or React's runtime.
 
@@ -461,8 +467,8 @@ Run it locally with:
 pnpm run dev
 ```
 
-Then open the local URL printed by Vite and try adding a task, completing it,
-changing filters, opening Settings, and clearing completed tasks.
+Then open the local URL printed by Vite and exercise the text field, slider,
+toggle, button, progress view, and responsive stack layout.
 
 ## Status
 

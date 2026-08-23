@@ -1,33 +1,47 @@
 import { classNameOf } from "@muse/core"
-import { cssPropertyName, type DomRenderContext } from "./shared.js"
+import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, type DomRenderContext } from "./shared.js"
 
-function domStyle(element: HTMLElement, value: unknown): void {
+const XLINK_NS = "http://www.w3.org/1999/xlink"
+const XML_NS = "http://www.w3.org/XML/1998/namespace"
+
+function styleDeclaration(element: Element): CSSStyleDeclaration | undefined {
+  return (element as Element & { style?: CSSStyleDeclaration }).style
+}
+
+function domStyle(element: Element, value: unknown): void {
   if (typeof value !== "object" || value === null) {
     if (typeof value === "string") element.setAttribute("style", value)
     return
   }
+  const style = styleDeclaration(element)
+  if (!style) return
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     if (item === undefined || item === null) continue
-    element.style.setProperty(cssPropertyName(key), String(item))
+    style.setProperty(cssPropertyName(key), String(item))
   }
 }
 
-export function setDomRef(reference: unknown, element: Element, context: DomRenderContext): void {
+export function setDomRef(reference: unknown, element: Element): () => void {
   if (typeof reference === "function") {
     reference(element)
-    context.refs.push(() => reference(null))
-  } else if (reference && typeof reference === "object" && "current" in reference) {
+    return () => reference(null)
+  }
+  if (reference && typeof reference === "object" && "current" in reference) {
     const target = reference as { current: unknown }
     target.current = element
-    context.refs.push(() => { target.current = null })
+    return () => {
+      if (target.current === element) target.current = null
+    }
   }
+  return () => undefined
 }
 
 function eventName(key: string): string {
-  return key.slice(2).toLowerCase()
+  const raw = key.slice(2).toLowerCase()
+  return raw === "doubleclick" ? "dblclick" : raw
 }
 
-export function setDomEvent(element: HTMLElement, key: string, value: unknown, context: DomRenderContext, attach = true): void {
+export function setDomEvent(element: Element, key: string, value: unknown, context: DomRenderContext, attach = true): void {
   const name = eventName(key)
   const listeners = context.eventListeners.get(element) ?? new Map<string, EventListener>()
   const previous = listeners.get(name)
@@ -41,8 +55,54 @@ export function setDomEvent(element: HTMLElement, key: string, value: unknown, c
   context.eventListeners.set(element, listeners)
 }
 
-export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
-  const previous = context.domProps.get(element) ?? {}
+function namespacedAttribute(name: string): { readonly namespace?: string; readonly localName: string; readonly qualifiedName: string } {
+  if (name.startsWith("xlink:")) return { namespace: XLINK_NS, localName: name.slice(6), qualifiedName: name }
+  if (name.startsWith("xml:")) return { namespace: XML_NS, localName: name.slice(4), qualifiedName: name }
+  return { localName: name, qualifiedName: name }
+}
+
+function setAttribute(element: Element, name: string, value: string): void {
+  const attribute = namespacedAttribute(name)
+  if (attribute.namespace) element.setAttributeNS(attribute.namespace, attribute.qualifiedName, value)
+  else element.setAttribute(attribute.qualifiedName, value)
+}
+
+function removeAttribute(element: Element, name: string): void {
+  const attribute = namespacedAttribute(name)
+  if (attribute.namespace) element.removeAttributeNS(attribute.namespace, attribute.localName)
+  else element.removeAttribute(attribute.qualifiedName)
+}
+
+function setDomProperty(element: Element, name: string, value: unknown): void {
+  if (name !== "value" && name !== "checked" && name !== "selected" && name !== "disabled" && name !== "multiple" && name !== "muted") return
+  try { (element as unknown as Record<string, unknown>)[name] = value } catch { /* attribute remains authoritative */ }
+}
+
+function applyAttributeValue(element: Element, key: string, value: unknown): void {
+  const name = htmlAttributeName(key)
+  if (isBooleanHtmlAttribute(name)) {
+    setDomProperty(element, name, Boolean(value))
+    if (value) setAttribute(element, name, "")
+    else removeAttribute(element, name)
+    return
+  }
+  if (value === false || value === true) {
+    if (name.startsWith("aria-") || name.startsWith("data-") || isEnumeratedBooleanAttribute(name)) {
+      setAttribute(element, name, String(value))
+    } else if (value) {
+      setAttribute(element, name, "")
+    } else {
+      setAttribute(element, name, "false")
+    }
+    setDomProperty(element, name, value)
+    return
+  }
+  setDomProperty(element, name, value)
+  setAttribute(element, name, String(value))
+}
+
+export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext, merge = true): void {
+  const previous = merge ? context.domProps.get(element) ?? {} : {}
   const currentStyle = previous.style && typeof previous.style === "object" ? previous.style : {}
   const nextStyle = props?.style && typeof props.style === "object" ? props.style : undefined
   const remembered: Record<string, unknown> = {
@@ -55,35 +115,33 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
     delete remembered.className
   }
   context.domProps.set(element, remembered)
-  context.domKeys.set(element, typeof props?.key === "string" || typeof props?.key === "number" ? props.key : context.domKeys.get(element))
+  const nextKey = typeof props?.key === "string" || typeof props?.key === "number" ? props.key : undefined
+  if (nextKey !== undefined) context.domKeys.set(element, nextKey)
 }
 
-export function applyDomProps(element: HTMLElement, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   if (context.hydrating) context.hydrationProps.set(element, props)
-  rememberDomProps(element, props, context)
-  for (const [key, value] of Object.entries(props ?? {})) {
-    if (key === "children" || key === "key" || value === undefined || value === null || value === false) continue
+  if (!props || Object.keys(props).length === 0) return
+  if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "children" || key === "key" || value === undefined || value === null) continue
     if (key === "style") { domStyle(element, value); continue }
-    if (key === "className" || key === "class") { element.className = [element.className, classNameOf(value)].filter(Boolean).join(" "); continue }
-    if (key === "ref") {
-      if (!context.hydrating) setDomRef(value, element, context)
+    if (key === "className" || key === "class") {
+      const next = [element.getAttribute("class"), classNameOf(value)].filter(Boolean).join(" ")
+      if (next) element.setAttribute("class", next)
       continue
     }
+    if (key === "ref") continue
     if (typeof value === "function" && /^on[A-Za-z]/.test(key)) {
       setDomEvent(element, key, value, context, !context.hydrating)
       continue
     }
-    const name = key === "htmlFor" ? "for" : key
-    if (value === true) { element.setAttribute(name, ""); continue }
-    if (name === "value" || name === "checked" || name === "selected" || name === "disabled") {
-      try { (element as unknown as Record<string, unknown>)[name] = value } catch { /* attribute remains authoritative */ }
-    }
-    element.setAttribute(name, String(value))
+    applyAttributeValue(element, key, value)
   }
   rememberDomProps(element, props, context)
 }
 
-function removeDomProp(element: HTMLElement, key: string): void {
+function removeDomProp(element: Element, key: string): void {
   if (key === "style") {
     element.removeAttribute("style")
     return
@@ -92,17 +150,17 @@ function removeDomProp(element: HTMLElement, key: string): void {
     element.removeAttribute("class")
     return
   }
-  if (key === "value" || key === "checked" || key === "selected" || key === "disabled") {
-    try { (element as unknown as Record<string, unknown>)[key] = key === "value" ? "" : false } catch { /* attribute remains authoritative */ }
-  }
-  if (key !== "children" && key !== "key" && key !== "ref" && !/^on[A-Za-z]/.test(key)) {
-    element.removeAttribute(key === "htmlFor" ? "for" : key)
-  }
+  const name = htmlAttributeName(key)
+  if (isBooleanHtmlAttribute(name)) setDomProperty(element, name, false)
+  else if (name === "value") setDomProperty(element, name, "")
+  if (key !== "children" && key !== "key" && key !== "ref" && !/^on[A-Za-z]/.test(key)) removeAttribute(element, name)
 }
 
-export function patchDomProps(element: HTMLElement, next: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
-  const previous = context.domProps.get(element) ?? {}
-  for (const [key, value] of Object.entries(previous)) {
+export function patchDomProps(element: Element, next: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+  const previousStored = context.domProps.get(element)
+  if (!previousStored && (!next || Object.keys(next).length === 0)) return
+  const previous = previousStored ?? {}
+  for (const key of Object.keys(previous)) {
     if (key === "ref" || key === "key" || key === "children") continue
     if (next && Object.prototype.hasOwnProperty.call(next, key)) continue
     if (/^on[A-Za-z]/.test(key)) setDomEvent(element, key, undefined, context, false)
@@ -110,20 +168,21 @@ export function patchDomProps(element: HTMLElement, next: Record<string, unknown
   }
   if (next?.style && typeof next.style === "object") element.removeAttribute("style")
   for (const [key, value] of Object.entries(next ?? {})) {
-    if (key === "children" || key === "key" || value === undefined || value === null || value === false) {
-      if (value === false && previous[key] !== undefined && key !== "children" && key !== "key") removeDomProp(element, key)
+    if (key === "children" || key === "key" || value === undefined || value === null) {
+      if ((value === undefined || value === null) && previous[key] !== undefined && key !== "children" && key !== "key") removeDomProp(element, key)
       continue
     }
     if (key === "style") { domStyle(element, value); continue }
-    if (key === "className" || key === "class") { element.className = classNameOf(value); continue }
-    if (key === "ref") { setDomRef(value, element, context); continue }
-    if (typeof value === "function" && /^on[A-Za-z]/.test(key)) { setDomEvent(element, key, value, context); continue }
-    const name = key === "htmlFor" ? "for" : key
-    if (value === true) { element.setAttribute(name, ""); continue }
-    if (name === "value" || name === "checked" || name === "selected" || name === "disabled") {
-      try { (element as unknown as Record<string, unknown>)[name] = value } catch { /* attribute remains authoritative */ }
+    if (key === "className" || key === "class") {
+      const className = classNameOf(value)
+      if (className) element.setAttribute("class", className)
+      else element.removeAttribute("class")
+      continue
     }
-    element.setAttribute(name, String(value))
+    if (key === "ref") continue
+    if (typeof value === "function" && /^on[A-Za-z]/.test(key)) { setDomEvent(element, key, value, context); continue }
+    applyAttributeValue(element, key, value)
   }
-  rememberDomProps(element, next, context)
+  if (!next || Object.keys(next).length === 0) context.domProps.delete(element)
+  else rememberDomProps(element, next, context, false)
 }

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "TypeScript-hosted compiler for Muse builder and .muse.ts syntax.",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,5 +21,6 @@
   "dependencies": {
     "@muse/core": "workspace:*",
     "typescript": "^5.8.3"
-  }
+  },
+  "sideEffects": false
 }

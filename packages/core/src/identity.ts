@@ -22,6 +22,22 @@ export class ViewIdentityStore {
   }
 }
 
+
+const viewTypeIds = new WeakMap<object, number>()
+let nextViewTypeId = 1
+
+/** Stable process-local token for a concrete View host/type, independent of its display name. */
+export function viewTypeIdentity(host: unknown, fallbackName: string): string {
+  if ((typeof host !== "object" || host === null) && typeof host !== "function") return `name:${fallbackName}`
+  const object = host as object
+  let id = viewTypeIds.get(object)
+  if (id === undefined) {
+    id = nextViewTypeId++
+    viewTypeIds.set(object, id)
+  }
+  return `host:${id}`
+}
+
 export type ViewIdentitySegment = string | number
 export type ViewIdentity = readonly ViewIdentitySegment[]
 
@@ -31,7 +47,7 @@ export function viewIdentityKey(identity: ViewIdentity): string {
 
 export function keyedViewIdentity(identity: ViewIdentity, key: string | number): ViewIdentity {
   const tail = identity.at(-2)
-  const parent = tail === "array" || tail === "element" || tail === "fragment" ? identity.slice(0, -2) : identity
+  const parent = tail === "array" || tail === "element" || tail === "fragment" || tail === "lazy" ? identity.slice(0, -2) : identity
   return [...parent, "key", key]
 }
 

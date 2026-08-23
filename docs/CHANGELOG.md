@@ -2,13 +2,19 @@
 
 ## Next alpha
 
+- Hardened canonical Muse parsing/lowering against ordinary TypeScript methods, generators, generics, regex literals, multiline State, qualified View calls, statement-bearing ViewBuilders, and raw-HTML/entity edge cases.
+- Made top-level State ownership binding-aware and scope-aware; shared/exported/mutable State remains module-scoped and emits `MUSE_STATE_SCOPE` warnings in compiler and VS Code diagnostics.
+- Unified concrete View identity and typed `ForEach` keys across React, Vue, and Web, including same-display-name remounts and lazy offscreen State preservation.
+- Hardened the Web renderer's commit/ref lifecycle, native event aliases, boolean/ARIA attributes, SVG/XML namespaces, hydration prop reconciliation, and lazy State cleanup.
+- Added context-aware source maps, cache-safe TypeScript specialization reuse, renderer parity/browser CI, the medium Showcase fixture, expanded performance workloads, and release-package verification.
+- Aligned `Grid`/`LazyGrid` TypeScript overload order with runtime initializer indices, added minified production-bundle Chromium validation for all seven browser fixtures, and made DOM benchmark rounds sequential to remove cross-instance JSDOM scheduling noise.
 - Replaced the State/Action Vite macro scanner with a TypeScript AST transform and source maps; generic State calls, lexical scopes, and function-valued actions are preserved.
 - Added regression coverage for `examples/App.ts`, transparent Group fragments, shared mutable State ownership, required Component props, JSX modifier typing, JSDOM interaction, and presentation accessibility.
 - Added Escape/focus handling for Sheet, a single alertdialog host for Alert, and keyboard/menuitem semantics for Menu.
 - Added State owner reconciliation and cleanup for replacement, nested, shared, circular, and unsubscribed object graphs; split mixed macro declarations and added column-level source-map anchors plus diagnostics.
 - Added unique Alert IDs, stacked-presentation hydration tests, expanded Menu keyboard behavior, repeated dynamic-dependency tests, fragment stress cases, and SSR hydration coverage.
 - Unified experimental geometry naming around `CoordinateNode` and measured `LayoutNode`; expanded the modifier benchmark matrix and added a CI benchmark guard.
-- Moved layout experiments, coordinate/observer infrastructure, plugin metadata, and the block-builder transform behind `react-muse-ui/experimental`.
+- Moved layout experiments, coordinate/observer infrastructure, plugin metadata, and the block-builder transform behind `vune-ui/experimental`.
 - Standardized repository commands on pnpm and added React 18/19 CI coverage plus an opt-in Playwright browser suite.
 
 ## 0.1.0

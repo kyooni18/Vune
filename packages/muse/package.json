@@ -3,7 +3,14 @@
   "version": "0.1.0",
   "description": "Canonical renderer-independent Muse authoring package.",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "bin",
+    "dist",
+    "templates"
+  ],
+  "bin": {
+    "muse": "./bin/muse.mjs"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -18,5 +25,6 @@
   },
   "dependencies": {
     "@muse/core": "workspace:*"
-  }
+  },
+  "sideEffects": false
 }

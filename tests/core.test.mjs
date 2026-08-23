@@ -131,10 +131,10 @@ test("@muse/core makes View type changes explicit remount boundaries", () => {
   assert.deepEqual(identities[0], identities[1])
   assert.notDeepEqual(identities[0], identities[2])
   assert.match(identities[0].join("/"), /view\/FirstBranch$/)
-  assert.match(identities[3].join("/"), /key\/row\/view\/FirstBranch$/)
+  assert.match(identities[3].join("/"), /key\/row\/view-type\/host:\d+\/view\/FirstBranch$/)
 
-  const SameNameA = defineView("SameName", { name: "SameName.A", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("a") })
-  const SameNameB = defineView("SameName", { name: "SameName.B", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("b") })
+  const SameNameA = defineView("SameName", { name: "SameName", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("a") })
+  const SameNameB = defineView("SameName", { name: "SameName", initializers: [initializer("SameName()", args => args.length === 0)], body: () => CoreText("b") })
   renderViewNode(SameNameA(), renderer)
   renderViewNode(SameNameB(), renderer)
   assert.notDeepEqual(identities.at(-2), identities.at(-1))
@@ -190,25 +190,53 @@ test("@muse/core represents foreign components as explicit graph descriptors", (
   assert.equal(value.props.ref, reference)
 })
 
+test("@muse/core normalizes boolean leaves and rejects arbitrary object leaves before renderers", () => {
+  const values = []
+  const renderer = {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return children },
+    value(value) { values.push(value); return value },
+    modifier(content) { return content },
+  }
+  assert.equal(renderViewNode(true, renderer), null)
+  assert.equal(renderViewNode(false, renderer), null)
+  assert.deepEqual(values, [null, null])
+  assert.throws(
+    () => renderViewNode({ arbitrary: true }, renderer),
+    /renderable primitives or View nodes/,
+  )
+})
+
 test("@muse/core gives ForEach children stable identity keys", () => {
   const value = ForEach([{ id: "a", label: "A" }, { id: "b", label: "B" }], item => CoreText(item.label))
-  assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["a:0"]])
-  assert.deepEqual(modifierGraphOf(value.children[1]).map(item => item.arguments), [["b:0"]])
+  assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["string:1:a|occurrence:0|child:0"]])
+  assert.deepEqual(modifierGraphOf(value.children[1]).map(item => item.arguments), [["string:1:b|occurrence:0|child:0"]])
 })
 
 test("ForEach accepts an explicit deterministic key selector and preserves it across reorder", () => {
   const renderItems = items => ForEach(items, item => item.id, item => CoreText(item.label))
   const first = renderItems([{ id: "a", label: "A" }, { id: "b", label: "B" }])
   const reordered = renderItems([{ id: "b", label: "B" }, { id: "a", label: "A" }])
-  assert.deepEqual(first.children.map(child => modifierGraphOf(child)[0].arguments), [["a:0"], ["b:0"]])
-  assert.deepEqual(reordered.children.map(child => modifierGraphOf(child)[0].arguments), [["b:0"], ["a:0"]])
+  assert.deepEqual(first.children.map(child => modifierGraphOf(child)[0].arguments), [["string:1:a|occurrence:0|child:0"], ["string:1:b|occurrence:0|child:0"]])
+  assert.deepEqual(reordered.children.map(child => modifierGraphOf(child)[0].arguments), [["string:1:b|occurrence:0|child:0"], ["string:1:a|occurrence:0|child:0"]])
 
   const named = ForEach(
     [{ id: "named" }],
     namedArguments({ key: item => item.id }),
     item => CoreText(item.id),
   )
-  assert.deepEqual(modifierGraphOf(named.children[0])[0].arguments, ["named:0"])
+  assert.deepEqual(modifierGraphOf(named.children[0])[0].arguments, ["string:5:named|occurrence:0|child:0"])
+})
+
+test("ForEach preserves key type and cannot collide with its duplicate-key encoding", () => {
+  const typed = ForEach([1, "1"], item => item, item => CoreText(String(item)))
+  const typedKeys = typed.children.map(child => modifierGraphOf(child)[0].arguments[0])
+  assert.notEqual(typedKeys[0], typedKeys[1])
+
+  const values = ["a", "a", "a:duplicate:1"]
+  const duplicates = ForEach(values, item => item, item => CoreText(item))
+  const duplicateKeys = duplicates.children.map(child => modifierGraphOf(child)[0].arguments[0])
+  assert.equal(new Set(duplicateKeys).size, duplicateKeys.length)
 })
 
 test("ForEach warns for inferred object identity and duplicate keys without process-local IDs", () => {
@@ -221,7 +249,7 @@ test("ForEach warns for inferred object identity and duplicate keys without proc
     const firstKey = modifierGraphOf(first.children[0])[0].arguments[0]
     const secondKey = modifierGraphOf(second.children[0])[0].arguments[0]
     assert.equal(firstKey, secondKey)
-    assert.match(String(firstKey), /^object:/)
+    assert.match(String(firstKey), /object:/)
     assert.ok(warnings.some(message => message.includes("no id/key")))
     assert.ok(warnings.some(message => message.includes("duplicate key")))
   } finally {

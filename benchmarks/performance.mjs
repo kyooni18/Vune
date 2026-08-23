@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks"
+import { readFileSync } from "node:fs"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { JSDOM } from "jsdom"
@@ -6,6 +7,7 @@ import { compileMuseFile } from "../packages/compiler/dist/index.js"
 import {
   Element,
   ForEach,
+  LazyVStack,
   State,
   Text,
   VStack,
@@ -40,6 +42,11 @@ const budgets = {
   keyedDom: 2000,
   reactRerender: 2000,
   vueRerender: 2000,
+  deepState: 100,
+  burstDom: 1500,
+  conditionalDom: 2000,
+  lazyScroll: 2000,
+  showcaseCompiler: 1500,
 }
 
 function collect(factory) {
@@ -133,6 +140,13 @@ const compilerTransform = measure(".muse.ts compiler transform", () => compileMu
 if (!Number.isFinite(compilerTransform)) throw new Error("Compiler benchmark produced a non-finite measurement")
 console.log(`compiler transform budget: ${budgets.compiler} ms ceiling for one fixture`)
 if (ci && compilerTransform > budgets.compiler) throw new Error(`Compiler transform exceeded ${budgets.compiler} ms: ${compilerTransform.toFixed(2)} ms`)
+
+const showcaseSource = readFileSync(new URL("../examples/Showcase.muse.ts", import.meta.url), "utf8")
+// Warm the static TypeScript program/source-file caches before measuring the editing loop.
+compileMuseFile(showcaseSource, "examples/Showcase.muse.ts")
+const showcaseCompiler = measure("Showcase warm compiler transform", () => compileMuseFile(showcaseSource, "examples/Showcase.muse.ts"))
+console.log(`Showcase compiler budget: ${budgets.showcaseCompiler} ms ceiling for one medium fixture`)
+if (ci && showcaseCompiler > budgets.showcaseCompiler) throw new Error(`Showcase compiler transform exceeded ${budgets.showcaseCompiler} ms: ${showcaseCompiler.toFixed(2)} ms`)
 
 for (const count of counts) {
   const views = itemViews(count)
@@ -341,6 +355,102 @@ function museStateUpdate(count) {
   return state.value
 }
 
+function rawDeepStateUpdate(count, depth = 8) {
+  const root = {}
+  let cursor = root
+  for (let level = 0; level < depth; level += 1) {
+    cursor.child = { value: 0 }
+    cursor = cursor.child
+  }
+  for (let index = 0; index < count; index += 1) cursor.value = index
+  return cursor.value
+}
+
+function museDeepStateUpdate(count, depth = 8) {
+  const root = {}
+  let cursor = root
+  for (let level = 0; level < depth; level += 1) {
+    cursor.child = { value: 0 }
+    cursor = cursor.child
+  }
+  const state = State(root)
+  const unsubscribe = subscribeState(state, () => {})
+  let nested = state.value
+  for (let level = 0; level < depth; level += 1) nested = nested.child
+  for (let index = 0; index < count; index += 1) nested.value = index
+  unsubscribe()
+  return nested.value
+}
+
+async function burstDomUpdate(updateCount = 100, childCount = 250) {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  const tick = State(0)
+  const App = defineView("BurstPerformanceApp", {
+    initializers: [initializer("BurstPerformanceApp()", args => args.length === 0)],
+    body: () => Element("div", null, Array.from({ length: childCount }, (_, index) => Element("span", null, `${tick.value}:${index}`))),
+  })
+  const unmount = mount(App(), container)
+  await Promise.resolve()
+  const start = performance.now()
+  for (let index = 1; index <= updateCount; index += 1) tick.value = index
+  await Promise.resolve(); await Promise.resolve()
+  const elapsed = performance.now() - start
+  if (!container.textContent?.startsWith(`${updateCount}:0`)) throw new Error("Burst update did not commit the latest State value")
+  unmount()
+  dom.window.close()
+  return elapsed
+}
+
+async function conditionalSubtreeToggle(childCount = 1000) {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  const visible = State(false)
+  const App = defineView("ConditionalPerformanceApp", {
+    initializers: [initializer("ConditionalPerformanceApp()", args => args.length === 0)],
+    body: () => Element("section", null, visible.value
+      ? Array.from({ length: childCount }, (_, index) => Element("span", { "data-index": index }, String(index)))
+      : null),
+  })
+  const unmount = mount(App(), container)
+  await Promise.resolve()
+  const start = performance.now()
+  visible.value = true
+  await Promise.resolve(); await Promise.resolve()
+  visible.value = false
+  await Promise.resolve(); await Promise.resolve()
+  const elapsed = performance.now() - start
+  if (container.querySelector("span")) throw new Error("Conditional subtree did not unmount")
+  unmount()
+  dom.window.close()
+  return elapsed
+}
+
+async function lazyScrollUpdate(itemCount = 10000) {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: 240 })
+  container.style.overflowY = "auto"
+  const rows = Array.from({ length: itemCount }, (_, index) => Element("div", { "data-row": index }, `row-${index}`).keyed(index))
+  const App = defineView("LazyScrollPerformanceApp", {
+    initializers: [initializer("LazyScrollPerformanceApp()", args => args.length === 0)],
+    body: () => LazyVStack({ estimatedItemSize: 24, overscan: 2 }, ...rows),
+  })
+  const unmount = mount(App(), container)
+  await Promise.resolve()
+  const initialDomRows = container.querySelectorAll("[data-row]").length
+  const start = performance.now()
+  container.scrollTop = Math.max(0, itemCount * 24 - 240)
+  container.dispatchEvent(new dom.window.Event("scroll"))
+  await Promise.resolve(); await Promise.resolve()
+  const elapsed = performance.now() - start
+  const finalDomRows = container.querySelectorAll("[data-row]").length
+  if (initialDomRows >= itemCount || finalDomRows >= itemCount) throw new Error("LazyVStack materialized the full logical collection")
+  unmount()
+  dom.window.close()
+  return elapsed
+}
+
 async function measureRounds(factory) {
   const samples = []
   for (let round = 0; round < rounds; round += 1) samples.push(await factory())
@@ -351,11 +461,16 @@ for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   const rawState = measure(`raw state update ${count}`, () => rawStateUpdate(count))
   const museState = measure(`Muse State update ${count}`, () => museStateUpdate(count))
   ratio(`State update ${count}`, museState, rawState, budgets.state)
+  const rawDeepState = measure(`raw deep State update ${count}`, () => rawDeepStateUpdate(count))
+  const museDeepState = measure(`Muse deep State update ${count}`, () => museDeepStateUpdate(count))
+  ratio(`Deep State update ${count}`, museDeepState, rawDeepState, budgets.deepState)
 
-  const raw = average(await Promise.all(Array.from({ length: rounds }, () => rawDomUpdate(count))))
-  const muse = average(await Promise.all(Array.from({ length: rounds }, () => museDomUpdate(count))))
-  const keyed = average(await Promise.all(Array.from({ length: rounds }, () => keyedDomUpdate(count))))
-  const hydration = average(await Promise.all(Array.from({ length: rounds }, () => webHydration(count))))
+  // DOM rounds are intentionally sequential. Running independent JSDOM instances
+  // concurrently makes microtask scheduling and GC contention dominate the ratio.
+  const raw = await measureRounds(() => rawDomUpdate(count))
+  const muse = await measureRounds(() => museDomUpdate(count))
+  const keyed = await measureRounds(() => keyedDomUpdate(count))
+  const hydration = await measureRounds(() => webHydration(count))
   console.log(`raw DOM update ${count}: ${raw.toFixed(2)} ms`)
   console.log(`Muse DOM reconciliation ${count}: ${muse.toFixed(2)} ms`)
   console.log(`Muse keyed DOM update ${count}: ${keyed.toFixed(2)} ms`)
@@ -370,6 +485,21 @@ for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   if (ci && hydration > budgets.hydration) throw new Error(`Hydration exceeded ${budgets.hydration} ms for ${count}: ${hydration.toFixed(2)} ms`)
   if (ci && reactRerenderTime > budgets.reactRerender) throw new Error(`React rerender exceeded ${budgets.reactRerender} ms for ${count}: ${reactRerenderTime.toFixed(2)} ms`)
   if (ci && vueRerenderTime > budgets.vueRerender) throw new Error(`Vue rerender exceeded ${budgets.vueRerender} ms for ${count}: ${vueRerenderTime.toFixed(2)} ms`)
+}
+
+const burstDom = await measureRounds(() => burstDomUpdate(ci ? 50 : 100, ci ? 100 : 250))
+const conditionalDom = await measureRounds(() => conditionalSubtreeToggle(ci ? 500 : 1000))
+const lazyScroll = await measureRounds(() => lazyScrollUpdate(ci ? 1000 : 10000))
+console.log(`Muse burst DOM update: ${burstDom.toFixed(2)} ms`)
+console.log(`Muse conditional subtree toggle: ${conditionalDom.toFixed(2)} ms`)
+console.log(`Muse LazyVStack scroll: ${lazyScroll.toFixed(2)} ms`)
+for (const [name, actual, budget] of [
+  ["Burst DOM update", burstDom, budgets.burstDom],
+  ["Conditional DOM toggle", conditionalDom, budgets.conditionalDom],
+  ["LazyVStack scroll", lazyScroll, budgets.lazyScroll],
+]) {
+  if (!Number.isFinite(actual)) throw new Error(`${name} benchmark produced a non-finite measurement`)
+  if (ci && actual > budget) throw new Error(`${name} exceeded ${budget} ms: ${actual.toFixed(2)} ms`)
 }
 
 if (results.some(result => !Number.isFinite(result.actual) || !Number.isFinite(result.ratio))) {

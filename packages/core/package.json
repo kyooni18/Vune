@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "Renderer-independent Muse View graph and state primitives.",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,5 +17,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit"
-  }
+  },
+  "sideEffects": false
 }

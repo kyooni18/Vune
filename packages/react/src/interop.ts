@@ -1,12 +1,13 @@
 import { createElement, type ComponentType, type ReactNode } from "react"
-import { viewElement, type ViewValue } from "@muse/core"
+import { ForeignComponent, viewElement, type ViewValue } from "@muse/core"
 
 export function Component(type: ComponentType<any> | string, props: Record<string, unknown> | null = null, ...children: ViewValue[]): ViewValue {
   return viewElement(type, props, children)
 }
 
 export function Raw(value: ReactNode): ViewValue {
-  return value as ViewValue
+  const RawReactValue = () => value
+  return ForeignComponent(RawReactValue, { name: "React.Raw", adapter: "react" })
 }
 
 export function reactElement(type: ComponentType<any> | string, props?: Record<string, unknown> | null, ...children: ReactNode[]): ReactNode {

@@ -57,8 +57,9 @@ export const RoundedRectangle = defineBuiltinView<RoundedRectangleProps>(
 export interface GridOptions { readonly columns?: number | string; readonly rows?: number | string; readonly autoFlow?: string }
 export interface GridProps { readonly options?: GridOptions; readonly children: ViewValue[] }
 interface GridCall {
-  (content: ViewBuilderClosure): ModifiableViewNode
+  // Keep overload order aligned with the runtime initializer table below.
   (options: GridOptions, content: ViewBuilderClosure): ModifiableViewNode
+  (content: ViewBuilderClosure): ModifiableViewNode
   (options: GridOptions, ...children: ViewBuilderContent[]): ModifiableViewNode
   (...children: ViewBuilderContent[]): ModifiableViewNode
 }
@@ -130,8 +131,9 @@ export interface LazyGridOptions extends GridOptions {
 }
 export interface LazyGridProps { readonly options?: LazyGridOptions; readonly children: ViewValue[] }
 interface LazyGridCall {
-  (content: ViewBuilderClosure): ModifiableViewNode
+  // Keep overload order aligned with the runtime initializer table below.
   (options: LazyGridOptions, content: ViewBuilderClosure): ModifiableViewNode
+  (content: ViewBuilderClosure): ModifiableViewNode
   (options: LazyGridOptions, ...children: ViewBuilderContent[]): ModifiableViewNode
   (...children: ViewBuilderContent[]): ModifiableViewNode
 }

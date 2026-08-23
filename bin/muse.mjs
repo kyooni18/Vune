@@ -23,15 +23,15 @@ function configureVite(projectRoot) {
   }
 
   let source = readFileSync(target, 'utf8')
-  const hasMacroImport = source.includes("from 'react-muse-ui/vite'")
-    || source.includes('from "react-muse-ui/vite"')
+  const hasMacroImport = source.includes("from 'vune-ui/vite'")
+    || source.includes('from "vune-ui/vite"')
   const hasMacroPlugin = source.includes('museMacro()')
 
   if (!hasMacroImport) {
     const reactImport = /import\s+react\s+from\s+['"]@vitejs\/plugin-react['"];?/u
     source = reactImport.test(source)
-      ? source.replace(reactImport, match => `${match}\nimport { museMacro } from 'react-muse-ui/vite'`)
-      : `import { museMacro } from 'react-muse-ui/vite'\n${source}`
+      ? source.replace(reactImport, match => `${match}\nimport { museMacro } from 'vune-ui/vite'`)
+      : `import { museMacro } from 'vune-ui/vite'\n${source}`
   }
 
   if (!hasMacroPlugin) {

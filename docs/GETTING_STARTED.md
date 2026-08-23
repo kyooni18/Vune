@@ -11,7 +11,28 @@ rendered by `@muse/vue` or `@muse/web`.
 - React `18` or `19`
 - TypeScript when writing `.ts` or `.tsx` source
 
-## Install Muse
+## Create a project
+
+The recommended path creates the app and configures the complete canonical
+toolchain in one command:
+
+```bash
+pnpm dlx muse create my-muse-app
+cd my-muse-app
+pnpm dev
+```
+
+Use `muse create my-muse-app --no-install` to generate files without running a
+package-manager install. The generated app uses `muse`, `@muse/react`, and
+`@muse/vite`; it does not use the legacy `vune-ui` package.
+
+For a local checkout:
+
+```bash
+node ../Muse/packages/muse/bin/muse.mjs create my-muse-app
+```
+
+## Install Muse manually
 
 In an existing React application:
 
@@ -28,19 +49,17 @@ pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-## Install the starter demo (compatibility CLI)
+## Initialize an existing directory
 
-The repository's `muse init` command is retained for the legacy React starter.
-It writes the starter files and configures the compatibility macro; it is not
-required by the canonical package workflow.
+From an empty directory, `muse init` uses the same canonical template as
+`muse create`:
 
 ```bash
-pnpm exec muse init --force
+muse init
 ```
 
-The command replaces `src/App.tsx` and the two starter style files, then adds
-`museMacro()` before the React plugin in `vite.config.ts`. The `--force` flag is
-required when those files already exist.
+Use `--no-install` to defer dependency installation or `--force` when the
+directory already contains files you explicitly want to replace.
 
 ## Configure Vite
 
@@ -103,26 +122,31 @@ createRoot(document.getElementById('app')!).render(createElement(App))
 
 ## Build a stateful screen
 
-The following screen uses a `State` value, a coordinate-free layout, and an
-event action:
+Put canonical builder syntax in `App.muse.ts`:
 
 ```ts
-import { Action, Button, State, Text, VStack } from 'muse'
-import { view } from '@muse/react'
+import { Button, State, Text, VStack } from "muse"
+import { view } from "@muse/react"
 
-export default view({
-  state: () => ({ count: State(0) }),
-  body: ({ count }) => VStack(
-    { alignment: 'leading', spacing: 12 },
-    Text(`Count: ${count.value}`).fontSize(24).bold(),
-    Button('Increase', Action(() => { count.value += 1 })),
-  ).padding(24),
+const count = State(0)
+
+export default view(() => VStack(alignment: .leading, spacing: 12) {
+  Text(`Count: ${count.value}`).fontSize(24).bold()
+  Button("Increase") {
+    count.value += 1
+  }
 })
+  .padding(24)
 ```
 
-`state` is a per-mounted-view factory, so each mounted copy owns its `count`.
-`Action(() => save())` is evaluated when the event runs. The compiler preserves
-source ranges for diagnostics and source maps.
+Because `count` belongs unambiguously to this one Muse `view`, the compiler makes
+it instance-local. A top-level State that is exported, mutable, destructured,
+shared by multiple Views, or used outside its owning View remains module-scoped
+and emits `MUSE_STATE_SCOPE` as a warning. This decision is based on bindings and
+references, not formatting.
+
+The explicit no-hoisting form remains available through `view({ state, body })`
+when you want ownership to be visible in ordinary TypeScript.
 
 ## Use mutable collections
 
@@ -191,7 +215,7 @@ mutation ownership and both containers' subscribers are notified. Proxy
 identity is not a public contract; replace the State root for frozen values,
 class instances, `Map`, `Set`, or React elements.
 
-The root `react-muse-ui` import and `react-muse-ui/vite` macro remain available
+The root `vune-ui` import and `vune-ui/vite` macro remain available
 only for compatibility with older applications. New code should use `muse`,
 `@muse/react`, and `@muse/vite`.
 
@@ -246,8 +270,9 @@ pnpm install
 pnpm run dev
 ```
 
-Open the local URL printed by Vite and try adding a task, completing it,
-changing filters, opening Settings, and clearing completed tasks.
+For the larger integration fixture, run `pnpm run demo:showcase:build` or start
+the Showcase Vite config. It exercises filtering, bindings, async actions, keyed
+reordering, lazy collections, custom Views, raw HTML, and modifier chains.
 
 ## Verify a Muse project
 

@@ -18,6 +18,10 @@ node, or serialized HTML string.
   View or its props.
 - `Element(tag, props, children)` is the native graph representation of raw
   HTML. The tag and attribute names remain renderer-neutral until materialization.
+- Canonical graph leaves are strings, numbers, and bigints. `null`, `undefined`,
+  and booleans normalize to no rendered child. Arbitrary plain objects are not
+  portable leaves and are rejected unless a renderer-specific adapter wraps them
+  explicitly. Arrays are builder/container structure and are recursively flattened.
 
 The compiler owns syntax recognition, source ranges, lowering, and diagnostics.
 The core owns graph construction, initializer resolution, builder normalization,
@@ -67,26 +71,36 @@ by the declared closure role, not by a Button-specific compiler branch.
   normalization.
 
 The lowering of `if/else`, arrays, nested builders, `ForEach`, and trailing
-closures must produce the same normalized graph as direct TypeScript calls.
+closures must produce the same normalized graph as direct TypeScript calls. A
+statement-bearing builder does not switch to a weaker child-discovery mode: local
+`const`/`let` declarations, conditional/logical expressions, `switch`, `for`,
+`for...of`, `for...in`, `while`, `do...while`, and `try/catch/finally` retain View
+children recursively. Nested function and class declarations remain ordinary
+TypeScript lexical scopes and are not interpreted as Muse trailing closures.
 
 ## 4. Identity
 
 Identity is renderer-independent and derives from:
 
 ```text
-parent path + structural slot + declared View type + explicit key
+parent path + structural slot + concrete View declaration identity + explicit key
 ```
 
-Array, element, and fragment child positions are structural slots. A View type
-change at the same slot is a remount boundary. `keyed(key)` and `ForEach` keys
-replace the local positional identity so insertion, removal, and reordering do
-not move State between logical items. Modifiers do not create a new identity
-unless they are an explicit `keyed` modifier.
+Array, element, fragment, and lazy child positions are structural slots. A View
+type change at the same slot is a remount boundary even when two different View
+declarations share the same display name. `keyed(key)` and `ForEach` keys replace
+the local positional identity so insertion, removal, and reordering do not move
+State between logical items. Primitive key types are significant (`1` and `"1"`
+are distinct), and duplicate occurrences receive collision-free internal
+segments. Modifiers do not create a new identity unless they are an explicit
+`keyed` modifier.
 
 React keys, Vue VNode keys, and Web identity stores are projections of this
-path; they are not independent identity systems. SSR and hydration use the same
-path and declared type so server/client construction order does not introduce a
-process-local identity.
+path; they are not independent identity systems. Concrete View type tokens are
+process-local implementation details used only while traversing one runtime
+graph; they are never serialized as an SSR protocol. Hydration reconciles the
+server DOM against the client graph rather than depending on coincidentally
+matching process-local token numbers.
 
 ## 5. State and Binding
 
@@ -100,12 +114,34 @@ custom getter/setter bindings preserve the same writable contract. A renderer
 may subscribe or schedule work, but it may not copy State semantics into a
 renderer-specific store.
 
+For compiled top-level `const x = State(...)`, the compiler may move the
+declaration into a View instance only when its references (including dependent
+State initializers) belong unambiguously to exactly one canonical Muse `view`.
+Exported, mutable, destructured, shared, or externally referenced State stays at
+module scope and produces a scope warning when instance-local ownership was not
+possible. Formatting, type arguments, import aliases, namespace imports, or an
+unrelated shadowed identifier must not change State lifetime.
+
 ## 6. Native HTML and foreign components
 
 Raw HTML lowers to typed `ElementViewNode` values. Native names such as `class`,
-`for`, `aria-*`, and `data-*` are preserved in the graph. Events, refs, children,
-modifiers, keys, and renderer materialization follow the same rules as any
-other View.
+`for`, `aria-*`, and `data-*` are preserved in the graph. Character references
+are decoded in text and attribute values before graph construction. TypeScript
+generics and angle-bracket assertions are not raw HTML merely because they use
+`<`/`>`. Events, refs, children, modifiers, keys, and renderer materialization
+follow the same rules as any other View.
+
+For Web materialization, HTML boolean attributes (`disabled`, `checked`, and so
+on) remove the attribute when false, while `aria-*`, `data-*`, and enumerated
+boolean attributes preserve the string value `"false"` when that is the native
+HTML meaning. SVG descendants use the SVG namespace; `foreignObject` switches
+its children back to HTML, and XML/XLINK attributes retain their namespaces.
+Hydration treats the client graph as authoritative for attributes/properties and
+removes stale server attributes without replacing a structurally compatible
+node. DOM refs are committed only after reconciliation has produced a live node,
+remain stable across unchanged updates, and receive cleanup on replacement or
+unmount. Event aliases map to native names (for example `onDoubleClick` to
+`dblclick`).
 
 The core semantic layer also publishes the tag/attribute schema used by
 `@muse/compiler` and the VS Code extension. Standard elements validate known
@@ -130,6 +166,13 @@ hidden provider model.
 
 React, Vue, and Web must agree on graph shape, identity, State, Binding,
 modifiers, builder normalization, events, raw HTML, SSR output semantics, and
-hydration behavior. Differences are limited to native materialization details
-such as React `className` versus DOM/Vue `class`, and to renderer-owned
-measurement/lifecycle APIs.
+hydration behavior. Conformance is tested as lifecycle sequences (mount, update,
+reorder, remove, reinsert, unmount, and hydrate), not only as static snapshots.
+Differences are limited to native materialization details such as React
+`className` versus DOM/Vue `class`, and to renderer-owned measurement/lifecycle
+APIs.
+
+Lazy containers carry one renderer-neutral logical collection and identity
+contract. A renderer may materialize a full graph or a viewport window, but
+virtualization alone must not destroy State belonging to an offscreen keyed View;
+State is discarded when the logical item itself is removed.

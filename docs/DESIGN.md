@@ -2,7 +2,7 @@
 
 Muse is a declarative TypeScript UI framework. `muse` and `@muse/core` define
 the language and immutable View graph; renderers such as `@muse/react`,
-`@muse/vue`, and `@muse/web` consume that graph. The root `react-muse-ui`
+`@muse/vue`, and `@muse/web` consume that graph. The root `vune-ui`
 package is kept as a compatibility layer.
 
 ## Layout
@@ -96,7 +96,7 @@ source maps, but they serve different syntax layers.
 
 The stable package entry point is the function DSL. The layout engine,
 coordinate runtime, layout observer, metadata/plugin registry, and block-builder
-transform are exported from `react-muse-ui/experimental` until their integration story
+transform are exported from `vune-ui/experimental` until their integration story
 is consolidated. Experimental plugins run for both DSL and JSX-created nodes;
 JSX additionally records its creation-time modifier metadata.
 
@@ -113,15 +113,15 @@ enter `@muse/core`.
 ## Public surface
 
 The canonical function-DSL entry points are `@muse/core` and `@muse/react`.
-The root `react-muse-ui` entry point intentionally remains the stable compatibility
+The root `vune-ui` entry point intentionally remains the stable compatibility
 surface, but it is only a facade: its implementation is provided by
-`@muse/react/legacy`. `react-muse-ui/core` and `react-muse-ui/muse` expose the
+`@muse/react/legacy`. `vune-ui/core` and `vune-ui/muse` expose the
 canonical graph and React layers without requiring consumers to migrate all imports
-at once. The automatic JSX runtimes and `react-muse-ui/vite` remain supported
+at once. The automatic JSX runtimes and `vune-ui/vite` remain supported
 integration entry points.
 Coordinate spaces expose `CoordinateNode` values, while the proposal-based
 measurement experiment exposes `LayoutNode` values; keeping those concepts
 distinct avoids silently treating observed DOM geometry as a layout proposal.
-The block-builder transform lives behind `react-muse-ui/experimental` or `react-muse-ui/compiler`
+The block-builder transform lives behind `vune-ui/experimental` or `vune-ui/compiler`
 until these contracts are consolidated. See [API.md](./API.md) for the current
 surface inventory.

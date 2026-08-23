@@ -13,6 +13,26 @@ interface MuseTypeScriptProgram {
   readonly checker: ts.TypeChecker
 }
 
+interface CachedSourceFile {
+  readonly text: string
+  readonly languageVersionKey: string
+  readonly sourceFile: ts.SourceFile
+}
+
+const externalSourceFiles = new Map<string, CachedSourceFile>()
+const previousPrograms = new Map<string, ts.Program>()
+const maximumProgramCacheSize = 32
+
+function rememberProgram(root: string, program: ts.Program): void {
+  previousPrograms.delete(root)
+  previousPrograms.set(root, program)
+  while (previousPrograms.size > maximumProgramCacheSize) {
+    const oldest = previousPrograms.keys().next().value as string | undefined
+    if (!oldest) break
+    previousPrograms.delete(oldest)
+  }
+}
+
 function createMuseTypeScriptProgram(source: string, fileName: string): MuseTypeScriptProgram | undefined {
   const rootFileName = compilerRootFileName(fileName)
   const options: ts.CompilerOptions = {
@@ -26,19 +46,38 @@ function createMuseTypeScriptProgram(source: string, fileName: string): MuseType
   const host = ts.createCompilerHost(options, true)
   const normalize = (value: string): string => value.replaceAll("\\", "/")
   const root = normalize(rootFileName)
-  const originalGetSourceFile = host.getSourceFile.bind(host)
   const originalReadFile = host.readFile.bind(host)
   const originalFileExists = host.fileExists.bind(host)
   host.fileExists = requested => normalize(requested) === root || originalFileExists(requested)
   host.readFile = requested => normalize(requested) === root ? source : originalReadFile(requested)
-  host.getSourceFile = (requested, languageVersion, onError, shouldCreateNewSourceFile) => normalize(requested) === root
-    ? ts.createSourceFile(requested, source, languageVersion, true, ts.ScriptKind.TS)
-    : originalGetSourceFile(requested, languageVersion, onError, shouldCreateNewSourceFile)
+  host.getSourceFile = (requested, languageVersion, onError) => {
+    if (normalize(requested) === root) return ts.createSourceFile(requested, source, languageVersion, true, ts.ScriptKind.TS)
+    const text = originalReadFile(requested)
+    if (text === undefined) {
+      onError?.(`Unable to read ${requested}`)
+      return undefined
+    }
+    const cacheKey = normalize(requested)
+    const languageVersionKey = typeof languageVersion === "number" ? String(languageVersion) : JSON.stringify(languageVersion)
+    const cached = externalSourceFiles.get(cacheKey)
+    if (cached && cached.text === text && cached.languageVersionKey === languageVersionKey) return cached.sourceFile
+    const extension = requested.toLowerCase().split(".").pop()
+    const scriptKind = extension === "tsx" ? ts.ScriptKind.TSX
+      : extension === "jsx" ? ts.ScriptKind.JSX
+        : extension === "js" || extension === "mjs" || extension === "cjs" ? ts.ScriptKind.JS
+          : extension === "json" ? ts.ScriptKind.JSON
+            : ts.ScriptKind.TS
+    const sourceFile = ts.createSourceFile(requested, text, languageVersion, true, scriptKind)
+    externalSourceFiles.set(cacheKey, { text, languageVersionKey, sourceFile })
+    return sourceFile
+  }
 
   let program: ts.Program
   try {
-    program = ts.createProgram([rootFileName], options, host)
+    program = ts.createProgram([rootFileName], options, host, previousPrograms.get(root))
+    rememberProgram(root, program)
   } catch {
+    previousPrograms.delete(root)
     return undefined
   }
   const sourceFile = program.getSourceFile(rootFileName)

@@ -79,13 +79,13 @@ test('struct syntax lowers to initializer metadata, a body, and instance State',
 
 test('struct lowering merges runtime imports instead of shadowing consumer imports', () => {
   const output = transformMuseStructSyntax(`
-    import { Binding, Text } from 'react-muse-ui'
+    import { Binding, Text } from 'vune-ui'
     struct Counter: View {
       @State var count = 0
       var body: some View { Toggle("Count", isOn: $count) }
     }
   `)
-  const imports = output.match(/import \{[^}]+\} from 'react-muse-ui'/g) ?? []
+  const imports = output.match(/import \{[^}]+\} from 'vune-ui'/g) ?? []
   assert.equal(imports.length, 1)
   assert.match(imports[0], /Binding/)
   assert.match(imports[0], /State/)
@@ -292,7 +292,7 @@ test('source maps align repeated View occurrences by token order', () => {
 test('TypeScript language service host parses lowered Muse snapshots', () => {
   const fileName = '/src/Editor.ts'
   const source = `
-import { Text, VStack } from 'react-muse-ui'
+import { Text, VStack } from 'vune-ui'
 export const screen = VStack() { Text('Editor') }
 `
   const host = {

@@ -25,11 +25,11 @@ export function createMuseSwcVisitor(_options: MuseTransformOptions = {}) {
 }
 
 function ensureRuntimeImport(source: string, name: string): string {
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(source)
-  if (!existing) return `import { ${name} } from 'react-muse-ui'\n${source}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${name} } from 'vune-ui'\n${source}`
   const imported = existing[1].split(',').map(value => value.trim()).filter(Boolean)
   if (imported.includes(name)) return source
   imported.push(name)
-  const replacement = `import { ${imported.join(', ')} } from 'react-muse-ui'`
+  const replacement = `import { ${imported.join(', ')} } from 'vune-ui'`
   return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }

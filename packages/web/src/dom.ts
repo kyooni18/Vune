@@ -1,4 +1,5 @@
 import {
+  collectLogicalViewIdentities,
   collectStateReads,
   edgeInsetsFromCss,
   frameStyle,
@@ -24,17 +25,30 @@ function nodeKey(node: Node, context: DomRenderContext): string | number | undef
   return context.domKeys.get(node)
 }
 
-function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
+function replaceDomNode(parent: Node, current: Node, next: Node, _context: DomRenderContext): Node {
   parent.replaceChild(next, current)
-  if (next.nodeType === 1) {
-    const props = context.domProps.get(next as Element)
-    if (props?.ref !== undefined) setDomRef(props.ref, next as Element, context)
-  }
   return next
 }
 
-function reconcileDomChildren(parent: Node, nextChildren: readonly Node[], context: DomRenderContext): void {
-  const currentChildren = [...parent.childNodes]
+function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, context: DomRenderContext): void {
+  const currentNodes = parent.childNodes
+  if (currentNodes.length === nextChildren.length) {
+    let unkeyed = true
+    for (let index = 0; index < nextChildren.length; index += 1) {
+      if (nodeKey(currentNodes[index], context) !== undefined || nodeKey(nextChildren[index], context) !== undefined) {
+        unkeyed = false
+        break
+      }
+    }
+    if (unkeyed) {
+      for (let index = 0; index < nextChildren.length; index += 1) {
+        reconcileDomNode(parent, currentNodes[index], nextChildren[index], context)
+      }
+      return
+    }
+  }
+  const currentChildren = [...currentNodes]
+  const nextArray = Array.from(nextChildren)
   const keyed = new Map<string | number, Node>()
   const used = new Set<Node>()
   for (const child of currentChildren) {
@@ -44,8 +58,8 @@ function reconcileDomChildren(parent: Node, nextChildren: readonly Node[], conte
   const unkeyed = currentChildren.filter(child => nodeKey(child, context) === undefined)
   let nextUnkeyed = 0
 
-  for (let index = 0; index < nextChildren.length; index += 1) {
-    const next = nextChildren[index]
+  for (let index = 0; index < nextArray.length; index += 1) {
+    const next = nextArray[index]
     const key = nodeKey(next, context)
     let current = key === undefined ? unkeyed[nextUnkeyed++] : keyed.get(key)
     if (current) used.add(current)
@@ -71,14 +85,18 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
     return current
   }
   if (current.nodeType !== 1 || next.nodeType !== 1) return current
-  const currentElement = current as HTMLElement
-  const nextElement = next as HTMLElement
-  if (currentElement.tagName !== nextElement.tagName) return replaceDomNode(parent, current, next, context)
+  const currentElement = current as Element
+  const nextElement = next as Element
+  if (currentElement.namespaceURI !== nextElement.namespaceURI || currentElement.tagName !== nextElement.tagName) {
+    return replaceDomNode(parent, current, next, context)
+  }
   const lazyKey = context.lazyKeys.get(nextElement)
   if (lazyKey) context.lazyKeys.set(currentElement, lazyKey)
   patchDomProps(currentElement, context.domProps.get(nextElement), context)
-  context.domKeys.set(currentElement, nodeKey(nextElement, context))
-  reconcileDomChildren(currentElement, [...nextElement.childNodes], context)
+  const nextKey = nodeKey(nextElement, context)
+  if (nextKey !== undefined) context.domKeys.set(currentElement, nextKey)
+  else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
+  reconcileDomChildren(currentElement, nextElement.childNodes, context)
   return current
 }
 
@@ -159,21 +177,72 @@ function lazySpacer(context: DomRenderContext, node: LazyViewNode, size: number,
   return spacer
 }
 
-function appendDomChild(parent: Node, child: Node): void {
-  parent.appendChild(child)
+const HTML_NS = "http://www.w3.org/1999/xhtml"
+const SVG_NS = "http://www.w3.org/2000/svg"
+
+function createTaggedElement(context: DomRenderContext, tag: string, namespace = HTML_NS): Element {
+  const lower = tag.toLowerCase()
+  const actualNamespace = namespace === SVG_NS || lower === "svg" ? SVG_NS : HTML_NS
+  const element = actualNamespace === SVG_NS
+    ? context.document.createElementNS(SVG_NS, tag)
+    : context.document.createElement(tag)
+  if (tag !== tag.toLowerCase()) context.domTags.set(element, tag)
+  return element
+}
+
+function childNamespace(parent: Element): string {
+  return parent.namespaceURI === SVG_NS && parent.localName.toLowerCase() !== "foreignobject" ? SVG_NS : HTML_NS
+}
+
+function copyRawAttributes(source: Element, target: Element): void {
+  for (const attribute of [...source.attributes]) {
+    if (attribute.namespaceURI) target.setAttributeNS(attribute.namespaceURI, attribute.name, attribute.value)
+    else target.setAttribute(attribute.name, attribute.value)
+  }
+}
+
+function normalizeChildNamespace(child: Element, parent: Element, context: DomRenderContext): Element {
+  const tag = context.domTags.get(child) ?? child.localName
+  const expectedParentNamespace = childNamespace(parent)
+  const desiredNamespace = expectedParentNamespace === SVG_NS || tag.toLowerCase() === "svg" ? SVG_NS : HTML_NS
+  if (child.namespaceURI === desiredNamespace) return child
+
+  const replacement = createTaggedElement(context, tag, desiredNamespace)
+  copyRawAttributes(child, replacement)
+  const props = context.domProps.get(child)
+  if (props) applyDomProps(replacement, props, context)
+  const hydrationProps = context.hydrationProps.get(child)
+  if (hydrationProps !== undefined) context.hydrationProps.set(replacement, hydrationProps)
+  context.domKeys.set(replacement, context.domKeys.get(child))
+  const lazyKey = context.lazyKeys.get(child)
+  if (lazyKey) context.lazyKeys.set(replacement, lazyKey)
+  for (const nested of [...child.childNodes]) appendDomChild(replacement, nested, context)
+  return replacement
+}
+
+function appendDomChild(parent: Node, child: Node, context: DomRenderContext): void {
+  if (child.nodeType === 11) {
+    for (const nested of [...child.childNodes]) appendDomChild(parent, nested, context)
+    return
+  }
+  const normalized = parent.nodeType === 1 && child.nodeType === 1
+    ? normalizeChildNamespace(child as Element, parent as Element, context)
+    : child
+  parent.appendChild(normalized)
 }
 
 function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
   return {
     element(type, props, ...children) {
-      const element = context.document.createElement(typeof type === "string" ? type : "div")
+      const tag = typeof type === "string" ? type : "div"
+      const element = createTaggedElement(context, tag)
       applyDomProps(element, props, context)
-      children.forEach(child => appendDomChild(element, child))
+      children.forEach(child => appendDomChild(element, child, context))
       return element
     },
     fragment(children) {
       const fragment = context.document.createDocumentFragment()
-      children.forEach(child => appendDomChild(fragment, child))
+      children.forEach(child => appendDomChild(fragment, child, context))
       return fragment
     },
     value(value) {
@@ -190,10 +259,18 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       const requested = context.lazyRanges.get(key) ?? lazyRangeForElement(element, node, estimate)
       const range = boundedLazyRange(requested, node.children.length)
       context.lazyRanges.set(key, range)
+      const preserved = new Set<string>()
+      node.children.forEach((child, index) => {
+        if (index >= range.start && index < range.end) return
+        for (const logicalIdentity of collectLogicalViewIdentities(child, [...identity, "lazy", index])) {
+          preserved.add(viewIdentityKey(logicalIdentity))
+        }
+      })
+      context.preservedLazyStatePrefixes.set(key, preserved)
       const itemSize = estimate ?? lazyEstimate(node)
-      if (range.start > 0) appendDomChild(element, lazySpacer(context, node, range.start * itemSize, "before"))
-      appendDomChild(element, render(range))
-      if (range.end < node.children.length) appendDomChild(element, lazySpacer(context, node, (node.children.length - range.end) * itemSize, "after"))
+      if (range.start > 0) appendDomChild(element, lazySpacer(context, node, range.start * itemSize, "before"), context)
+      appendDomChild(element, render(range), context)
+      if (range.end < node.children.length) appendDomChild(element, lazySpacer(context, node, (node.children.length - range.end) * itemSize, "after"), context)
       const measured = measuredLazySize(element, node)
       if (measured !== undefined) context.lazyMeasurements.set(key, measured)
       return element
@@ -202,7 +279,7 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       if (modifier.name === "frame") {
         const wrapper = context.document.createElement("div")
         applyDomProps(wrapper, { style: frameStyle(modifier.arguments[0] && typeof modifier.arguments[0] === "object" ? modifier.arguments[0] : {}) }, context)
-        appendDomChild(wrapper, content)
+        appendDomChild(wrapper, content, context)
         return wrapper
       }
       const extraStyle = styleOf(modifier)
@@ -219,7 +296,7 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       nodes.forEach(node => {
         if (node.nodeType !== 1) return
         if (key !== undefined) context.domKeys.set(node, key)
-        if (Object.keys(props).length > 0) applyDomProps(node as HTMLElement, props, context)
+        if (Object.keys(props).length > 0) applyDomProps(node as Element, props, context)
       })
       return content
     },
@@ -240,7 +317,7 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
       wrapper.dataset.museGeometry = String(index)
       wrapper.style.boxSizing = "border-box"
       wrapper.style.width = "100%"
-      wrapper.appendChild(render(context.geometries.get(index) ?? zeroGeometry))
+      appendDomChild(wrapper, render(context.geometries.get(index) ?? zeroGeometry), context)
       return wrapper
     },
   }
@@ -288,29 +365,53 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       document,
       states: new Map(),
       visitedStateIdentities: new Set(),
-      refs: [],
       geometries: new Map(),
       hydrationProps: new WeakMap(),
       domProps: new WeakMap(),
       eventListeners: new WeakMap(),
       domKeys: new WeakMap(),
+      domTags: new WeakMap(),
       lazyRanges: new Map(),
       lazyMeasurements: new Map(),
       lazyNodes: new Map(),
+      preservedLazyStatePrefixes: new Map(),
       visitedLazyIdentities: new Set(),
       lazyKeys: new WeakMap(),
       geometryIndex: 0,
+      hasRefs: false,
       hydrating: false,
     }
     const renderer = createDomRenderer(context)
-    let activeRefCleanup: Array<() => void> = []
+    let activeRefs = new Map<Element, { readonly reference: unknown; readonly cleanup: () => void }>()
     let geometryScheduled = false
     let lazyMeasureScheduled = false
     const lazyViewportTargets = new Set<EventTarget>()
     const lazyViewportCleanups: Array<() => void> = []
     let hasMounted = false
+    const commitRefs = () => {
+      if (!context.hasRefs && activeRefs.size === 0) return
+      const desired = new Map<Element, unknown>()
+      container.querySelectorAll("*").forEach(element => {
+        const reference = context.domProps.get(element)?.ref
+        if (reference !== undefined && reference !== null) desired.set(element, reference)
+      })
+      const next = new Map<Element, { readonly reference: unknown; readonly cleanup: () => void }>()
+      for (const [element, reference] of desired) {
+        const previous = activeRefs.get(element)
+        if (previous && previous.reference === reference) {
+          next.set(element, previous)
+          continue
+        }
+        previous?.cleanup()
+        next.set(element, { reference, cleanup: setDomRef(reference, element) })
+      }
+      for (const [element, previous] of activeRefs) {
+        if (!desired.has(element)) previous.cleanup()
+      }
+      activeRefs = next
+    }
     const updateGeometry = () => {
-      if (stopped) return
+      if (stopped || context.geometryIndex === 0) return
       let changed = false
       container.querySelectorAll<HTMLElement>('[data-muse="GeometryReader"][data-muse-geometry]').forEach(element => {
         const index = Number(element.dataset.museGeometry)
@@ -331,6 +432,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
     }
     const refreshLazyRanges = (): boolean => {
+      if (context.lazyNodes.size === 0) return false
       let changed = false
       const elements = [...container.querySelectorAll<HTMLElement>("[data-muse-lazy]")]
       for (const element of elements) {
@@ -359,6 +461,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
     }
     const observeLazyViewport = () => {
+      if (context.lazyNodes.size === 0) return
       const targets: EventTarget[] = []
       const window = document.defaultView
       if (window) targets.push(window)
@@ -383,6 +486,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     }
     const captureLazyScrollPositions = () => {
       const positions = new Map<HTMLElement, { readonly top: number; readonly left: number }>()
+      if (context.lazyNodes.size === 0) return positions
       container.querySelectorAll<HTMLElement>("[data-muse-lazy]").forEach(element => {
         const key = context.lazyKeys.get(element)
         const node = key ? context.lazyNodes.get(key) : undefined
@@ -396,18 +500,20 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       scheduled = false
       const scrollPositions = captureLazyScrollPositions()
       unsubscribers.forEach(unsubscribe => unsubscribe())
-      activeRefCleanup.forEach(cleanup => cleanup())
-      activeRefCleanup = []
-      context.refs.length = 0
       context.geometryIndex = 0
+      context.hasRefs = false
       context.visitedStateIdentities.clear()
       context.visitedLazyIdentities.clear()
       context.lazyNodes.clear()
+      context.preservedLazyStatePrefixes.clear()
       const dependencies = new Set<StateRef<unknown>>()
       context.hydrating = Boolean(options.hydrate && !hasMounted)
       let output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+      const preservedStatePrefixes = [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
       for (const key of context.states.keys()) {
-        if (!context.visitedStateIdentities.has(key)) context.states.delete(key)
+        if (context.visitedStateIdentities.has(key)) continue
+        if (preservedStatePrefixes.some(prefix => key === prefix || key.startsWith(`${prefix}|`))) continue
+        context.states.delete(key)
       }
       let outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
       const existingChildren = [...container.childNodes]
@@ -420,8 +526,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         // on the prefix that matched. Release those bindings before replacing
         // or reconciling the server tree, then materialize a fresh client tree
         // with normal DOM prop activation enabled.
-        context.refs.splice(0).forEach(cleanup => cleanup())
         context.geometryIndex = 0
+        context.hasRefs = false
         context.visitedLazyIdentities.clear()
         context.lazyNodes.clear()
         output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
@@ -438,7 +544,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       for (const key of context.lazyMeasurements.keys()) {
         if (!context.visitedLazyIdentities.has(key)) context.lazyMeasurements.delete(key)
       }
-      activeRefCleanup = [...context.refs]
+      commitRefs()
       unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => {
         if (scheduled || stopped) return
         scheduled = true
@@ -458,8 +564,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       stopped = true
       unsubscribers.forEach(unsubscribe => unsubscribe())
       unsubscribers = []
-      activeRefCleanup.forEach(cleanup => cleanup())
-      activeRefCleanup = []
+      activeRefs.forEach(entry => entry.cleanup())
+      activeRefs.clear()
       lazyViewportCleanups.forEach(cleanup => cleanup())
       lazyViewportCleanups.length = 0
       ;(container as Element & { replaceChildren(...nodes: Node[]): void }).replaceChildren()

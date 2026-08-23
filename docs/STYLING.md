@@ -158,7 +158,7 @@ The automatic runtime accepts the same common modifier values as JSX
 attributes on intrinsic elements:
 
 ```tsx
-/** @jsxImportSource react-muse-ui */
+/** @jsxImportSource vune-ui */
 
 <div
   padding={12}
@@ -171,7 +171,7 @@ attributes on intrinsic elements:
 ```
 
 The automatic JSX runtime remains a React compatibility feature. Enable it with
-`jsxImportSource: "react-muse-ui"` and import the runtime from the legacy
+`jsxImportSource: "vune-ui"` and import the runtime from the legacy
 compatibility entry point; canonical renderer-independent code should use the
 function DSL and `className`/`style` modifiers above.
 

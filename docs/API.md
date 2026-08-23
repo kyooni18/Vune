@@ -2,7 +2,7 @@
 
 This page describes the public contract for the current Muse release. New code
 should import graph values from `muse` and choose `@muse/react`, `@muse/vue`, or
-`@muse/web` as the renderer; `react-muse-ui` remains a facade for the legacy
+`@muse/web` as the renderer; `vune-ui` remains a facade for the legacy
 React-compatible API.
 
 The candidate 1.0 runtime export surface is pinned by
@@ -33,7 +33,7 @@ Renderer-specific entry points add only materialization and runtime bridges:
   { hydrate: true })` reuses matching SSR markup, attaches DOM events/refs, and
   keeps subsequent State invalidations live.
 
-The root `react-muse-ui` entry point remains the legacy compatibility surface,
+The root `vune-ui` entry point remains the legacy compatibility surface,
 implemented by the separate `@muse/legacy-react` package and exposed through
 the preserved `@muse/react/legacy` proxy paths:
 
@@ -86,10 +86,11 @@ carrier, while ordinary JavaScript object calls remain a compatibility form.
 `formatMuseSource()` and `diagnoseMuseSource()` are available for one-off
 editor operations. `createMuseLanguageService()` combines formatting,
 diagnostics, source-map output, and original-source position conversion for an
-editor integration. `createMuseTypeScriptLanguageService()` wraps a
-`ts.LanguageServiceHost` so TypeScript/VS Code-style services parse the same
-lowered snapshots. `mapGeneratedPosition()` and `mapOriginalPosition()` expose
-the token-level anchors used by that adapter. Vite transforms use the standard
+editor integration. `createMuseLanguageService()` exposes the canonical lowered snapshot plus
+original/generated position conversion. `mapGeneratedPosition()` and
+`mapOriginalPosition()` expose the token-level anchors used by editor adapters.
+The older TypeScript-host wrapper remains in the explicit legacy compiler
+compatibility package. Vite transforms use the standard
 source-map shape.
 
 The normative cross-layer contracts for these APIs are in
@@ -117,17 +118,17 @@ hook only supplies mount lifetime.
   token-anchored source maps.
 - `@muse/compiler` — the renderer-independent compiler and language-service
   primitives used by the Vite and editor adapters.
-- `react-muse-ui/vite` — the TypeScript AST macro for `State`, `Action`, `view`,
+- `vune-ui/vite` — the TypeScript AST macro for `State`, `Action`, `view`,
   builder blocks, labeled arguments, shorthand modifiers, and `struct ...: View`.
   This is the compatibility React workflow; put `museMacro()` before
   `@vitejs/plugin-react` when that state-hoisting behavior is required.
-- `react-muse-ui/jsx-runtime` and `react-muse-ui/jsx-dev-runtime` — the automatic JSX runtimes.
-  With `jsxImportSource: "react-muse-ui"`, Muse modifier attributes on intrinsic elements
+- `vune-ui/jsx-runtime` and `vune-ui/jsx-dev-runtime` — the automatic JSX runtimes.
+  With `jsxImportSource: "vune-ui"`, Muse modifier attributes on intrinsic elements
   are type-checked as well as applied at runtime.
 
 ## Experimental entry points
 
-Import exploratory infrastructure explicitly from `react-muse-ui/experimental`:
+Import exploratory infrastructure explicitly from `vune-ui/experimental`:
 
 - coordinate spaces and the layout observer;
 - observed `CoordinateNode` values;

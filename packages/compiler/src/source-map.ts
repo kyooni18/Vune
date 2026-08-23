@@ -35,6 +35,7 @@ interface Token {
   readonly value: string
   readonly line: number
   readonly column: number
+  readonly order: number
 }
 
 function tokens(line: string): Array<{ value: string; column: number }> {
@@ -45,10 +46,12 @@ function tokens(line: string): Array<{ value: string; column: number }> {
 }
 
 function allTokens(source: string): Token[] {
+  let order = 0
   return source.split("\n").flatMap((line, lineIndex) => tokens(line).map(token => ({
     value: token.value,
     line: lineIndex,
     column: token.column,
+    order: order++,
   })))
 }
 
@@ -56,18 +59,85 @@ function key(line: number, column: number): string {
   return `${line}:${column}`
 }
 
+function tokensByValue(values: readonly Token[]): Map<string, Token[]> {
+  const result = new Map<string, Token[]>()
+  for (const token of values) {
+    const bucket = result.get(token.value) ?? []
+    bucket.push(token)
+    result.set(token.value, bucket)
+  }
+  return result
+}
+
+/**
+ * Score an original occurrence by its lexical neighbourhood. Muse lowering can
+ * move code (notably top-level State declarations), so monotonic token matching
+ * is not sufficient: `count` in a generated State factory must map back to the
+ * declaration, while `count` in the body must map to its original use.
+ */
+function contextualScore(generated: readonly Token[], generatedIndex: number, original: readonly Token[], originalIndex: number): number {
+  let score = 0
+  const generatedToken = generated[generatedIndex]
+  const originalToken = original[originalIndex]
+  if (generatedToken.value !== originalToken.value) return Number.NEGATIVE_INFINITY
+
+  // Immediate neighbours are the strongest signal; wider neighbours tolerate
+  // synthetic helper identifiers inserted by the lowering passes.
+  for (let distance = 1; distance <= 5; distance += 1) {
+    const weight = 18 / distance
+    if (generated[generatedIndex - distance]?.value === original[originalIndex - distance]?.value) score += weight
+    if (generated[generatedIndex + distance]?.value === original[originalIndex + distance]?.value) score += weight
+  }
+
+  const generatedWindow = generated.slice(Math.max(0, generatedIndex - 5), generatedIndex + 6)
+  const originalWindow = original.slice(Math.max(0, originalIndex - 5), originalIndex + 6)
+  for (const neighbour of generatedWindow) {
+    if (neighbour === generatedToken) continue
+    const match = originalWindow.find(candidate => candidate.value === neighbour.value)
+    if (match) score += 2
+  }
+
+  // Same-line companions are useful for moved declarations and calls.
+  const generatedLineValues = new Set(generatedWindow.filter(token => token.line === generatedToken.line).map(token => token.value))
+  const originalLineValues = new Set(originalWindow.filter(token => token.line === originalToken.line).map(token => token.value))
+  for (const value of generatedLineValues) if (originalLineValues.has(value)) score += 1
+  return score
+}
+
 function alignTokens(source: string, generated: string): Map<string, { line: number; column: number }> {
   const original = allTokens(source)
   const generatedTokens = allTokens(generated)
+  const originalByValue = tokensByValue(original)
+  const originalIndex = new Map<number, number>(original.map((token, index) => [token.order, index]))
   const anchors = new Map<string, { line: number; column: number }>()
-  let cursor = 0
+  let monotonicCursor = 0
   let previous = { line: 0, column: 0 }
-  for (const token of generatedTokens) {
-    const relativeIndex = original.slice(cursor).findIndex(candidate => candidate.value === token.value)
-    if (relativeIndex >= 0) {
-      const anchor = original[cursor + relativeIndex]
-      previous = { line: anchor.line, column: anchor.column }
-      cursor += relativeIndex + 1
+
+  for (let generatedIndex = 0; generatedIndex < generatedTokens.length; generatedIndex += 1) {
+    const token = generatedTokens[generatedIndex]
+    const candidates = originalByValue.get(token.value) ?? []
+    let best: Token | undefined
+    let bestScore = Number.NEGATIVE_INFINITY
+    for (const candidate of candidates) {
+      const index = originalIndex.get(candidate.order) ?? 0
+      const context = contextualScore(generatedTokens, generatedIndex, original, index)
+      // Preserve source order only as a weak tie breaker. This keeps ordinary
+      // unchanged code stable without defeating genuinely moved spans.
+      const orderBonus = candidate.order >= monotonicCursor ? 0.25 : 0
+      const lineBonus = candidate.line === token.line ? 0.1 : 0
+      const score = context + orderBonus + lineBonus
+      if (score > bestScore) {
+        best = candidate
+        bestScore = score
+      } else if (score === bestScore && best) {
+        const bestDistance = Math.abs(best.order - monotonicCursor)
+        const nextDistance = Math.abs(candidate.order - monotonicCursor)
+        if (nextDistance < bestDistance) best = candidate
+      }
+    }
+    if (best) {
+      previous = { line: best.line, column: best.column }
+      if (best.order >= monotonicCursor) monotonicCursor = best.order + 1
     }
     anchors.set(key(token.line, token.column), previous)
   }
@@ -105,7 +175,7 @@ function lineAnchors(
   }))
 }
 
-/** Create a token-anchored VLQ map for the lexical Muse lowering pass. */
+/** Create a context-anchored VLQ map for the Muse lowering pipeline. */
 export function createMuseSourceMap(source: string, generated: string, id: string): MuseSourceMap {
   const sourceLines = Math.max(1, source.split("\n").length)
   const aligned = alignTokens(source, generated)

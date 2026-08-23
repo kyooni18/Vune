@@ -19,8 +19,8 @@ export interface MuseTransformResult {
 }
 
 export interface MuseDiagnostic {
-  readonly severity: "error"
-  readonly code: "MUSE_SYNTAX" | "MUSE_INITIALIZER" | "MUSE_TYPESCRIPT" | "MUSE_HTML_ATTRIBUTE" | "MUSE_HTML_VALUE"
+  readonly severity: "error" | "warning"
+  readonly code: "MUSE_SYNTAX" | "MUSE_INITIALIZER" | "MUSE_TYPESCRIPT" | "MUSE_HTML_ATTRIBUTE" | "MUSE_HTML_VALUE" | "MUSE_STATE_SCOPE"
   readonly message: string
   readonly line: number
   readonly column: number

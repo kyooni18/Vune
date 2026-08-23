@@ -257,12 +257,12 @@ function stateValuesInSource(source: string): boolean {
 
 function injectRuntimeImports(source: string, names: string): string {
   const required = names.split(',').map(name => name.trim()).filter(Boolean)
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(source)
-  if (!existing) return `import { ${required.join(', ')} } from 'react-muse-ui'\n${source}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${required.join(', ')} } from 'vune-ui'\n${source}`
 
   const imported = existing[1].split(',').map(name => name.trim()).filter(Boolean)
   const merged = [...imported]
   for (const name of required) if (!merged.includes(name)) merged.push(name)
-  const replacement = `import { ${merged.join(', ')} } from 'react-muse-ui'`
+  const replacement = `import { ${merged.join(', ')} } from 'vune-ui'`
   return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }

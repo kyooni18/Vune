@@ -335,7 +335,21 @@ function checkerTypeForExpression(source: string, checker: ts.TypeChecker, sourc
   if (!candidate) return undefined
   const type = checker.getTypeAtLocation(candidate)
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
-  return checker.typeToString(type)
+  // `const label = "x"` has the literal type `"x"`, but a normal Muse
+  // initializer accepting `string` must still accept it. Preserve literal
+  // precision in TypeScript itself while normalizing the compiler-facing
+  // semantic category used for overload matching.
+  const primitiveCategory = (value: ts.Type): "string" | "number" | "boolean" | undefined => {
+    if (value.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return "string"
+    if (value.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return "number"
+    if (value.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "boolean"
+    if (value.isUnion()) {
+      const categories = new Set(value.types.map(primitiveCategory))
+      if (categories.size === 1 && !categories.has(undefined)) return [...categories][0]
+    }
+    return undefined
+  }
+  return primitiveCategory(type) ?? checker.typeToString(type)
 }
 
 function compilerSemanticArgument(
@@ -503,6 +517,17 @@ function matchingDelimiter(source: string, open: number, opener: string, closer:
   return source.length - 1
 }
 
+function originalCallRange(source: string, name: string): MuseSourceRange | undefined {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const expression = new RegExp(`\\b${escaped}\\s*\\(`, "g")
+  const match = expression.exec(source)
+  if (!match) return undefined
+  const open = source.indexOf("(", match.index + name.length)
+  if (open < 0) return undefined
+  const close = matchingDelimiter(source, open, "(", ")")
+  return { start: match.index, end: Math.min(source.length, close + 1) }
+}
+
 function originalElementRange(source: string, tag: string, from: number): { readonly range: MuseSourceRange; readonly next: number } | undefined {
   const rawStart = source.indexOf("<" + tag, from)
   const rawBoundary = rawStart < 0 ? undefined : source[rawStart + tag.length + 1]
@@ -557,7 +582,7 @@ function typescriptGraphSymbols(
           foreignComponents.push({
             localName: node.name.text,
             module,
-            range: mapRange(source, generatedSource, sourceMap, generatedRange),
+            range: originalCallRange(source, node.name.text) ?? mapRange(source, generatedSource, sourceMap, generatedRange),
             generatedRange,
             symbol: {
               kind: "foreign-component",

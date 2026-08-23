@@ -16,12 +16,12 @@ const coreRuntimeExports = [
   "MuseInitializerAmbiguityError", "MuseInitializerError", "NavigationLink", "NavigationStack", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
   "Section", "Sheet", "Slider", "Spacer", "State", "Stepper", "Text", "TextArea", "TextField", "Toggle", "VStack", "ViewBuilder",
   "ViewIdentityStore", "ViewType", "ZStack", "actionClosure", "assertInitializerCall", "classNameOf", "closureForKind", "closureKindOf",
-  "closureVariantsOf", "collectStateReads", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineView", "edgeInsetsFromCss",
+  "closureVariantsOf", "collectLogicalViewIdentities", "collectStateReads", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineView", "edgeInsetsFromCss",
   "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
   "keyedViewIdentity", "layoutLength", "lazyView", "markMuseClosure", "modifiedContent", "modifier", "modifierGraphOf", "museClosureKind", "museClosureVariants",
   "museForeignComponent", "museInitializers", "museNamedArguments", "museView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
   "resolveBuilderClosure", "resolveInitializer", "resolveSemanticCall", "resolveSemanticInitializer", "resolveValue", "SemanticModel", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure", "viewBuilderSemanticSymbol",
-  "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "zeroGeometry",
+  "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "viewTypeIdentity", "zeroGeometry",
 ].sort()
 
 const coreTypeOnlyExports = [

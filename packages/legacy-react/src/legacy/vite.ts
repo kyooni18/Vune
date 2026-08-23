@@ -511,13 +511,13 @@ function lowerMuseSyntax(source: string): string {
   ]
   if (required.length === 0) return lowered
 
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])react-muse-ui\2[\t ]*;?/.exec(lowered)
-  if (!existing) return `import { ${required.join(', ')} } from 'react-muse-ui'\n${lowered}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(lowered)
+  if (!existing) return `import { ${required.join(', ')} } from 'vune-ui'\n${lowered}`
   const imported = existing[1].split(',').map(name => name.trim()).filter(Boolean)
   const merged = [...imported]
   for (const name of required) if (!merged.includes(name)) merged.push(name)
   if (merged.length === imported.length) return lowered
-  const replacement = `import { ${merged.join(', ')} } from 'react-muse-ui'`
+  const replacement = `import { ${merged.join(', ')} } from 'vune-ui'`
   return lowered.slice(0, existing.index) + replacement + lowered.slice(existing.index + existing[0].length)
 }
 

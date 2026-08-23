@@ -105,6 +105,33 @@ uses estimated-size spacers and scroll/resize range updates to window direct
 DOM mounts; SSR, React, and Vue retain a full-graph fallback with
 `content-visibility` hints.
 
+## Release hardening gate
+
+The current alpha hardening pass is now backed by executable release gates rather
+than documentation-only goals:
+
+- compiler regression coverage includes ordinary TypeScript method/generator
+  disambiguation, nested ViewBuilder control flow, renderer-neutral State
+  ownership, dynamic initializer values, raw HTML/type-assertion boundaries,
+  qualified View calls, source maps, and specialization cache invalidation;
+- React, Vue, and Web share concrete View identity, typed collection keys,
+  canonical leaf semantics, keyed State lifetime, and live conformance tests;
+- Web DOM behavior covers commit-phase refs, event-name normalization, HTML/ARIA
+  boolean attributes, SVG/`foreignObject` namespaces, client-authoritative
+  hydration, and logically-present lazy State;
+- the medium `examples/Showcase.muse.ts` application exercises bindings, async
+  actions, custom Views, keyed reordering, lazy collections, Grid, modifier
+  chains, and raw HTML in one production build;
+- CI builds all standard, parity, and Showcase demos and runs Playwright parity
+  against React, Vue, and Web with isolated Vite caches;
+- release verification checks package exports/types, tree-shaking declarations,
+  `pnpm pack` workspace-version rewriting, package contents, and a clean offline
+  install/import/SSR/compiler/Vite smoke test.
+
+Performance remains guarded by both modifier-depth and application-style
+workloads so semantic fixes cannot silently introduce unbounded compile or render
+regressions.
+
 ## Deliberately deferred work
 
 Some useful systems remain explicit experiments until their integration contract
@@ -119,7 +146,7 @@ is settled:
   modifier chains are also lowered to one flat `modifiedContent` construction;
   unknown or non-View receivers retain their original method calls.
 - Legacy layout-engine, coordinate-runtime, observer, builder, and plugin
-  facilities remain available from `react-muse-ui/experimental`; canonical
+  facilities remain available from `vune-ui/experimental`; canonical
   `GeometryReader` now owns the cross-renderer measured-host contract while the
   older coordinate types remain compatibility-only.
 - JSX runtime support is available, but its modifier typing and plugin behavior

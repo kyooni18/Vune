@@ -73,6 +73,13 @@ function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument
   return call.trailing ? [...arguments_, { type: "function", trailing: true }] : arguments_
 }
 
+function canDeferDynamicButton(call: MuseCallExpression, arguments_: readonly SemanticArgument[]): boolean {
+  if (!arguments_.some(argument => argument.type === "unknown")) return false
+  if (call.trailing) return call.arguments.length === 1 && !call.arguments[0]?.label
+  const labels = call.arguments.map(argument => argument.label)
+  return labels.length === 2 && labels[0] === "action" && labels[1] === "label"
+}
+
 function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): {
   readonly symbols: readonly SemanticInitializerSymbol[]
   readonly initializerIndex: number
@@ -87,8 +94,10 @@ function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolR
     initializers: symbols,
     fields: [],
   }
-  const result = resolveSemanticCall(viewType, knownCallArguments(call))
+  const arguments_ = knownCallArguments(call)
+  const result = resolveSemanticCall(viewType, arguments_)
   if (!result.resolvedInitializer) {
+    if (call.callee === "Button" && canDeferDynamicButton(call, arguments_)) return undefined
     if (call.callee === "Button") throw new MuseInitializerSyntaxError(buttonInitializerMessage(call), call.range.start)
     if (call.trailing && canonicalInitializerSymbols.get(call.callee) !== symbols) {
       throw new MuseInitializerSyntaxError(
@@ -235,153 +244,113 @@ function containsAwaitKeyword(source: string): boolean {
   return false
 }
 
-interface ConditionalStatementParts {
-  readonly condition: string
-  readonly thenSource: string
-  readonly elseSource?: string
-  readonly elseIf?: string
-}
-
-interface SwitchClause {
-  readonly label: "case" | "default"
-  readonly expression?: string
-  readonly body: string
-}
-
-function conditionalStatementParts(source: string): ConditionalStatementParts | undefined {
-  const value = source.trim()
-  if (!/^if\s*\(/.test(value)) return undefined
-  const open = value.indexOf("(")
-  const close = matching(value, open, "(", ")")
-  const thenOpen = skipTrivia(value, close + 1)
-  if (value[thenOpen] !== "{") return undefined
-  const thenClose = matching(value, thenOpen, "{", "}")
-  const afterThen = skipTrivia(value, thenClose + 1)
-  if (afterThen === value.length) return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose) }
-  if (value.slice(afterThen, afterThen + 4) !== "else") return undefined
-  const elseStart = skipTrivia(value, afterThen + 4)
-  const rest = value.slice(elseStart)
-  if (/^if\s*\(/.test(rest)) return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose), elseIf: rest }
-  if (rest[0] !== "{") return undefined
-  const elseClose = matching(rest, 0, "{", "}")
-  if (skipTrivia(rest, elseClose + 1) !== rest.length) return undefined
-  return { condition: value.slice(open + 1, close), thenSource: value.slice(thenOpen + 1, thenClose), elseSource: rest.slice(1, elseClose) }
-}
-
-function switchClauses(source: string): readonly SwitchClause[] {
-  const starts: Array<{ label: "case" | "default"; start: number; colon: number; expression?: string }> = []
-  let parens = 0
-  let brackets = 0
-  let braces = 0
-  for (let cursor = 0; cursor < source.length; cursor += 1) {
-    const character = source[cursor]
-    if (character === "\"" || character === "'" || character === "`") { cursor = skipString(source, cursor) - 1; continue }
-    if (character === "/" && (source[cursor + 1] === "/" || source[cursor + 1] === "*")) { cursor = skipComment(source, cursor) - 1; continue }
-    if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
-    if (character === "(" ) { parens += 1; continue }
-    if (character === ")") { parens -= 1; continue }
-    if (character === "[") { brackets += 1; continue }
-    if (character === "]") { brackets -= 1; continue }
-    if (character === "{") { braces += 1; continue }
-    if (character === "}") { braces -= 1; continue }
-    if (parens !== 0 || brackets !== 0 || braces !== 0) continue
-    const label = /^(case|default)\b/.exec(source.slice(cursor))
-    if (!label || (cursor > 0 && /[A-Za-z0-9_$]/.test(source[cursor - 1]))) continue
-    const labelName = label[1] as "case" | "default"
-    const labelEnd = cursor + label[0].length
-    const relativeColon = labelName === "default" ? source.slice(labelEnd).search(/:/) : topLevelColon(source.slice(labelEnd))
-    if (relativeColon < 0) continue
-    const colon = labelEnd + relativeColon
-    starts.push({ label: labelName, start: cursor, colon, expression: labelName === "case" ? source.slice(labelEnd, colon).trim() : undefined })
-    cursor = colon
+function isViewBuilderExpression(expression: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expression)
+    || ts.isAsExpression(expression)
+    || ts.isTypeAssertionExpression(expression)
+    || ts.isNonNullExpression(expression)
+    || ts.isSatisfiesExpression(expression)
+    || ts.isAwaitExpression(expression)) {
+    return isViewBuilderExpression(expression.expression)
   }
-  return starts.map((start, index) => ({
-    label: start.label,
-    expression: start.expression,
-    body: source.slice(start.colon + 1, starts[index + 1]?.start ?? source.length),
-  }))
-}
-
-function switchStatement(source: string, registry: InitializerSymbolRegistry, childrenName: string): string | undefined {
-  const value = source.trim()
-  if (!/^switch\s*\(/.test(value)) return undefined
-  const open = value.indexOf("(")
-  const close = matching(value, open, "(", ")")
-  const bodyOpen = skipTrivia(value, close + 1)
-  if (value[bodyOpen] !== "{") return undefined
-  const bodyClose = matching(value, bodyOpen, "{", "}")
-  if (skipTrivia(value, bodyClose + 1) !== value.length) return undefined
-  const clauses = switchClauses(value.slice(bodyOpen + 1, bodyClose))
-  if (clauses.length === 0) return undefined
-  const lowered = clauses.map(clause => `${clause.label}${clause.expression === undefined ? "" : ` ${lowerRange(clause.expression, registry)}`}: ${lowerViewBuilderStatements(clause.body, registry, childrenName)}`).join(" ")
-  return `switch (${lowerRange(value.slice(open + 1, close), registry)}) { ${lowered} }`
-}
-
-function isMuseChildExpression(source: string, registry: InitializerSymbolRegistry): boolean {
-  const value = source.trim()
-  if (!value) return false
-  if (value.startsWith("<")) return true
-  const parsed = parseMuseBuilder(value).statements[0]
-  if (parsed?.kind === "call") return /^[A-Z]/.test(parsed.callee) || registry.has(parsed.callee)
-  if (/^\[[\s\S]*\]$/.test(value) && /\b[A-Z][A-Za-z0-9_$]*\s*\(/.test(value)) return true
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(value)) return true
+  if (ts.isConditionalExpression(expression)) {
+    return isViewBuilderExpression(expression.whenTrue) || isViewBuilderExpression(expression.whenFalse)
+  }
+  if (ts.isBinaryExpression(expression)) {
+    const operator = expression.operatorToken.kind
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken
+      || operator === ts.SyntaxKind.BarBarToken
+      || operator === ts.SyntaxKind.QuestionQuestionToken) {
+      return isViewBuilderExpression(expression.left) || isViewBuilderExpression(expression.right)
+    }
+    return false
+  }
+  if (ts.isArrayLiteralExpression(expression)) return expression.elements.some(item => ts.isExpression(item) && isViewBuilderExpression(item))
+  if (ts.isCallExpression(expression) || ts.isNewExpression(expression)) return true
+  if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) return true
   return false
 }
 
-function lowerViewBuilderStatements(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols, childrenName = "__museChildren"): string {
-  const statements: string[] = []
-  for (const statement of splitStatements(source)) {
-    const value = statement.trim()
-    if (!value) continue
-    const conditional = conditionalStatementParts(value)
-    if (conditional) {
-      const condition = lowerRange(conditional.condition, registry)
-      const thenBody = lowerViewBuilderStatements(conditional.thenSource, registry, childrenName)
-      if (conditional.elseIf) {
-        statements.push(`if (${condition}) { ${thenBody} } else ${lowerViewBuilderControlFlow(conditional.elseIf, registry, childrenName)}`)
-      } else if (conditional.elseSource !== undefined) {
-        statements.push(`if (${condition}) { ${thenBody} } else { ${lowerViewBuilderStatements(conditional.elseSource, registry, childrenName)} }`)
-      } else {
-        statements.push(`if (${condition}) { ${thenBody} }`)
-      }
-      continue
-    }
-    const switchBody = switchStatement(value, registry, childrenName)
-    if (switchBody) {
-      statements.push(switchBody)
-      continue
-    }
-    if (/^(?:const|let|var)\b/.test(value)) {
-      statements.push(`${lowerRange(value, registry)};`)
-      continue
-    }
-    if (/^return\b/.test(value)) {
-      const expression = value.slice("return".length).trim()
-      statements.push(expression ? `return ${lowerRange(expression, registry)};` : `return ${childrenName};`)
-      continue
-    }
-    if (/^(?:throw|break|continue|debugger)\b/.test(value)) {
-      statements.push(`${lowerRange(value, registry)};`)
-      continue
-    }
-    const lowered = lowerRange(value, registry)
-    statements.push(isMuseChildExpression(value, registry) ? `${childrenName}.push(${lowered});` : `${lowered};`)
-  }
-  return statements.join(" ")
-}
+function lowerViewBuilderAstStatements(source: string, registry: InitializerSymbolRegistry, childrenName: string): string {
+  // First lower nested Muse-only expressions (trailing closures, raw HTML,
+  // binding shorthand) so the statement tree is valid TypeScript. Then let
+  // TypeScript own control-flow parsing instead of maintaining a second,
+  // incomplete statement grammar in Muse.
+  const lowered = lowerRange(source, registry)
+  const wrapper = `function __muse_builder__() {\n${lowered}\n}`
+  const file = ts.createSourceFile("muse-view-builder.ts", wrapper, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const fn = file.statements.find(ts.isFunctionDeclaration)
+  if (!fn?.body) return lowered
 
-function lowerViewBuilderControlFlow(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols, childrenName = "__museChildren"): string {
-  const conditional = conditionalStatementParts(source)
-  if (!conditional) return `{ ${lowerViewBuilderStatements(source, registry, childrenName)} }`
-  const condition = lowerRange(conditional.condition, registry)
-  const thenBody = lowerViewBuilderStatements(conditional.thenSource, registry, childrenName)
-  if (conditional.elseIf) return `if (${condition}) { ${thenBody} } else ${lowerViewBuilderControlFlow(conditional.elseIf, registry, childrenName)}`
-  if (conditional.elseSource !== undefined) return `if (${condition}) { ${thenBody} } else { ${lowerViewBuilderStatements(conditional.elseSource, registry, childrenName)} }`
-  return `if (${condition}) { ${thenBody} }`
+  const factory = ts.factory
+  const pushExpression = (expression: ts.Expression): ts.Statement => factory.createExpressionStatement(
+    factory.createCallExpression(
+      factory.createPropertyAccessExpression(factory.createIdentifier(childrenName), "push"),
+      undefined,
+      [expression],
+    ),
+  )
+
+  const transformStatement = (statement: ts.Statement): ts.Statement => {
+    if (ts.isExpressionStatement(statement)) {
+      return isViewBuilderExpression(statement.expression) ? pushExpression(statement.expression) : statement
+    }
+    if (ts.isBlock(statement)) return factory.updateBlock(statement, statement.statements.map(transformStatement))
+    if (ts.isIfStatement(statement)) {
+      return factory.updateIfStatement(
+        statement,
+        statement.expression,
+        transformStatement(statement.thenStatement),
+        statement.elseStatement ? transformStatement(statement.elseStatement) : undefined,
+      )
+    }
+    if (ts.isForStatement(statement)) {
+      return factory.updateForStatement(statement, statement.initializer, statement.condition, statement.incrementor, transformStatement(statement.statement))
+    }
+    if (ts.isForInStatement(statement)) {
+      return factory.updateForInStatement(statement, statement.initializer, statement.expression, transformStatement(statement.statement))
+    }
+    if (ts.isForOfStatement(statement)) {
+      return factory.updateForOfStatement(statement, statement.awaitModifier, statement.initializer, statement.expression, transformStatement(statement.statement))
+    }
+    if (ts.isWhileStatement(statement)) return factory.updateWhileStatement(statement, statement.expression, transformStatement(statement.statement))
+    if (ts.isDoStatement(statement)) return factory.updateDoStatement(statement, transformStatement(statement.statement), statement.expression)
+    if (ts.isSwitchStatement(statement)) {
+      const clauses = statement.caseBlock.clauses.map(clause => ts.isCaseClause(clause)
+        ? factory.updateCaseClause(clause, clause.expression, clause.statements.map(transformStatement))
+        : factory.updateDefaultClause(clause, clause.statements.map(transformStatement)))
+      return factory.updateSwitchStatement(statement, statement.expression, factory.updateCaseBlock(statement.caseBlock, clauses))
+    }
+    if (ts.isTryStatement(statement)) {
+      const tryBlock = factory.updateBlock(statement.tryBlock, statement.tryBlock.statements.map(transformStatement))
+      const catchClause = statement.catchClause
+        ? factory.updateCatchClause(
+            statement.catchClause,
+            statement.catchClause.variableDeclaration,
+            factory.updateBlock(statement.catchClause.block, statement.catchClause.block.statements.map(transformStatement)),
+          )
+        : undefined
+      const finallyBlock = statement.finallyBlock
+        ? factory.updateBlock(statement.finallyBlock, statement.finallyBlock.statements.map(transformStatement))
+        : undefined
+      return factory.updateTryStatement(statement, tryBlock, catchClause, finallyBlock)
+    }
+    if (ts.isLabeledStatement(statement)) return factory.updateLabeledStatement(statement, statement.label, transformStatement(statement.statement))
+    if (ts.isWithStatement(statement)) return factory.updateWithStatement(statement, statement.expression, transformStatement(statement.statement))
+    // Function/class declarations intentionally remain opaque. A Text() call
+    // inside a helper function is not a child of the surrounding ViewBuilder.
+    return statement
+  }
+
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, removeComments: false })
+  return fn.body.statements
+    .map(transformStatement)
+    .map(statement => printer.printNode(ts.EmitHint.Unspecified, statement, file))
+    .join("\n")
 }
 
 function needsStatementAwareViewBody(source: string): boolean {
-  return /\b(?:const|let|var|return|throw|switch|for|while|try)\b/.test(source)
+  return /\b(?:const|let|var|return|throw|if|else|switch|case|for|while|do|try|catch|finally|break|continue|debugger)\b/.test(source)
 }
 
 function lowerViewBuilderClosure(body: string, parameter: string | undefined, registry: InitializerSymbolRegistry): string {
@@ -398,7 +367,8 @@ function lowerViewBuilderClosure(body: string, parameter: string | undefined, re
   let childrenName = "__museChildren"
   let suffix = 0
   while (new RegExp(`\\b${childrenName}\\b`).test(body)) childrenName = `__museChildren${++suffix}`
-  return `${prefix} => { const ${childrenName} = []; ${lowerViewBuilderStatements(body, registry, childrenName)} return ${childrenName}; }`
+  const statements = lowerViewBuilderAstStatements(body, registry, childrenName)
+  return `${prefix} => { const ${childrenName} = []; ${statements} return ${childrenName}; }`
 }
 
 function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
@@ -860,48 +830,334 @@ function lowerStaticStructCalls(source: string, declarations: readonly MuseStruc
   return result
 }
 
-function lowerTopLevelState(source: string): string {
-  const file = ts.createSourceFile("muse-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const declarations: Array<{ name: string; statement: string }> = []
-  const edits: Array<{ start: number; end: number; replacement: string }> = []
+interface TopLevelStateDeclaration {
+  readonly name?: string
+  readonly statement: ts.VariableStatement
+  readonly declaration: ts.VariableDeclaration
+  readonly initializer: ts.Expression
+  readonly eligible: boolean
+}
+
+interface MuseApiBindings {
+  readonly state: ReadonlySet<string>
+  readonly view: ReadonlySet<string>
+  readonly namespaces: ReadonlySet<string>
+  readonly blockedState: boolean
+  readonly blockedView: boolean
+}
+
+function isMusePackage(moduleName: string): boolean {
+  return moduleName === "muse" || moduleName.startsWith("@muse/")
+}
+
+function bindingNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text]
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.flatMap(element => ts.isOmittedExpression(element) ? [] : bindingNames(element.name))
+  }
+  return []
+}
+
+function museApiBindings(file: ts.SourceFile): MuseApiBindings {
+  const state = new Set<string>()
+  const view = new Set<string>()
+  const namespaces = new Set<string>()
+  let blockedState = false
+  let blockedView = false
+
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const muse = isMusePackage(statement.moduleSpecifier.text)
+      const clause = statement.importClause
+      if (clause?.name) {
+        if (!muse && clause.name.text === "State") blockedState = true
+        if (!muse && clause.name.text === "view") blockedView = true
+      }
+      const bindings = clause?.namedBindings
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        if (muse) namespaces.add(bindings.name.text)
+        continue
+      }
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const imported = element.propertyName?.text ?? element.name.text
+          const local = element.name.text
+          if (muse && imported === "State") state.add(local)
+          else if (!muse && local === "State") blockedState = true
+          if (muse && imported === "view") view.add(local)
+          else if (!muse && local === "view") blockedView = true
+        }
+      }
+      continue
+    }
+    const names: string[] = []
+    if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) names.push(statement.name.text)
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) names.push(...bindingNames(declaration.name))
+    }
+    if (names.includes("State")) blockedState = true
+    if (names.includes("view")) blockedView = true
+  }
+  return { state, view, namespaces, blockedState, blockedView }
+}
+
+function unwrapTsExpression(expression: ts.Expression): ts.Expression {
+  let current = expression
+  while (ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isSatisfiesExpression(current)) {
+    current = current.expression
+  }
+  return current
+}
+
+function isMuseApiCall(call: ts.CallExpression, api: "State" | "view", bindings: MuseApiBindings): boolean {
+  const expression = unwrapTsExpression(call.expression)
+  const named = api === "State" ? bindings.state : bindings.view
+  const blocked = api === "State" ? bindings.blockedState : bindings.blockedView
+  if (ts.isIdentifier(expression)) {
+    if (named.has(expression.text)) return true
+    // `.muse.ts` supports the canonical names without an explicit import; do
+    // not claim them when the file has provided an unrelated binding.
+    return expression.text === api && !blocked && named.size === 0
+  }
+  if (ts.isPropertyAccessExpression(expression)
+    && expression.name.text === api
+    && ts.isIdentifier(expression.expression)
+    && bindings.namespaces.has(expression.expression.text)) return true
+  return false
+}
+
+function collectTopLevelStates(file: ts.SourceFile, bindings: MuseApiBindings): TopLevelStateDeclaration[] {
+  const states: TopLevelStateDeclaration[] = []
   for (const statement of file.statements) {
     if (!ts.isVariableStatement(statement)) continue
-    const stateDeclarations = statement.declarationList.declarations.filter(declaration => {
-      if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !ts.isCallExpression(declaration.initializer)) return false
-      return ts.isIdentifier(declaration.initializer.expression) && declaration.initializer.expression.text === "State"
-    })
-    if (stateDeclarations.length === 0) continue
-    const keyword = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0 ? "let" : (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 ? "const" : "var"
-    for (const declaration of stateDeclarations) {
-      declarations.push({
-        name: (declaration.name as ts.Identifier).text,
-        statement: `${keyword} ${(declaration.name as ts.Identifier).text} = ${declaration.initializer!.getText(file)};`,
+    const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    const exported = statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false
+    for (const declaration of statement.declarationList.declarations) {
+      if (!declaration.initializer) continue
+      const initializer = unwrapTsExpression(declaration.initializer)
+      if (!ts.isCallExpression(initializer) || !isMuseApiCall(initializer, "State", bindings)) continue
+      states.push({
+        name: ts.isIdentifier(declaration.name) ? declaration.name.text : undefined,
+        statement,
+        declaration,
+        initializer: declaration.initializer,
+        eligible: isConst && !exported && ts.isIdentifier(declaration.name),
       })
     }
-    const preserved = statement.declarationList.declarations.filter(declaration => !stateDeclarations.includes(declaration))
+  }
+  return states
+}
+
+function isNonReferenceIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return true
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return true
+  if (ts.isMethodDeclaration(parent) && parent.name === node) return true
+  if (ts.isPropertyDeclaration(parent) && parent.name === node) return true
+  if (ts.isMethodSignature(parent) && parent.name === node) return true
+  if (ts.isPropertySignature(parent) && parent.name === node) return true
+  if (ts.isVariableDeclaration(parent) && parent.name === node) return true
+  if (ts.isParameter(parent) && parent.name === node) return true
+  if (ts.isBindingElement(parent) && parent.name === node) return true
+  if (ts.isFunctionDeclaration(parent) && parent.name === node) return true
+  if (ts.isClassDeclaration(parent) && parent.name === node) return true
+  if (ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent)) return true
+  return false
+}
+
+function directBlockBindings(node: ts.SourceFile | ts.Block): Set<string> {
+  const bindings = new Set<string>()
+  for (const statement of node.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        for (const name of bindingNames(declaration.name)) bindings.add(name)
+      }
+    } else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+      bindings.add(statement.name.text)
+    }
+  }
+  return bindings
+}
+
+function referencedStateNames(
+  root: ts.Node,
+  stateNames: ReadonlySet<string>,
+  skipped: ReadonlySet<ts.Node> = new Set(),
+): Set<string> {
+  const result = new Set<string>()
+  const visit = (node: ts.Node, shadowed: ReadonlySet<string>): void => {
+    if (skipped.has(node)) return
+    if (ts.isIdentifier(node) && stateNames.has(node.text) && !shadowed.has(node.text) && !isNonReferenceIdentifier(node)) result.add(node.text)
+
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) {
+      const local = new Set(shadowed)
+      for (const parameter of node.parameters) for (const name of bindingNames(parameter.name)) local.add(name)
+      if (ts.isFunctionDeclaration(node) && node.name) local.add(node.name.text)
+      if (node.body) visit(node.body, local)
+      return
+    }
+    if (ts.isBlock(node)) {
+      const local = new Set(shadowed)
+      for (const name of directBlockBindings(node)) local.add(name)
+      ts.forEachChild(node, child => visit(child, local))
+      return
+    }
+    if (ts.isCatchClause(node)) {
+      const local = new Set(shadowed)
+      if (node.variableDeclaration) for (const name of bindingNames(node.variableDeclaration.name)) local.add(name)
+      visit(node.block, local)
+      return
+    }
+    ts.forEachChild(node, child => visit(child, shadowed))
+  }
+  visit(root, new Set())
+  return result
+}
+
+function collectMuseViewCalls(file: ts.SourceFile, bindings: MuseApiBindings): ts.CallExpression[] {
+  const calls: ts.CallExpression[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && isMuseApiCall(node, "view", bindings)) {
+      calls.push(node)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return calls.sort((left, right) => left.getStart(file) - right.getStart(file))
+}
+
+function stateDependencies(state: TopLevelStateDeclaration, stateNames: ReadonlySet<string>): Set<string> {
+  return referencedStateNames(state.initializer, stateNames)
+}
+
+function transitiveStateClosure(
+  initial: Iterable<string>,
+  eligible: ReadonlySet<string>,
+  dependencies: ReadonlyMap<string, ReadonlySet<string>>,
+): Set<string> {
+  const result = new Set<string>()
+  const queue = [...initial]
+  while (queue.length > 0) {
+    const name = queue.pop()!
+    if (!eligible.has(name) || result.has(name)) continue
+    result.add(name)
+    for (const dependency of dependencies.get(name) ?? []) queue.push(dependency)
+  }
+  return result
+}
+
+function lowerTopLevelState(source: string): string {
+  const file = ts.createSourceFile("muse-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = museApiBindings(file)
+  const states = collectTopLevelStates(file, bindings)
+  const eligibleStates = states.filter((state): state is TopLevelStateDeclaration & { readonly name: string } => state.eligible && state.name !== undefined)
+  if (eligibleStates.length === 0) return source
+  const byName = new Map(eligibleStates.map(state => [state.name, state] as const))
+  const eligibleNames = new Set(byName.keys())
+  const allNames = new Set(states.flatMap(state => state.name ? [state.name] : []))
+  const dependencies = new Map<string, ReadonlySet<string>>()
+  for (const state of eligibleStates) dependencies.set(state.name, stateDependencies(state, allNames))
+
+  const views = collectMuseViewCalls(file, bindings)
+  if (views.length === 0) return source
+  const viewSet = new Set<ts.Node>(views)
+
+  // Any reference outside a Muse view keeps that State module-scoped. This
+  // includes helper functions and ineligible/exported/mutable State factories.
+  const directOutside = new Set<string>()
+  const stateDeclarations = new Set(states.map(state => state.declaration))
+  for (const statement of file.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (stateDeclarations.has(declaration)) {
+          const state = states.find(item => item.declaration === declaration)
+          if (state && !state.eligible) {
+            for (const dependency of referencedStateNames(state.initializer, allNames)) directOutside.add(dependency)
+          }
+          continue
+        }
+        if (declaration.initializer) for (const name of referencedStateNames(declaration.initializer, allNames, viewSet)) directOutside.add(name)
+      }
+      continue
+    }
+    for (const name of referencedStateNames(statement, allNames, viewSet)) directOutside.add(name)
+  }
+  const outside = transitiveStateClosure(directOutside, eligibleNames, dependencies)
+
+  const owners = new Map<string, Set<number>>()
+  const statesByView = new Map<number, TopLevelStateDeclaration[]>()
+  views.forEach((view, index) => {
+    const direct = referencedStateNames(view.arguments[0] ?? view, allNames)
+    const closure = transitiveStateClosure(direct, eligibleNames, dependencies)
+    for (const name of closure) {
+      const set = owners.get(name) ?? new Set<number>()
+      set.add(index)
+      owners.set(name, set)
+    }
+  })
+
+  for (const state of eligibleStates) {
+    const stateOwners = owners.get(state.name)
+    if (outside.has(state.name) || stateOwners?.size !== 1) continue
+    const owner = [...stateOwners][0]
+    const list = statesByView.get(owner) ?? []
+    list.push(state)
+    statesByView.set(owner, list)
+  }
+  if (statesByView.size === 0) return source
+
+  const hoisted = new Set([...statesByView.values()].flat().map(state => state.declaration))
+  const edits: Array<{ start: number; end: number; replacement: string }> = []
+
+  // Remove only declarations that were actually assigned to one View. Mixed
+  // declarations retain their non-State siblings.
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    const removed = statement.declarationList.declarations.filter(declaration => hoisted.has(declaration))
+    if (removed.length === 0) continue
+    const preserved = statement.declarationList.declarations.filter(declaration => !hoisted.has(declaration))
+    if (preserved.length === 0) {
+      edits.push({ start: statement.getStart(file), end: statement.end, replacement: "" })
+      continue
+    }
+    const keyword = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0 ? "let" : (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 ? "const" : "var"
     const prefix = source.slice(statement.getStart(file), statement.declarationList.getStart(file))
     const semicolon = source.slice(statement.getStart(file), statement.end).trimEnd().endsWith(";") ? ";" : ""
-    const replacement = preserved.length === 0
-      ? ""
-      : `${prefix}${keyword} ${preserved.map(declaration => declaration.getText(file)).join(", ")}${semicolon}`
-    edits.push({ start: statement.getStart(file), end: statement.end, replacement })
+    edits.push({
+      start: statement.getStart(file),
+      end: statement.end,
+      replacement: `${prefix}${keyword} ${preserved.map(declaration => declaration.getText(file)).join(", ")}${semicolon}`,
+    })
   }
-  if (declarations.length === 0) return source
-  let stripped = source
-  for (const edit of [...edits].sort((left, right) => right.start - left.start)) {
-    stripped = stripped.slice(0, edit.start) + edit.replacement + stripped.slice(edit.end)
+
+  for (const [viewIndex, ownedStates] of statesByView) {
+    const call = views[viewIndex]
+    const argument = call.arguments[0]
+    if (!argument || call.arguments.length !== 1) continue
+    const callee = call.expression.getText(file)
+    const body = argument.getText(file)
+    const unwrapped = unwrapTsExpression(argument)
+    const functionBody = ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)
+    const hasProps = functionBody && unwrapped.parameters.length > 0
+    const names = ownedStates.map(state => state.name!)
+    const declarations = ownedStates
+      .sort((left, right) => left.declaration.getStart(file) - right.declaration.getStart(file))
+      .map(state => `const ${state.name} = ${state.initializer.getText(file)};`)
+      .join(" ")
+    const renderedBody = functionBody ? `((${body})(${hasProps ? "props" : ""}))` : `(${body})`
+    const bodyParameters = hasProps ? `({ ${names.join(", ")} }, props)` : `({ ${names.join(", ")} })`
+    const replacement = `${callee}({ state: () => { ${declarations} return { ${names.join(", ")} } }, body: ${bodyParameters} => ${renderedBody} })`
+    edits.push({ start: call.getStart(file), end: call.end, replacement })
   }
-  const viewIndex = stripped.search(/\bview\s*\(/)
-  if (viewIndex < 0) return source
-  const open = stripped.indexOf("(", viewIndex)
-  const close = matching(stripped, open, "(", ")")
-  const argument = stripped.slice(open + 1, close).trim()
-  const arrow = /^\(\s*\)\s*=>\s*([\s\S]*)$/.exec(argument)
-  if (!arrow) return source
-  const stateSource = declarations.map(declaration => declaration.statement).join(" ")
-  const names = declarations.map(declaration => declaration.name)
-  const replacement = `view({ state: () => { ${stateSource} return { ${names.join(", ")} } }, body: ({ ${names.join(", ")} }) => ${arrow[1]} })`
-  return stripped.slice(0, viewIndex) + replacement + stripped.slice(close + 1)
+
+  let result = source
+  for (const edit of edits.sort((left, right) => right.start - left.start)) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+  return result
 }
 
 function ensureImports(source: string): string {
@@ -927,19 +1183,20 @@ function lowerNamedMuseCalls(source: string, registry: InitializerSymbolRegistry
   let iterations = 0
   while (true) {
     if (++iterations > output.length + 1) throw syntaxError("Muse named-argument lowering did not advance", output.length)
-    const calls = [...output.matchAll(/\b[A-Z][A-Za-z0-9_$]*\s*\(/g)]
+    const calls = [...output.matchAll(/\b(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*\s*\(/g)]
     let replacement: { start: number; end: number; value: string } | undefined
     for (const match of calls.reverse()) {
       const start = match.index ?? 0
-      const name = /^[A-Z][A-Za-z0-9_$]*/.exec(match[0])?.[0]
-      if (!name) continue
+      const callee = /^(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*/.exec(match[0])?.[0]
+      if (!callee) continue
+      const name = callee.split(".").at(-1)!
       const preceding = output.slice(0, start).trimEnd()
       if (/\b(?:function|class|interface|type|new)$/.test(preceding) || preceding.endsWith(".")) continue
-      const open = output.indexOf("(", start + name.length)
+      const open = output.indexOf("(", start + callee.length)
       const close = matching(output, open, "(", ")")
       const argumentSource = output.slice(open + 1, close)
       if (!splitTopLevel(argumentSource).some(argument => topLevelColon(argument) >= 0)) continue
-      replacement = { start, end: close + 1, value: `${name}(${lowerArguments(argumentSource, name, registry)})` }
+      replacement = { start, end: close + 1, value: `${callee}(${lowerArguments(argumentSource, name, registry)})` }
       break
     }
     if (!replacement) return output
@@ -1006,7 +1263,13 @@ export function transformMuseSource(source: string, fileName = "muse-source.ts")
   for (const declaration of declarations) {
     validateKnownCalls(parseMuseBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
   }
-  const lowered = lowerRange(lowerNamedMuseCalls(lowerStructs(lowerTopLevelState(withVueImports), registry), registry), registry)
+  const withStructs = lowerStructs(withVueImports, registry)
+  const withNamedArguments = lowerNamedMuseCalls(withStructs, registry)
+  const withBuilderSyntax = lowerRange(withNamedArguments, registry)
+  // State ownership is resolved only after Muse-only syntax has become valid
+  // TypeScript. This lets the TypeScript AST see complete view() arguments
+  // instead of truncating them at trailing builder blocks.
+  const lowered = lowerTopLevelState(withBuilderSyntax)
   const withStaticStructCalls = lowerStaticStructCalls(lowered, declarations)
   const withStaticModifiers = lowerStaticModifierChains(withStaticStructCalls, fileName)
   return ensureImports(lowerStaticImportedCalls(withStaticModifiers, fileName))

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "Vite integration for the Muse compiler.",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -18,5 +20,6 @@
   },
   "dependencies": {
     "@muse/compiler": "workspace:*"
-  }
+  },
+  "sideEffects": false
 }

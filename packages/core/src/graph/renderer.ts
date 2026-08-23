@@ -1,9 +1,41 @@
-import { keyedViewIdentity, type ViewIdentity } from "../identity.js"
+import { keyedViewIdentity, viewTypeIdentity, type ViewIdentity } from "../identity.js"
 import { isForeignComponent, isViewNode } from "./nodes.js"
 import { zeroGeometry } from "./environment.js"
 import type { GeometryProxy, LazyViewRange, MuseRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
 
 export type { MuseRenderer }
+
+/** Collect View host identities already present in a graph without evaluating View bodies. */
+export function collectLogicalViewIdentities(value: ViewGraphValue, identity: ViewIdentity = ["root"]): ViewIdentity[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectLogicalViewIdentities(item, [...identity, "array", index]))
+  }
+  if (!isViewNode(value)) return []
+  switch (value.kind) {
+    case "element": {
+      const foreign = isForeignComponent(value.type) ? value.type : undefined
+      const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...elementIdentity, "element", index]))
+    }
+    case "fragment":
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...identity, "fragment", index]))
+    case "modified": {
+      let contentIdentity = identity
+      for (const item of value.modifiers) {
+        if (item.name === "keyed") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
+      }
+      return collectLogicalViewIdentities(value.content, contentIdentity)
+    }
+    case "view": {
+      const typeIdentity = viewTypeIdentity(value.host, value.name)
+      return [[...identity, "view-type", typeIdentity, "view", value.name]]
+    }
+    case "geometry":
+      return []
+    case "lazy":
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...identity, "lazy", index]))
+  }
+}
 
 export function renderViewNode<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>): Output {
   return renderViewNodeAt(value, renderer, ["root"])
@@ -11,7 +43,15 @@ export function renderViewNode<Output>(value: ViewGraphValue, renderer: MuseRend
 
 function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>, identity: ViewIdentity): Output {
   if (Array.isArray(value)) return renderer.fragment(value.map((item, index) => renderViewNodeAt(item, renderer, [...identity, "array", index])))
-  if (!isViewNode(value)) return renderer.value ? renderer.value(value) : value as Output
+  if (!isViewNode(value)) {
+    if (value === null || value === undefined || typeof value === "boolean") {
+      return renderer.value ? renderer.value(null) : null as Output
+    }
+    if (typeof value === "object") {
+      throw new TypeError("Muse View graph leaves must be renderable primitives or View nodes; wrap renderer-specific values in an explicit adapter.")
+    }
+    return renderer.value ? renderer.value(value) : value as Output
+  }
   switch (value.kind) {
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
@@ -30,11 +70,8 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<
       return rendered
     }
     case "view": {
-      const definitionName = typeof value.host === "object" && value.host !== null
-        ? (value.host as { definition?: { name?: unknown } }).definition?.name
-        : undefined
-      const typeIdentity = typeof definitionName === "string" && definitionName.length > 0 ? definitionName : value.name
-      const viewIdentity: ViewIdentity = [...identity, "view", typeIdentity]
+      const typeIdentity = viewTypeIdentity(value.host, value.name)
+      const viewIdentity: ViewIdentity = [...identity, "view-type", typeIdentity, "view", value.name]
       const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeAt(value.render(props), renderer, [...viewIdentity, "body"])
       if (renderer.view) return renderer.view(value, renderWithProps, viewIdentity)
       const state = value.state?.(value.props) ?? {}
