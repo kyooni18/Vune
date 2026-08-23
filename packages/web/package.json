@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/web",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "DOM and HTML renderers for the renderer-independent Vune core.",
   "type": "module",
   "files": [

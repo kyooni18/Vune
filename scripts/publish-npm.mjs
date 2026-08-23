@@ -70,6 +70,7 @@ function parseArgs() {
   const args = process.argv.slice(2)
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
+    if (arg === '--') continue
     if (arg === '--patch' || arg === '--minor' || arg === '--major') {
       const bump = arg.slice(2)
       if (options.bump || options.version) fail('Use only one of --patch, --minor, --major, or --version.')

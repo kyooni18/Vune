@@ -56,6 +56,12 @@ test('prerelease plan defaults to next dist-tag', () => {
   assert.match(result.stdout, /Tag\s+: next/u)
 })
 
+test('release helper accepts pnpm argument separators', () => {
+  const result = run(['--', '--plan'])
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Vune npm release plan/u)
+})
+
 test('release helper rejects conflicting version bump options', () => {
   const result = run(['--patch', '--minor', '--plan'])
   assert.notEqual(result.status, 0)
