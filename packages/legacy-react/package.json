@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/legacy-react",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Legacy React and compiler compatibility layer for Vune.",
   "type": "module",
   "files": [

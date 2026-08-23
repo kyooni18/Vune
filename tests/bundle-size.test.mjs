@@ -9,7 +9,10 @@ const packageBudgets = {
   "packages/core/dist/index.js": 512,
   "dist/index.js": 512,
   "packages/react/dist/index.js": 1024,
-  "packages/vue/dist/index.js": 16 * 1024,
+  // Vue's renderer now carries the shared animation transaction bridge. Keep
+  // this budget explicit while leaving the smaller renderer entry-point caps
+  // unchanged.
+  "packages/vue/dist/index.js": 20 * 1024,
   "packages/web/dist/index.js": 512,
   "packages/compiler/dist/index.js": 64 * 1024,
 }
