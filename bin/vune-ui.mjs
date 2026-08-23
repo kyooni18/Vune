@@ -89,7 +89,9 @@ function writeTemplates(projectRoot, files) {
   for (const [source, destination] of files) {
     const target = resolve(projectRoot, destination)
     mkdirSync(dirname(target), { recursive: true })
-    writeFileSync(target, template(source).replaceAll('__VUNE_PROJECT_NAME__', projectName(projectRoot)))
+    writeFileSync(target, template(source)
+      .replaceAll('__VUNE_PROJECT_NAME__', projectName(projectRoot))
+      .replaceAll('__VUNE_PROJECT_APP_NAME__', projectAppName(projectRoot)))
   }
 }
 
@@ -99,6 +101,12 @@ function projectName(projectRoot) {
     .replace(/[^a-z0-9._-]+/gu, '-')
     .replace(/^[._-]+|[._-]+$/gu, '')
   return name || 'vune-ui-app'
+}
+
+function projectAppName(projectRoot) {
+  const words = projectName(projectRoot).split(/[-._]+/u).filter(Boolean)
+  const name = words.map(word => `${word[0].toUpperCase()}${word.slice(1)}`).join('')
+  return /^[A-Za-z_$]/u.test(name) ? `${name}App` : `Vune${name}App`
 }
 
 function detectPackageManager(projectRoot) {

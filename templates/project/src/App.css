@@ -1,32 +1,6 @@
-.card {
-  width: min(100% - 32px, 560px);
+#root {
+  display: grid;
   min-height: 100vh;
-  margin: 0 auto;
-  justify-content: center;
-}
-
-.title {
-  color: #172033;
-  font-size: 36px;
-  font-weight: 750;
-  letter-spacing: -0.05em;
-}
-
-.description,
-.count {
-  color: #63708a;
-}
-
-.button {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 10px;
-  background: #315efb;
-  color: white;
-  cursor: pointer;
-}
-
-.button:hover {
-  background: #244bd3;
+  place-items: center;
+  padding: 24px;
 }

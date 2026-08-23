@@ -14,6 +14,7 @@ test("migrated layout primitives keep the graph-first contract", () => {
   assert.equal(value.kind, "modified")
   const html = renderToStaticMarkup(renderReact(value))
   assert.match(html, /data-vune="HStack"/)
+  assert.match(html, /justify-content:center/)
   assert.match(html, /flex-grow:1/)
   assert.match(html, /padding:8px/)
 })

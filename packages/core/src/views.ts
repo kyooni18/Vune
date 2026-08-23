@@ -136,6 +136,7 @@ export const HStack = defineBuiltinView<HStackProps>(
       flexDirection: "row",
       width: "100%",
       boxSizing: "border-box",
+      justifyContent: "center",
       alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
       gap: layoutLength(options.spacing),
     },
