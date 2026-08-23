@@ -6,3 +6,10 @@ allowBuilds:
   '@parcel/watcher': false
 minimumReleaseAgeExclude:
   - sass@1.103.1
+  - '@vune-ui/compiler@0.1.1'
+  - '@vune-ui/core@0.1.1'
+  - '@vune-ui/legacy-react@0.1.1'
+  - '@vune-ui/react@0.1.1'
+  - '@vune-ui/vite@0.1.1'
+  - '@vune-ui/vue@0.1.1'
+  - '@vune-ui/web@0.1.1'
