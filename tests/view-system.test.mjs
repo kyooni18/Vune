@@ -42,7 +42,7 @@ import {
   viewElement,
   isViewNode,
   viewNodeOf,
-} from '../dist/index.js'
+} from '../dist/legacy.js'
 import { createVuneLanguageService, createVuneTypeScriptLanguageService, diagnoseVuneSource, formatVuneSource, lowerVuneBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseVuneBuilder, parseVuneStructs, transformVuneBuilderSyntax, transformVuneStructSyntax } from '../dist/compiler/index.js'
 import {
   Action as CoreAction,
@@ -77,7 +77,7 @@ test('struct syntax lowers to initializer metadata, a body, and instance State',
   assert.doesNotMatch(output, /\bstruct\b/)
 })
 
-test('struct lowering merges runtime imports instead of shadowing consumer imports', () => {
+test('legacy struct lowering keeps canonical imports separate from compatibility runtime helpers', () => {
   const output = transformVuneStructSyntax(`
     import { Binding, Text } from 'vune-ui'
     struct Counter: View {
@@ -85,11 +85,14 @@ test('struct lowering merges runtime imports instead of shadowing consumer impor
       var body: some View { Toggle("Count", isOn: $count) }
     }
   `)
-  const imports = output.match(/import \{[^}]+\} from 'vune-ui'/g) ?? []
-  assert.equal(imports.length, 1)
-  assert.match(imports[0], /Binding/)
-  assert.match(imports[0], /State/)
-  assert.match(imports[0], /defineView/)
+  const canonicalImports = output.match(/import \{[^}]+\} from 'vune-ui'/g) ?? []
+  const legacyImports = output.match(/import \{[^}]+\} from 'vune-ui\/legacy'/g) ?? []
+  assert.equal(canonicalImports.length, 1)
+  assert.match(canonicalImports[0], /Binding/)
+  assert.match(canonicalImports[0], /Text/)
+  assert.equal(legacyImports.length, 1)
+  assert.match(legacyImports[0], /State/)
+  assert.match(legacyImports[0], /defineView/)
 })
 
 test('struct @Binding fields lower to writable View inputs without React hook syntax', () => {

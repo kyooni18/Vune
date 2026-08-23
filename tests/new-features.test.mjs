@@ -10,7 +10,7 @@ import {
   styled,
   Text,
   VStack,
-} from '../dist/index.js'
+} from '../dist/legacy.js'
 import {
   createVuneSwcVisitor,
   createVuneVitePlugin,

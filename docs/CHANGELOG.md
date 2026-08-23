@@ -2,6 +2,9 @@
 
 ## Next alpha
 
+- Added a pnpm 11-native local-development workflow for completely separate projects: `dev:link`, local scaffolding, workspace-file overrides, direct bundler plumbing links, watch mode, portable local tarballs, and `create-vune-ui` release verification.
+- Made the canonical `vune-ui` package renderer-independent at install time: React and the React renderer are optional compatibility peers instead of mandatory dependencies; React, Vue, and Web source-linked consumers now all pass standalone Vite production builds.
+- Removed stale local archives and `.pi`/AppleDouble metadata from source, switched every monorepo-internal dependency to `workspace:*`, and isolated legacy React regression tests under the explicit compatibility entry point.
 - Hardened canonical Vune parsing/lowering against ordinary TypeScript methods, generators, generics, regex literals, multiline State, qualified View calls, statement-bearing ViewBuilders, and raw-HTML/entity edge cases.
 - Made top-level State ownership binding-aware and scope-aware; shared/exported/mutable State remains module-scoped and emits `VUNE_STATE_SCOPE` warnings in compiler and VS Code diagnostics.
 - Unified concrete View identity and typed `ForEach` keys across React, Vue, and Web, including same-display-name remounts and lazy offscreen State preservation.

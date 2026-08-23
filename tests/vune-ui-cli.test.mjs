@@ -66,3 +66,102 @@ test('create-vune-ui accepts the npm/pnpm create directory shape', () => {
   assert.equal(existsSync(resolve(project, 'src/App.tsx')), true)
   assert.equal(JSON.parse(readFileSync(resolve(project, 'package.json'), 'utf8')).name, project.split('/').pop().toLowerCase())
 })
+
+test('local create mode wires a separate app to the source checkout without npm publication', () => {
+  const workspace = mkdtempSync(resolve(tmpdir(), 'vune-ui-local-create-'))
+  const result = run(['create', 'linked-app', '--local', '--no-install'], workspace)
+  const project = resolve(workspace, 'linked-app')
+
+  assert.equal(result.status, 0, result.stderr)
+  const manifest = JSON.parse(readFileSync(resolve(project, 'package.json'), 'utf8'))
+  assert.match(manifest.dependencies['vune-ui'], /^link:/u)
+  assert.match(manifest.dependencies['@vune-ui/react'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/vite'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/core'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/compiler'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/legacy-react'], /^link:/u)
+  assert.equal(manifest.pnpm?.overrides, undefined)
+  const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
+  assert.match(workspaceConfig, /"@vune-ui\/core": "link:/u)
+  assert.match(workspaceConfig, /"@vune-ui\/compiler": "link:/u)
+  assert.match(workspaceConfig, /"@vune-ui\/legacy-react": "link:/u)
+  assert.doesNotMatch(JSON.stringify(manifest), /Desktop\/Muse|@muse\/|react-muse-ui/u)
+})
+
+test('vune-ui link upgrades an existing project to robust local source links', () => {
+  const project = mkdtempSync(resolve(tmpdir(), 'vune-ui-link-'))
+  writeFileSync(resolve(project, 'package.json'), JSON.stringify({
+    name: 'consumer',
+    private: true,
+    dependencies: { react: '^19.0.0' },
+  }, null, 2))
+
+  const result = run(['link', project, '--no-install'], root)
+  assert.equal(result.status, 0, result.stderr)
+  const manifest = JSON.parse(readFileSync(resolve(project, 'package.json'), 'utf8'))
+  assert.equal(manifest.dependencies.react, '^19.0.0')
+  assert.match(manifest.dependencies['vune-ui'], /^link:/u)
+  assert.match(manifest.dependencies['@vune-ui/react'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/vite'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/core'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/compiler'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/legacy-react'], /^link:/u)
+  assert.equal(manifest.pnpm?.overrides, undefined)
+  const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
+  for (const name of [
+    'vune-ui',
+    '@vune-ui/core',
+    '@vune-ui/compiler',
+    '@vune-ui/legacy-react',
+    '@vune-ui/react',
+    '@vune-ui/vue',
+    '@vune-ui/web',
+    '@vune-ui/vite',
+  ]) assert.match(workspaceConfig, new RegExp(`${name.replace('/', '\\/').replace('@', '\\@')}\\": \"link:`), name)
+})
+
+test('vune-ui link can select Vue or Web without forcing React renderer dependencies', () => {
+  for (const renderer of ['vue', 'web']) {
+    const project = mkdtempSync(resolve(tmpdir(), `vune-ui-link-${renderer}-`))
+    writeFileSync(resolve(project, 'package.json'), JSON.stringify({ name: `consumer-${renderer}`, private: true }, null, 2))
+    const result = run(['link', project, '--renderer', renderer, '--no-install'], root)
+    assert.equal(result.status, 0, result.stderr)
+    const manifest = JSON.parse(readFileSync(resolve(project, 'package.json'), 'utf8'))
+    assert.match(manifest.dependencies[`@vune-ui/${renderer}`], /^link:/u)
+    assert.equal(manifest.dependencies['@vune-ui/react'], undefined)
+  }
+})
+
+
+test('vune-ui link merges pnpm 11 workspace overrides without destroying existing settings', () => {
+  const project = mkdtempSync(resolve(tmpdir(), 'vune-ui-link-workspace-'))
+  writeFileSync(resolve(project, 'package.json'), JSON.stringify({ name: 'workspace-consumer', private: true }, null, 2))
+  writeFileSync(resolve(project, 'pnpm-workspace.yaml'), `packages:
+  - packages/*
+
+overrides:
+  "left-pad": "1.3.0"
+
+onlyBuiltDependencies:
+  - esbuild
+`)
+
+  const result = run(['link', project, '--no-install'], root)
+  assert.equal(result.status, 0, result.stderr)
+  const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
+  assert.match(workspaceConfig, /packages:\n  - packages\/\*/u)
+  assert.match(workspaceConfig, /"left-pad": "1\.3\.0"/u)
+  assert.match(workspaceConfig, /"@vune-ui\/compiler": "link:/u)
+  assert.match(workspaceConfig, /onlyBuiltDependencies:\n  - esbuild/u)
+})
+
+test('local source mode refuses package managers that do not support the pnpm workspace override contract', () => {
+  const project = mkdtempSync(resolve(tmpdir(), 'vune-ui-link-non-pnpm-'))
+  writeFileSync(resolve(project, 'package.json'), JSON.stringify({ name: 'consumer-npm', private: true }, null, 2))
+  const before = readFileSync(resolve(project, 'package.json'), 'utf8')
+  const result = run(['link', project, '--pm', 'npm', '--no-install'], root)
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /requires pnpm/u)
+  assert.equal(readFileSync(resolve(project, 'package.json'), 'utf8'), before)
+  assert.equal(existsSync(resolve(project, 'pnpm-workspace.yaml')), false)
+})

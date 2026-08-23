@@ -15,7 +15,7 @@ import {
   TextField,
   VStack,
   view,
-} from '../dist/index.js'
+} from '../dist/legacy.js'
 import { GeometryReader, Text as CanonicalText, render as canonicalRender, view as canonicalView } from '../packages/react/dist/index.js'
 import { ForEach, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
 

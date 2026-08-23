@@ -8,9 +8,10 @@ const root = resolve(new URL("..", import.meta.url).pathname)
 const canonicalPackages = ["core", "compiler", "react", "vue", "web", "vite"]
 const compatibilityPackages = ["legacy-react"]
 const releaseTargets = [
-  { dir: root, canonical: false },
-  ...canonicalPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: true })),
-  ...compatibilityPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: false })),
+  { dir: root, canonical: false, publishPrefix: "dist/", requireExports: true },
+  ...canonicalPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: true, publishPrefix: "dist/", requireExports: true })),
+  ...compatibilityPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: false, publishPrefix: "dist/", requireExports: true })),
+  { dir: resolve(root, "packages", "create-vune-ui"), canonical: false, publishPrefix: "bin/", requireExports: false },
 ]
 const packDir = mkdtempSync(resolve(tmpdir(), "vune-release-pack-"))
 const packedTarballs = new Map()
@@ -36,7 +37,7 @@ function exportTargets(exportsValue, output = []) {
 
 function walk(dir, output = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if ([".git", "node_modules"].includes(entry.name)) continue
+    if ([".git", ".pi", "node_modules", "local-packages"].includes(entry.name)) continue
     const path = resolve(dir, entry.name)
     if (entry.isDirectory()) walk(path, output)
     else output.push(path)
@@ -53,8 +54,9 @@ for (const target of releaseTargets) {
   const manifestPath = resolve(dir, "package.json")
   const manifest = readJSON(manifestPath)
   assert.equal(manifest.type, "module", `${manifest.name} must publish ESM`)
-  assert.ok(Array.isArray(manifest.files) && manifest.files.includes("dist"), `${manifest.name} must publish dist/`)
-  assert.ok(manifest.exports?.["."], `${manifest.name} must expose its root through exports`)
+  assert.ok(Array.isArray(manifest.files), `${manifest.name} must declare published files`)
+  assert.ok(manifest.files.some(value => target.publishPrefix.startsWith(`${value.replace(/\/$/u, "")}/`) || `${value.replace(/\/$/u, "")}/`.startsWith(target.publishPrefix)), `${manifest.name} must publish ${target.publishPrefix}`)
+  if (target.requireExports) assert.ok(manifest.exports?.["."], `${manifest.name} must expose its root through exports`)
 
   if (target.canonical) {
     assert.equal(manifest.sideEffects, false, `${manifest.name} must be declared tree-shakeable`)
@@ -63,9 +65,9 @@ for (const target of releaseTargets) {
   const targets = new Set(exportTargets(manifest.exports))
   if (manifest.main) targets.add(manifest.main)
   if (manifest.types) targets.add(manifest.types)
-  for (const target of targets) {
-    if (!target.startsWith("./")) continue
-    assert.ok(existsSync(resolve(dir, target.slice(2))), `${manifest.name} export target is missing: ${target}`)
+  for (const exportTarget of targets) {
+    if (!exportTarget.startsWith("./")) continue
+    assert.ok(existsSync(resolve(dir, exportTarget.slice(2))), `${manifest.name} export target is missing: ${exportTarget}`)
   }
 
   const packed = spawnSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json", dir], {
@@ -79,12 +81,13 @@ for (const target of releaseTargets) {
   assert.equal(report.version, manifest.version)
   const files = new Set(report.files.map(file => file.path))
   assert.ok(files.has("package.json"), `${manifest.name} pack must contain package.json`)
-  assert.ok([...files].some(file => file.startsWith("dist/")), `${manifest.name} pack must contain dist/`)
-  assert.equal([...files].some(file => file.startsWith("src/") || file.startsWith("tests/") || file.includes("._")), false, `${manifest.name} pack leaked source/test/AppleDouble files`)
-  for (const target of targets) {
-    if (!target.startsWith("./")) continue
-    assert.ok(files.has(target.slice(2)), `${manifest.name} packed archive is missing exported file ${target}`)
+  assert.ok([...files].some(file => file.startsWith(target.publishPrefix)), `${manifest.name} pack must contain ${target.publishPrefix}`)
+  assert.equal([...files].some(file => file.startsWith("src/") || file.startsWith("tests/") || file.includes("._") || file.startsWith(".pi/")), false, `${manifest.name} pack leaked source/test/metadata files`)
+  for (const exportTarget of targets) {
+    if (!exportTarget.startsWith("./")) continue
+    assert.ok(files.has(exportTarget.slice(2)), `${manifest.name} packed archive is missing exported file ${exportTarget}`)
   }
+
   const before = new Set(readdirSync(packDir))
   const pnpmPack = pnpmCommand(["pack", "--pack-destination", packDir], dir)
   assert.equal(pnpmPack.status, 0, `${manifest.name} pnpm pack failed:\n${pnpmPack.stdout}\n${pnpmPack.stderr}`)
@@ -98,8 +101,40 @@ for (const target of releaseTargets) {
   assert.equal(packedManifest.name, manifest.name)
   assert.equal(packedManifest.version, manifest.version)
   assert.doesNotMatch(JSON.stringify(packedManifest), /workspace:/, `${manifest.name} published manifest leaked a workspace: dependency`)
+  if (manifest.name === 'vune-ui') {
+    assert.equal(packedManifest.dependencies?.['@vune-ui/react'], undefined, 'canonical vune-ui must not install a renderer')
+    assert.equal(packedManifest.peerDependencies?.['@vune-ui/react'], manifest.version)
+    assert.equal(packedManifest.peerDependenciesMeta?.['@vune-ui/react']?.optional, true)
+    assert.equal(packedManifest.peerDependenciesMeta?.react?.optional, true)
+    assert.equal(packedManifest.peerDependenciesMeta?.['react-dom']?.optional, true)
+  }
 
   console.log(`${manifest.name}@${manifest.version}: ${files.size} files, ${(report.unpackedSize / 1024).toFixed(1)} KiB unpacked`)
+}
+
+const canonicalOnlyDir = mkdtempSync(resolve(tmpdir(), "vune-canonical-only-"))
+try {
+  writeFileSync(resolve(canonicalOnlyDir, "package.json"), JSON.stringify({
+    private: true,
+    type: "module",
+    dependencies: {
+      "vune-ui": `file:${packedTarballs.get("vune-ui")}`,
+      "@vune-ui/core": `file:${packedTarballs.get("@vune-ui/core")}`,
+    },
+  }, null, 2))
+  const install = spawnSync("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: canonicalOnlyDir, encoding: "utf8" })
+  assert.equal(install.status, 0, `canonical-only packed install failed:\n${install.stdout}\n${install.stderr}`)
+  assert.equal(existsSync(resolve(canonicalOnlyDir, "node_modules/react")), false, "canonical vune-ui unexpectedly installed React")
+  assert.equal(existsSync(resolve(canonicalOnlyDir, "node_modules/@vune-ui/react")), false, "canonical vune-ui unexpectedly installed the React renderer")
+  const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import { Text } from "vune-ui";
+    const value = Text("renderer-independent");
+    if (!value || typeof value !== "object") throw new Error("canonical renderer-independent import failed");
+  `], { cwd: canonicalOnlyDir, encoding: "utf8" })
+  assert.equal(smoke.status, 0, `canonical-only smoke test failed:\n${smoke.stdout}\n${smoke.stderr}`)
+  console.log("Canonical vune-ui installs without React or a renderer")
+} finally {
+  rmSync(canonicalOnlyDir, { recursive: true, force: true })
 }
 
 const installDir = mkdtempSync(resolve(tmpdir(), "vune-clean-install-"))
@@ -110,6 +145,7 @@ try {
     type: "module",
     dependencies: {
       "vune-ui": dependency("vune-ui"),
+      "create-vune-ui": dependency("create-vune-ui"),
       "@vune-ui/core": dependency("@vune-ui/core"),
       "@vune-ui/compiler": dependency("@vune-ui/compiler"),
       "@vune-ui/legacy-react": dependency("@vune-ui/legacy-react"),
@@ -144,7 +180,16 @@ try {
     if (vunePlugin().name !== "vune-compiler") throw new Error("packed Vite plugin failed");
   `], { cwd: installDir, encoding: "utf8" })
   assert.equal(smoke.status, 0, `clean packed smoke test failed:\n${smoke.stdout}\n${smoke.stderr}`)
-  console.log("Clean offline install smoke test passed (root/core/compiler/legacy/react/vue/web/vite/vune)")
+
+  const generated = resolve(installDir, "generated-app")
+  const initializer = resolve(installDir, "node_modules/create-vune-ui/bin/create-vune-ui.mjs")
+  const scaffold = spawnSync(process.execPath, [initializer, generated, "--no-install"], { cwd: installDir, encoding: "utf8" })
+  assert.equal(scaffold.status, 0, `packed create-vune-ui smoke test failed:\n${scaffold.stdout}\n${scaffold.stderr}`)
+  const generatedManifest = readJSON(resolve(generated, "package.json"))
+  assert.equal(generatedManifest.dependencies["vune-ui"], "^0.1.1")
+  assert.equal(generatedManifest.dependencies["@vune-ui/react"], "^0.1.1")
+  assert.equal(generatedManifest.devDependencies["@vune-ui/vite"], "^0.1.1")
+  console.log("Clean offline install and create-vune-ui smoke tests passed")
 } finally {
   rmSync(installDir, { recursive: true, force: true })
   rmSync(packDir, { recursive: true, force: true })

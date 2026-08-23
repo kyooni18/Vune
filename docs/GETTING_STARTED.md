@@ -8,58 +8,61 @@ rendered by `@vune-ui/vue` or `@vune-ui/web`.
 ## Requirements
 
 - Node.js `20.19` or newer
-- React `18` or `19`
+- React `18` or `19` when using the React renderer
 - TypeScript when writing `.ts` or `.tsx` source
 
 ## Create a project
 
-The recommended path creates the app and configures the complete canonical
-toolchain in one command:
+While Vune is being developed locally, use the source checkout rather than an
+npm package name:
 
 ```bash
-pnpm dlx vune-ui create my-vune-app
-cd my-vune-app
+cd ~/Code/Web/React/Vune
+pnpm install
+pnpm build
+pnpm dev:create ~/Code/Web/React/my-vune-app
+cd ~/Code/Web/React/my-vune-app
 pnpm dev
 ```
 
-You can also use the familiar npm initializer form:
+To connect an existing React/Vite app instead:
+
+```bash
+cd ~/Code/Web/React/Vune
+pnpm dev:link ~/Code/Web/React/my-existing-app
+pnpm dev:watch
+```
+
+`dev:link` adds pnpm 11 `pnpm-workspace.yaml` overrides for every internal Vune package, so dependencies
+such as `@vune-ui/compiler` never fall back to npm while they are unpublished.
+See [Local development](LOCAL_DEVELOPMENT.md) for React, Vue, Web, watch mode,
+and tarball workflows.
+
+After Vune is published, the standard initializer becomes:
 
 ```bash
 pnpm create vune-ui my-vune-app
 # or: npm create vune-ui my-vune-app
 ```
 
-To scaffold the current empty directory, use `.`:
-
-```bash
-pnpm create vune-ui .
-```
-
-Use `vune-ui create my-vune-app --no-install` to generate files without running a
-package-manager install. The generated app uses `vune-ui`, `@vune-ui/react`, and
-`@vune-ui/vite`; it does not require the `vune-ui/legacy` compatibility entry point.
-
-For a local checkout:
-
-```bash
-node ../vune-ui/bin/vune-ui.mjs create my-vune-app
-```
+Use `--no-install` when you want to inspect generated files before installing.
 
 ## Install Vune manually
 
-In an existing React application:
+After publication, an existing React application can use:
 
 ```bash
-pnpm add vune-ui @vune-ui/react @vune-ui/vite react react-dom
-pnpm add -D @vitejs/plugin-react
+pnpm add vune-ui @vune-ui/react
+pnpm add -D @vune-ui/vite @vitejs/plugin-react
 ```
 
-When working from a local Vune checkout:
+For a local checkout, do not use a plain `pnpm add ../Vune/...` chain; internal
+transitive packages can otherwise fall through to the registry. Use the
+supported linker instead:
 
 ```bash
-pnpm add ../vune-ui ../vune-ui/packages/react ../vune-ui/packages/vite
-pnpm add react react-dom
-pnpm add -D @vitejs/plugin-react
+cd /path/to/Vune
+pnpm dev:link /path/to/application
 ```
 
 ## Initialize an existing directory

@@ -12,7 +12,7 @@ import {
   Text,
   VStack,
   view,
-} from '../dist/index.js'
+} from '../dist/legacy.js'
 import { subscribeState } from '../dist/state.js'
 
 function Badge({ label }) {

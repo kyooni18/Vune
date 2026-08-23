@@ -9,17 +9,8 @@ importers:
   .:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
-      '@vune-ui/react':
-        specifier: ^0.1.1
-        version: 0.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@vune-ui/vue':
-        specifier: ^0.1.1
-        version: 0.1.1(vue@3.5.41(typescript@5.9.3))
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
+        specifier: workspace:*
+        version: link:packages/core
     devDependencies:
       '@playwright/test':
         specifier: ^1.52.0
@@ -42,12 +33,15 @@ importers:
       '@vue/server-renderer':
         specifier: ^3.5.0
         version: 3.5.41
+      '@vune-ui/react':
+        specifier: workspace:*
+        version: link:packages/react
       '@vune-ui/vite':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:packages/vite
       '@vune-ui/web':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:packages/web
       autoprefixer:
         specifier: ^10.5.4
         version: 10.5.4(postcss@8.5.26)
@@ -69,6 +63,9 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
       vite:
         specifier: ^8.2.1
         version: 8.2.1(jiti@2.7.0)(sass@1.103.1)
@@ -81,8 +78,8 @@ importers:
   packages/compiler:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../core
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -98,8 +95,8 @@ importers:
   packages/legacy-react:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../core
       react:
         specifier: '>=18 <20'
         version: 19.2.8
@@ -113,11 +110,11 @@ importers:
   packages/react:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../core
       '@vune-ui/legacy-react':
-        specifier: ^0.1.1
-        version: 0.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: workspace:*
+        version: link:../legacy-react
       react:
         specifier: '>=18 <20'
         version: 19.2.8
@@ -132,14 +129,14 @@ importers:
   packages/vite:
     dependencies:
       '@vune-ui/compiler':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../compiler
 
   packages/vue:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       vue:
         specifier: ^3.5.0
@@ -148,8 +145,8 @@ importers:
   packages/web:
     dependencies:
       '@vune-ui/core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 

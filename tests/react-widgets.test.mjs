@@ -19,7 +19,7 @@ import {
   State,
   Stepper,
   Text,
-} from '../dist/index.js'
+} from '../dist/legacy.js'
 
 test('renders React controls with native semantics', () => {
   const selection = State('b')

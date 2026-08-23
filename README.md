@@ -22,43 +22,88 @@ The canonical Vite workflow lowers Vune builders and custom `struct ...: View` d
 
 ## Quick start
 
-Create a complete canonical React + Vite + TypeScript project:
+### Local checkout (recommended while Vune is unpublished)
+
+Vune can be used from a completely separate project without publishing any
+`@vune-ui/*` package to npm. Install and build the Vune checkout once:
 
 ```bash
-pnpm dlx vune-ui create my-vune-app
+cd ~/Code/Web/React/Vune
+pnpm install
+pnpm build
+```
+
+Then link an existing React project from the Vune repository:
+
+```bash
+pnpm dev:link ~/Code/Web/React/MyApp
+```
+
+`dev:link` writes direct `link:` entries for the selected renderer plus the
+internal `core/compiler` plumbing that bundlers must resolve, and pnpm
+11-compatible `overrides:` in the target `pnpm-workspace.yaml` for every
+internal `@vune-ui/*` package. That last part is important: unpublished
+transitive packages such as `@vune-ui/compiler` never fall through to the
+public npm registry.
+
+Run a watch build while developing Vune itself:
+
+```bash
+pnpm dev:watch
+```
+
+Now edits in the Vune checkout update package `dist/` outputs while the separate
+application keeps using the linked packages.
+
+To create a brand-new separate project using this checkout:
+
+```bash
+cd ~/Code/Web/React/Vune
+pnpm dev:create ~/Code/Web/React/MyVuneApp --no-install
+cd ~/Code/Web/React/MyVuneApp
+pnpm install
+pnpm dev
+```
+
+The equivalent direct CLI is:
+
+```bash
+node ~/Code/Web/React/Vune/bin/vune-ui.mjs create ./MyVuneApp --local
+```
+
+For Vue or the native Web renderer in an existing project:
+
+```bash
+pnpm dev:link /path/to/vue-app --renderer vue
+pnpm dev:link /path/to/web-app --renderer web
+```
+
+If you specifically need portable tarballs instead of source links, Vune can
+build a complete local package set and install it with pnpm 11 workspace overrides automatically:
+
+```bash
+pnpm pack:local
+pnpm local:install /path/to/my-app
+```
+
+Generated tarballs live under `local-packages/` and are intentionally ignored by
+Git so stale versions cannot be committed accidentally.
+
+### Published-package workflow
+
+After the packages are published, the standard initializer is:
+
+```bash
+pnpm create vune-ui my-vune-app
 cd my-vune-app
 pnpm dev
 ```
 
-The same initializer is available in the standard Vite-style form:
+The equivalent CLI form is `pnpm dlx vune-ui create my-vune-app`. From an empty
+directory, pass `.` to create the app in place. Use `--no-install` to inspect the
+generated files before installing dependencies.
 
-```bash
-pnpm create vune-ui my-vune-app
-# or: npm create vune-ui my-vune-app
-```
-
-From an empty directory, pass `.` to create the app in place:
-
-```bash
-pnpm create vune-ui .
-```
-
-The command writes the project files, configures `vunePlugin()` before the
-React plugin, installs `vune-ui`, `@vune-ui/react`, and `@vune-ui/vite`, and gives you a
-small working counter as the first screen. Use `--no-install` when you want to
-inspect or edit the generated files before installing dependencies.
-
-For a local checkout, run the same canonical CLI directly:
-
-```bash
-node ../vune-ui/bin/vune-ui.mjs create my-vune-app
-```
-
-To add the canonical setup to an empty existing directory, run
-`vune-ui init --no-install` from that directory. Existing files are preserved
-unless `--force` is explicitly provided.
-
-For the canonical Vite compiler, install the React plugin and put `vunePlugin()` before it:
+For the canonical Vite compiler, put `vunePlugin()` before the renderer plugin:
 
 ```ts
 import react from '@vitejs/plugin-react'
@@ -73,7 +118,8 @@ export default defineConfig({
 })
 ```
 
-A Vune screen can then be a plain `.ts` file:
+A Vune screen can stay in ordinary TypeScript when you do not need builder
+syntax:
 
 ```ts
 import {
@@ -105,12 +151,25 @@ export default view(() => (
 ))
 ```
 
-`@vune-ui/vite` is the canonical syntax-lowering plugin. It transforms builder
-blocks, labeled initializers, shorthand modifiers, raw HTML, and custom
-`struct ...: View` declarations, and returns token-anchored source maps. The
-compatibility `vune-ui/vite` entry point remains available for the legacy
-TypeScript AST macro that hoists top-level `State()` declarations and rewrites
-`view(...)`/`Action(...)` wrappers.
+`@vune-ui/vite` lowers `.vune.ts` builders, labeled initializers, shorthand
+modifiers, raw HTML, and custom `struct ...: View` declarations. The root
+`vune-ui` entry remains renderer-independent; select React, Vue, or Web from the
+corresponding `@vune-ui/*` renderer package.
+
+## Publishing to npm
+
+Once the npm scope is ready, the repository can publish the complete synchronized package set with one command:
+
+```bash
+pnpm release:dry   # full verification + npm dry-run
+pnpm release       # publish the current version
+pnpm release:patch # bump every package, verify, and publish
+```
+
+The release helper publishes in dependency order and can resume a partial release by skipping versions that already exist on npm. See [Publishing Vune to npm](docs/PUBLISHING.md) for first-time npm setup, versioning, tags, and recovery.
+
+See [Local development](docs/LOCAL_DEVELOPMENT.md) for the complete separate-
+project workflow.
 
 ## View values, initializers, and builders
 

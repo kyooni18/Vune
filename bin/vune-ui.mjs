@@ -2,25 +2,59 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { updatePnpmWorkspaceOverrides } from './pnpm-workspace.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageManifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
 const argv = process.argv.slice(2)
 const command = argv[0]
 const positionals = []
-const options = { force: false, noInstall: false, packageManager: undefined, help: false }
+const options = {
+  force: false,
+  noInstall: false,
+  packageManager: undefined,
+  help: false,
+  local: false,
+  localRoot: undefined,
+  renderer: 'react',
+}
+
+function takeValue(argument, index, longName) {
+  if (argument === longName) {
+    const value = argv[index + 1]
+    if (!value || value.startsWith('-')) throw new Error(`${longName} requires a value.`)
+    return { value, consumed: 1 }
+  }
+  if (argument.startsWith(`${longName}=`)) return { value: argument.slice(longName.length + 1), consumed: 0 }
+  return undefined
+}
 
 for (let index = 1; index < argv.length; index += 1) {
   const argument = argv[index]
   if (argument === '--force') options.force = true
   else if (argument === '--no-install' || argument === '--skip-install') options.noInstall = true
-  else if (argument === '--pm' || argument === '--package-manager') options.packageManager = argv[++index]
-  else if (argument?.startsWith('--pm=')) options.packageManager = argument.slice('--pm='.length)
-  else if (argument?.startsWith('--package-manager=')) options.packageManager = argument.slice('--package-manager='.length)
+  else if (argument === '--local') options.local = true
   else if (argument === '--help' || argument === '-h') options.help = true
-  else positionals.push(argument)
+  else {
+    const packageManager = takeValue(argument, index, '--package-manager') ?? takeValue(argument, index, '--pm')
+    const localRoot = takeValue(argument, index, '--local-root')
+    const renderer = takeValue(argument, index, '--renderer')
+    if (packageManager) {
+      options.packageManager = packageManager.value
+      index += packageManager.consumed
+    } else if (localRoot) {
+      options.local = true
+      options.localRoot = localRoot.value
+      index += localRoot.consumed
+    } else if (renderer) {
+      options.renderer = renderer.value
+      index += renderer.consumed
+    } else {
+      positionals.push(argument)
+    }
+  }
 }
 
 const projectFiles = [
@@ -34,6 +68,17 @@ const projectFiles = [
   ['templates/project/src/index.css', 'src/index.css'],
   ['templates/project/src/main.tsx', 'src/main.tsx'],
 ]
+
+const localPackagePaths = {
+  'vune-ui': '.',
+  '@vune-ui/core': 'packages/core',
+  '@vune-ui/compiler': 'packages/compiler',
+  '@vune-ui/legacy-react': 'packages/legacy-react',
+  '@vune-ui/react': 'packages/react',
+  '@vune-ui/vue': 'packages/vue',
+  '@vune-ui/web': 'packages/web',
+  '@vune-ui/vite': 'packages/vite',
+}
 
 function template(source) {
   return readFileSync(resolve(packageRoot, source), 'utf8')
@@ -61,7 +106,7 @@ function detectPackageManager(projectRoot) {
   for (const manager of ['pnpm', 'yarn', 'bun', 'npm']) {
     if (userAgent.startsWith(`${manager}/`)) return manager
   }
-  if (existsSync(resolve(projectRoot, 'pnpm-lock.yaml'))) return 'pnpm'
+  if (existsSync(resolve(projectRoot, 'pnpm-lock.yaml')) || existsSync(resolve(projectRoot, 'pnpm-workspace.yaml'))) return 'pnpm'
   if (existsSync(resolve(projectRoot, 'yarn.lock'))) return 'yarn'
   if (existsSync(resolve(projectRoot, 'bun.lockb')) || existsSync(resolve(projectRoot, 'bun.lock'))) return 'bun'
   return 'npm'
@@ -78,33 +123,131 @@ function installDependencies(projectRoot) {
   if (result.status !== 0) throw new Error(`${packageManager} install failed with exit code ${result.status ?? 1}.`)
 }
 
+function normalizeLocalRoot(value = packageRoot) {
+  return resolve(process.cwd(), value)
+}
+
+function assertLocalPackageManager() {
+  if (options.packageManager && options.packageManager !== 'pnpm') {
+    throw new Error('Local Vune source linking currently requires pnpm. Remove --pm or use --pm pnpm.')
+  }
+}
+
+function assertSourceCheckout(localRoot) {
+  const manifestPath = resolve(localRoot, 'package.json')
+  if (!existsSync(manifestPath)) throw new Error(`Local Vune checkout has no package.json: ${localRoot}`)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  if (manifest.name !== 'vune-ui') throw new Error(`Local checkout is not vune-ui: ${localRoot}`)
+  for (const relativePath of Object.values(localPackagePaths)) {
+    if (relativePath === '.') continue
+    if (!existsSync(resolve(localRoot, relativePath, 'package.json'))) {
+      throw new Error(`Local Vune checkout is incomplete; missing ${relativePath}/package.json in ${localRoot}`)
+    }
+  }
+  return localRoot
+}
+
+function linkSpecifier(path) {
+  return `link:${path.split(sep).join('/')}`
+}
+
+function configureLocalDependencies(projectRoot, localRoot, renderer = 'react') {
+  if (!['react', 'vue', 'web'].includes(renderer)) {
+    throw new Error(`Unsupported Vune renderer: ${renderer}. Use react, vue, or web.`)
+  }
+  localRoot = assertSourceCheckout(localRoot)
+  const manifestPath = resolve(projectRoot, 'package.json')
+  if (!existsSync(manifestPath)) throw new Error(`Target project has no package.json: ${projectRoot}`)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.dependencies ??= {}
+  manifest.devDependencies ??= {}
+
+  manifest.dependencies['vune-ui'] = linkSpecifier(localRoot)
+  manifest.dependencies[`@vune-ui/${renderer}`] = linkSpecifier(resolve(localRoot, `packages/${renderer}`))
+  manifest.devDependencies['@vune-ui/vite'] = linkSpecifier(resolve(localRoot, 'packages/vite'))
+
+  // link: packages deliberately do not install their own dependency graph.
+  // Add the internal runtime/compiler plumbing directly so bundlers that
+  // resolve through the consumer's node_modules (Vite/Rolldown included)
+  // see the same graph as the Vune workspace.
+  for (const name of ['@vune-ui/core', '@vune-ui/compiler']) {
+    manifest.devDependencies[name] = linkSpecifier(resolve(localRoot, localPackagePaths[name]))
+  }
+  if (renderer === 'react') {
+    manifest.devDependencies['@vune-ui/legacy-react'] = linkSpecifier(resolve(localRoot, localPackagePaths['@vune-ui/legacy-react']))
+  }
+
+  // pnpm 11 moved overrides out of package.json and into pnpm-workspace.yaml.
+  // Keep every internal package pinned to this checkout so unpublished
+  // transitive @vune-ui/* dependencies never fall through to the registry.
+  if (manifest.pnpm?.overrides) {
+    delete manifest.pnpm.overrides
+    if (Object.keys(manifest.pnpm).length === 0) delete manifest.pnpm
+  }
+  const overrides = Object.fromEntries(
+    Object.entries(localPackagePaths).map(([name, relativePath]) => [
+      name,
+      linkSpecifier(resolve(localRoot, relativePath)),
+    ]),
+  )
+
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  updatePnpmWorkspaceOverrides(projectRoot, overrides)
+  console.log(`Linked Vune ${packageManifest.version} (${renderer}) from ${localRoot}`)
+  return manifest
+}
+
 function printHelp() {
   console.log(`Vune UI CLI
 
 Usage:
-  vune-ui create <directory> [--pm <manager>] [--no-install] [--force]
-  vune-ui init [--force] [--no-install]
+  vune-ui create <directory> [--pm <manager>] [--no-install] [--force] [--local] [--local-root <path>]
+  vune-ui init [--force] [--no-install] [--local] [--local-root <path>]
+  vune-ui link <project> [--renderer react|vue|web] [--pm <manager>] [--no-install] [--local-root <path>]
 
-Initializer aliases:
-  npm create vune-ui <directory> [--no-install]
-  pnpm create vune-ui <directory> [--no-install]
+Local checkout workflow:
+  # from the Vune repository
+  pnpm build
+  pnpm dev:link ../my-app
 
-create scaffolds a ready-to-run canonical Vune app with Vite, React, and
-TypeScript. It installs dependencies unless --no-install is provided.
+  # or scaffold a separate app using this checkout without npm publication
+  node bin/vune-ui.mjs create ../my-app --local
 
-init scaffolds the current directory using the same canonical template.`)
+Initializer aliases after publishing:
+  npm create vune-ui <directory>
+  pnpm create vune-ui <directory>
+
+create scaffolds a ready-to-run React + Vite + TypeScript Vune app.
+--local rewrites Vune dependencies to link: paths pointing at the source checkout.
+link adds the same local links and pnpm-workspace.yaml overrides to an existing project.`)
 }
 
 function scaffold(projectRoot, commandName) {
+  if (options.local) assertLocalPackageManager()
   if (existsSync(projectRoot) && !options.force && readdirSync(projectRoot).length > 0) {
     console.error(`Vune ${commandName} cannot use a non-empty directory: ${projectRoot}`)
     console.error('Choose a new directory, use an empty directory, or re-run with --force.')
     return 1
   }
 
+  if (options.renderer !== 'react') {
+    throw new Error('The built-in project template currently targets React. Use `vune-ui link` for Vue or Web projects.')
+  }
+
   mkdirSync(projectRoot, { recursive: true })
   writeTemplates(projectRoot, projectFiles)
+  if (options.local) configureLocalDependencies(projectRoot, normalizeLocalRoot(options.localRoot), 'react')
   console.log(`Created canonical Vune app in ${projectRoot}`)
+  if (!options.noInstall) installDependencies(projectRoot)
+  else console.log('Skipped dependency installation (--no-install).')
+  return 0
+}
+
+function linkProject(target) {
+  assertLocalPackageManager()
+  const projectRoot = resolve(process.cwd(), target)
+  const localRoot = normalizeLocalRoot(options.localRoot)
+  configureLocalDependencies(projectRoot, localRoot, options.renderer)
   if (!options.noInstall) installDependencies(projectRoot)
   else console.log('Skipped dependency installation (--no-install).')
   return 0
@@ -118,7 +261,7 @@ function main() {
   if (command === 'create' || command === 'new') {
     const target = positionals[0]
     if (!target || positionals.length > 1) {
-      console.error('Usage: vune-ui create <directory> [--pm <manager>] [--no-install] [--force]')
+      console.error('Usage: vune-ui create <directory> [--pm <manager>] [--no-install] [--force] [--local]')
       return 1
     }
     const projectRoot = resolve(process.cwd(), target)
@@ -128,10 +271,17 @@ function main() {
   }
   if (command === 'init') {
     if (positionals.length > 0) {
-      console.error('Usage: vune-ui init [--force] [--no-install]')
+      console.error('Usage: vune-ui init [--force] [--no-install] [--local]')
       return 1
     }
     return scaffold(process.cwd(), 'init')
+  }
+  if (command === 'link') {
+    if (positionals.length !== 1) {
+      console.error('Usage: vune-ui link <project> [--renderer react|vue|web] [--no-install] [--local-root <path>]')
+      return 1
+    }
+    return linkProject(positionals[0])
   }
   console.error(`Unknown Vune command: ${command}`)
   printHelp()

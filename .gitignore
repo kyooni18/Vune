@@ -1,5 +1,7 @@
 node_modules/
 .DS_Store
+._*
+.pi/
 *.log
 .vite/
 coverage/
@@ -7,3 +9,9 @@ dist/
 demo-dist/
 vue-demo-dist/
 web-demo-dist/
+parity-react-dist/
+parity-vue-dist/
+parity-web-dist/
+showcase-dist/
+local-packages/*.tgz
+local-packages/manifest.json

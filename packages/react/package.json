@@ -52,11 +52,12 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "dependencies": {
-    "@vune-ui/core": "^0.1.1",
-    "@vune-ui/legacy-react": "^0.1.1"
+    "@vune-ui/core": "workspace:*",
+    "@vune-ui/legacy-react": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18 <20",

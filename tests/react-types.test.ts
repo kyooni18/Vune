@@ -1,8 +1,6 @@
 import { createElement } from 'react'
 import {
-  Action,
   Button,
-  Component,
   createViewNode,
   Grid,
   Group,
@@ -11,11 +9,11 @@ import {
   State,
   Text,
   VStack,
-  view,
   renderViewNode,
+  type ModifiableViewNode,
   type VuneRenderer,
-  type StyledElement,
 } from '../src/index.js'
+import { Component, view } from '../packages/react/src/index.js'
 
 Text.viewType.name
 VStack.viewType.name
@@ -27,22 +25,22 @@ function Badge(props: { label: string }) {
 }
 
 const count = State(0)
-const custom: StyledElement = Component(Badge, { label: 'React' }).padding(8)
+const custom: ModifiableViewNode = Component(Badge, { label: 'React' }).padding(8)
 // @ts-expect-error required React props must be supplied to Component()
 Component(Badge)
 Text('Theme').style({ '--vune-accent': '#7c3aed' })
 Text('Conditional').className(['card', false && 'featured'])
 
-export const StaticView = view(
+export const StaticView = view(() =>
   VStack(
-    Text(() => `Count: ${count.value}`),
-    Button('Add', Action(count.value += 1)),
+    Text(`Count: ${count.value}`),
+    Button('Add', () => { count.value += 1 }),
     HStack(Text('Left'), Spacer(), custom).frame({ maxWidth: 'infinity' }),
   ),
 )
 
 Grid(Text('One'), Text('Two'))
-Grid(2, () => Text('Builder'))
+Grid({ columns: 2 }, () => Text('Builder'))
 VStack({ spacing: 8 }, () => Text('Optioned builder'))
 Group(() => [Text('Grouped one'), Text('Grouped two')])
 
@@ -56,14 +54,14 @@ Button({ title: 'Invalid' }, () => undefined)
 const graphRenderer: VuneRenderer<{ kind: 'node'; type: unknown; children: unknown[] }> = {
   element(type, _props, ...children) { return { kind: 'node', type, children } },
   fragment(children) { return { kind: 'node', type: 'fragment', children: [...children] } },
-  render(value) { return renderViewNode(value, graphRenderer) },
+  modifier(content) { return content },
 }
 renderViewNode(createViewNode(Text, ['typed graph']), graphRenderer)
 
 export const ScopedView = view({
   state: () => ({ count: State(0) }),
   body: ({ count }) => VStack(
-    Text(count),
+    Text(count.value),
     Button('Add', () => { count.value += 1 }),
   ),
 })

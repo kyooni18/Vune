@@ -16,10 +16,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "dependencies": {
-    "@vune-ui/core": "^0.1.1",
+    "@vune-ui/core": "workspace:*",
     "typescript": "^5.8.3"
   },
   "sideEffects": false,

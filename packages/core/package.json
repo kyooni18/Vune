@@ -16,7 +16,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "sideEffects": false,
   "publishConfig": {

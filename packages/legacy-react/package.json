@@ -3,7 +3,9 @@
   "version": "0.1.1",
   "description": "Legacy React and compiler compatibility layer for Vune.",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/legacy/index.js",
   "types": "./dist/legacy/index.d.ts",
   "exports": {
@@ -46,10 +48,11 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "dependencies": {
-    "@vune-ui/core": "^0.1.1",
+    "@vune-ui/core": "workspace:*",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {

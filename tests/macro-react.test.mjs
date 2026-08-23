@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import ts from 'typescript'
 import { vuneMacro, transformVuneMacros } from '../dist/vite.js'
-import { State, Text, view } from '../dist/index.js'
+import { State, Text, view } from '../dist/legacy.js'
 
 test('moves State declarations into per-view state and defers Action expressions', () => {
   const source = `
@@ -247,7 +247,7 @@ export default view(Toggle('Wi-Fi', isOn: $wifi))
 `
   const output = transformVuneMacros(source, '/src/Binding.ts')
   assert.ok(output)
-  assert.match(output, /import \{ State, Toggle, view, Binding, namedArguments \} from 'vune-ui/legacy'/)
+  assert.match(output, /import \{ State, Toggle, view, Binding, namedArguments \} from 'vune-ui\/legacy'/)
   assert.match(output, /Toggle\('Wi-Fi', namedArguments\(\{ isOn: Binding\(wifi\) \}\)\)/)
   const parsed = ts.createSourceFile('Binding.ts', output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   assert.equal(parsed.parseDiagnostics.length, 0)
