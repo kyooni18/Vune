@@ -1,6 +1,6 @@
 {
   "name": "vune-ui",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "packageManager": "pnpm@11.22.0",
   "description": "Vune UI authoring package and React compatibility entry point.",
   "type": "module",
@@ -68,7 +68,7 @@
     "test:browser": "node --test tests/browser.test.mjs",
     "test:browser:vue": "node --test tests/vue-browser.test.mjs",
     "test:browser:web": "node --test tests/web-browser.test.mjs",
-    "test:packages": "node --test tests/core.test.mjs tests/graph-modules.test.mjs tests/compiler-modules.test.mjs tests/web-modules.test.mjs tests/bundle-size.test.mjs tests/react-package.test.mjs tests/web-package.test.mjs tests/vue-package.test.mjs tests/vue-live.test.mjs tests/compiler-package.test.mjs tests/compiler-hardening.test.mjs tests/compiler-parser-fuzz.test.mjs tests/canonical-exports.test.mjs tests/api-surface.test.mjs tests/button-initializers.test.mjs tests/layout-primitives.test.mjs tests/renderer-conformance.test.mjs tests/renderer-conformance-live.test.mjs tests/control-primitives.test.mjs tests/collection-interop.test.mjs tests/presentation-primitives.test.mjs tests/advanced-primitives.test.mjs tests/vscode-extension.test.mjs tests/vune-ui-cli.test.mjs tests/workspace-packaging.test.mjs tests/npm-release-script.test.mjs",
+    "test:packages": "node --test tests/core.test.mjs tests/animation-manifest.test.mjs tests/graph-modules.test.mjs tests/compiler-modules.test.mjs tests/web-modules.test.mjs tests/bundle-size.test.mjs tests/react-package.test.mjs tests/web-package.test.mjs tests/vue-package.test.mjs tests/vue-live.test.mjs tests/compiler-package.test.mjs tests/compiler-hardening.test.mjs tests/compiler-parser-fuzz.test.mjs tests/canonical-exports.test.mjs tests/api-surface.test.mjs tests/button-initializers.test.mjs tests/layout-primitives.test.mjs tests/renderer-conformance.test.mjs tests/renderer-conformance-live.test.mjs tests/control-primitives.test.mjs tests/collection-interop.test.mjs tests/presentation-primitives.test.mjs tests/advanced-primitives.test.mjs tests/vscode-extension.test.mjs tests/vune-ui-cli.test.mjs tests/workspace-packaging.test.mjs tests/npm-release-script.test.mjs",
     "benchmark:modifiers": "pnpm run build && node benchmarks/modifiers.mjs",
     "benchmark:modifiers:ci": "VUNE_BENCH_CI=1 VUNE_BENCH_BASE_RATIO=8 VUNE_BENCH_DEPTH_RATIO=4 pnpm run benchmark:modifiers",
     "benchmark:performance": "pnpm run build && node benchmarks/performance.mjs",
@@ -101,7 +101,10 @@
     "release": "node scripts/publish-npm.mjs",
     "release:patch": "node scripts/publish-npm.mjs --patch",
     "release:minor": "node scripts/publish-npm.mjs --minor",
-    "release:major": "node scripts/publish-npm.mjs --major"
+    "release:major": "node scripts/publish-npm.mjs --major",
+    "check:swiftui-manifest": "pnpm --filter @vune-ui/core run build && node scripts/check-swiftui-manifest.mjs",
+    "check:swiftui-snapshot": "pnpm --filter @vune-ui/core run build && node scripts/check-swiftui-snapshot.mjs",
+    "snapshot:swiftui": "node scripts/snapshot-swiftui-api.mjs"
   },
   "peerDependencies": {
     "react": ">=18 <20",

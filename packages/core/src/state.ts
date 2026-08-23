@@ -1,4 +1,5 @@
 import { actionClosure } from "./closures.js"
+import { currentTransaction, snapshotTransaction, Transaction } from "./animation.js"
 import { isViewNode } from "./graph/nodes.js"
 
 declare const stateBrand: unique symbol
@@ -14,13 +15,14 @@ export interface BindingRef<T> {
   readonly [bindingBrand]: true
 }
 export type Value<T> = T | StateRef<T> | BindingRef<T> | (() => T)
-type Listener = () => void
+type Listener = (transaction: Transaction) => void
 
 interface StateRecord<T> {
   current: T
   listeners: Set<Listener>
   version: number
   owners: Set<ReactiveOwner>
+  transaction: Transaction
 }
 
 interface ReactiveOwner {
@@ -70,7 +72,8 @@ function ownerFor(raw: object): ReactiveOwner {
 
 function notify(record: StateRecord<unknown>): void {
   record.version += 1
-  for (const listener of [...record.listeners]) listener()
+  record.transaction = snapshotTransaction(currentTransaction())
+  for (const listener of [...record.listeners]) listener(record.transaction)
 }
 
 function notifyOwner(owner: ReactiveOwner): void {
@@ -168,7 +171,7 @@ function reconcile(record: StateRecord<unknown>): void {
 
 export function State<T>(initial: T): StateRef<T> {
   const state = {} as StateRef<T>
-  const record: StateRecord<T> = { current: initial, listeners: new Set(), version: 0, owners: new Set() }
+  const record: StateRecord<T> = { current: initial, listeners: new Set(), version: 0, owners: new Set(), transaction: new Transaction() }
   record.current = wrap(initial, record)
   records.set(state as object, record)
   Object.defineProperty(state, "value", {
@@ -203,6 +206,11 @@ export function collectStateReads<T>(compute: () => T, collector: (state: StateR
 
 export function stateVersion(state: StateRef<unknown>): number {
   return records.get(state as object)?.version ?? 0
+}
+
+/** Transaction attached to the most recent mutation of this State. */
+export function stateTransaction(state: StateRef<unknown>): Transaction {
+  return snapshotTransaction(records.get(state as object)?.transaction)
 }
 
 export function resolveValue<T>(value: Value<T>): T {

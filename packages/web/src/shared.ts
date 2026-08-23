@@ -1,4 +1,4 @@
-import { classNameOf, frameStyle, layoutLength, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
+import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
 
@@ -60,24 +60,70 @@ export function escape(value: unknown): string {
 
 export function styleOf(modifier: ViewModifierNode): Record<string, string> {
   const value = modifier.arguments[0]
+  let style: Record<string, string>
   switch (modifier.name) {
-    case "padding": return { padding: layoutLength(value) ?? "" }
-    case "margin": return { margin: layoutLength(value) ?? "" }
-    case "gap": return { gap: layoutLength(value) ?? "" }
-    case "font": return { font: String(value) }
-    case "fontSize": return { "font-size": layoutLength(value) ?? "" }
-    case "bold": return { "font-weight": "600" }
-    case "foreground": return { color: String(value) }
-    case "background": return { background: String(value) }
-    case "frame": {
-      return Object.fromEntries(Object.entries(frameStyle(value && typeof value === "object" ? value : {}))
-        .map(([key, item]) => [cssPropertyName(key), item ?? ""]))
+    case "padding": style = { padding: layoutLength(value) ?? "" }; break
+    case "margin": style = { margin: layoutLength(value) ?? "" }; break
+    case "gap": style = { gap: layoutLength(value) ?? "" }; break
+    case "font": style = { font: String(value) }; break
+    case "fontSize": style = { "font-size": layoutLength(value) ?? "" }; break
+    case "bold": style = { "font-weight": value === false ? "normal" : "600" }; break
+    case "foreground":
+    case "foregroundStyle": style = { color: String(value) }; break
+    case "background": style = { background: String(value) }; break
+    case "opacity": {
+      const opacity = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
+      style = { opacity: String(opacity) }
+      break
     }
-    case "style": return typeof value === "object" && value !== null
+    case "scaleEffect": {
+      const scale = typeof value === "number"
+        ? `${value}`
+        : value && typeof value === "object"
+          ? `${Number((value as { x?: unknown; width?: unknown }).x ?? (value as { width?: unknown }).width ?? 1)}, ${Number((value as { y?: unknown; height?: unknown }).y ?? (value as { height?: unknown }).height ?? 1)}`
+          : "1"
+      style = { transform: `scale(${scale})` }
+      break
+    }
+    case "rotationEffect": {
+      const degrees = typeof value === "number" && Number.isFinite(value) ? value : 0
+      style = { transform: `rotate(${degrees}deg)` }
+      break
+    }
+    case "offset": {
+      const second = modifier.arguments[1]
+      let x = 0
+      let y = 0
+      if (typeof value === "number") { x = value; y = typeof second === "number" ? second : 0 }
+      else if (value && typeof value === "object") {
+        const point = value as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+        x = Number(point.x ?? point.width ?? 0)
+        y = Number(point.y ?? point.height ?? 0)
+      }
+      style = { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` }
+      break
+    }
+    case "frame": {
+      style = Object.fromEntries(Object.entries(frameStyle(value && typeof value === "object" ? value : {}))
+        .map(([key, item]) => [cssPropertyName(key), item ?? ""]))
+      break
+    }
+    case "style": style = typeof value === "object" && value !== null
       ? normalizedStyle(value as Record<string, unknown>)
-      : {}
-    default: return {}
+      : {}; break
+    case "animation": {
+      const animationStyle = animationCSSStyle(value as Animation | null)
+      style = animationStyle ? Object.fromEntries(Object.entries(animationStyle).map(([key, item]) => [cssPropertyName(key), item])) : {}
+      break
+    }
+    default: style = {}
   }
+  const transaction = currentRenderTransaction()
+  if (swiftUIAnimatableModifierNames.has(modifier.name) && !transaction.disablesAnimations && transaction.animation) {
+    const animationStyle = animationCSSStyle(transaction.animation)
+    if (animationStyle) style = { ...style, ...Object.fromEntries(Object.entries(animationStyle).map(([key, item]) => [cssPropertyName(key), item])) }
+  }
+  return style
 }
 
 export function propsOf(modifier: ViewModifierNode): Record<string, unknown> {

@@ -2,6 +2,25 @@ import { isForeignComponent, renderViewNode, zeroGeometry, type VuneRenderer, ty
 import { assertHtmlName, classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, nativeElementProps, normalizedRawTextValue, normalizedTextAreaValue, propsOf, rawTextHtmlElements, styleAttribute, styleOf, styleText, validTableChildElements, voidHtmlElements } from "./shared.js"
 
 
+
+function mergeSerializedStyles(current: string, extra: string): string {
+  const declarations = new Map<string, string>()
+  const append = (input: string, composeTransform: boolean) => {
+    for (const declaration of input.split(";")) {
+      const colon = declaration.indexOf(":")
+      if (colon < 0) continue
+      const name = declaration.slice(0, colon).trim()
+      const value = declaration.slice(colon + 1).trim()
+      if (!name || !value) continue
+      if (composeTransform && name === "transform" && declarations.has(name)) declarations.set(name, `${declarations.get(name)} ${value}`)
+      else declarations.set(name, value)
+    }
+  }
+  append(current, false)
+  append(extra, true)
+  return [...declarations].map(([name, value]) => `${name}:${value}`).join(";")
+}
+
 function serializedAttribute(key: string, value: unknown): string | undefined {
   if (key === "children" || key === "key" || key === "ref" || /^on[A-Za-z]/.test(key) || value === undefined || value === null || typeof value === "function") return undefined
   if (typeof value === "object" && key !== "style" && key !== "className" && key !== "class") return undefined
@@ -145,7 +164,7 @@ const htmlRenderer: VuneRenderer<string> = {
       const extraStyles = [extraStyle, propStyle].filter(Boolean).join(";")
       const escapedExtraStyles = escapeAttribute(extraStyles)
       if (styleMatch && extraStyles) {
-        const merged = `${styleMatch[1]};${escapedExtraStyles}`
+        const merged = mergeSerializedStyles(styleMatch[1], escapedExtraStyles)
         nextAttributes = nextAttributes.replace(styleMatch[0], ` style="${merged}"`)
       } else if (extraStyles) {
         nextAttributes += ` style="${escapedExtraStyles}"`

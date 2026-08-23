@@ -5,6 +5,8 @@ import {
   resolveSemanticCall,
   semanticHtmlAttributeSpec,
   semanticHtmlTagSpec,
+  swiftUIInitializerSymbols,
+  swiftUIViewNames,
   type SemanticBuilderTypeSymbol,
   type SemanticForeignComponentTypeSymbol,
   type SemanticHtmlAttributeSymbol,
@@ -316,6 +318,19 @@ function canonicalViewSymbols(): Map<string, SemanticViewTypeSymbol> {
     const symbol = (value as { readonly viewType?: { readonly semanticSymbol?: SemanticViewTypeSymbol } }).viewType?.semanticSymbol
     if (symbol) result.set(name, symbol)
   }
+  for (const name of swiftUIViewNames()) {
+    const initializers = swiftUIInitializerSymbols(name)
+    if (!initializers) continue
+    const current = result.get(name)
+    result.set(name, {
+      kind: "view",
+      name,
+      qualifiedName: current?.qualifiedName ?? name,
+      initializers,
+      fields: current?.fields ?? [],
+      ...(current?.genericParameters ? { genericParameters: current.genericParameters } : {}),
+    })
+  }
   return result
 }
 
@@ -361,6 +376,8 @@ function compilerSemanticArgument(
 ): SemanticArgument {
   const value = source.trim()
   if (/^(?:\$[A-Za-z_$][A-Za-z0-9_$]*|Binding\s*\()/.test(value)) return { label, kind: "binding", type: "binding" }
+  const implicitMember = /^\.([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(value)
+  if (implicitMember) return { label, type: "string", value: implicitMember[1] }
   if (/^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)$/.test(value)) {
     const literalFile = ts.createSourceFile("literal.ts", `(${value})`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
     const statement = literalFile.statements[0]

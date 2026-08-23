@@ -6,12 +6,14 @@ import {
   renderViewNode,
   subscribeState,
   viewIdentityKey,
+  withRenderTransaction,
   zeroGeometry,
   type VuneRenderer,
   type GeometryProxy,
   type LazyViewNode,
   type LazyViewRange,
   type StateRef,
+  type Transaction,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
@@ -387,15 +389,20 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         ? modifier.arguments[0]
         : undefined
       if (Object.keys(extraProps).length === 0 && Object.keys(extraStyle).length === 0 && key === undefined) return content
-      const style = Object.keys(extraStyle).length > 0 || extraProps.style
+      const baseStyle = Object.keys(extraStyle).length > 0 || extraProps.style
         ? { ...extraStyle, ...(extraProps.style && typeof extraProps.style === "object" ? extraProps.style : {}) }
         : undefined
-      const props = { ...extraProps, ...(style ? { style } : {}) }
       const nodes = content.nodeType === 11 ? [...content.childNodes] : [content]
       nodes.forEach(node => {
         if (node.nodeType !== 1) return
         if (key !== undefined) context.domKeys.set(node, key)
         const element = node as Element
+        const style = baseStyle ? { ...baseStyle } as Record<string, unknown> : undefined
+        if (style && typeof style.transform === "string") {
+          const currentTransform = (element as Element & { readonly style?: CSSStyleDeclaration }).style?.transform
+          if (currentTransform) style.transform = `${currentTransform} ${style.transform}`
+        }
+        const props = { ...extraProps, ...(style ? { style } : {}) }
         const appliedProps = element.localName.includes("-") ? props : nativeElementProps(props)
         if (Object.keys(appliedProps).length > 0) applyDomProps(element, appliedProps, context)
       })
@@ -457,6 +464,7 @@ export interface WebMountOptions {
 export function mount(value: ViewGraphValue, container: Element, options: WebMountOptions = {}): () => void {
   let stopped = false
   let scheduled = false
+  let pendingTransaction: Transaction | undefined
   let unsubscribers: Array<() => void> = []
   const document = container.ownerDocument
   const canMaterializeDOM = typeof document?.createElement === "function" && typeof (container as Element & { replaceChildren?: unknown }).replaceChildren === "function"
@@ -609,7 +617,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       context.preservedLazyStatePrefixes.clear()
       const dependencies = new Set<StateRef<unknown>>()
       context.hydrating = Boolean(options.hydrate && !hasMounted)
-      let output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+      const renderTransaction = pendingTransaction
+      pendingTransaction = undefined
+      let output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
       const preservedStatePrefixes = [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
       for (const key of context.states.keys()) {
         if (context.visitedStateIdentities.has(key)) continue
@@ -631,7 +641,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         context.hasRefs = false
         context.visitedLazyIdentities.clear()
         context.lazyNodes.clear()
-        output = collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency))
+        output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
         outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
         reconcileDomChildren(container, outputChildren, context)
       }
@@ -646,7 +656,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         if (!context.visitedLazyIdentities.has(key)) context.lazyMeasurements.delete(key)
       }
       commitRefs()
-      unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => {
+      unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => {
+        pendingTransaction = transaction
         if (scheduled || stopped) return
         scheduled = true
         queueMicrotask(update)
@@ -679,9 +690,12 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     scheduled = false
     unsubscribers.forEach(unsubscribe => unsubscribe())
     const dependencies = new Set<StateRef<unknown>>()
-    const html = collectStateReads(() => renderToHTML(value), dependency => dependencies.add(dependency))
+    const renderTransaction = pendingTransaction
+    pendingTransaction = undefined
+    const html = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderToHTML(value), dependency => dependencies.add(dependency)))
     container.innerHTML = html
-    unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => {
+    unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => {
+      pendingTransaction = transaction
       if (scheduled || stopped) return
       scheduled = true
       queueMicrotask(update)

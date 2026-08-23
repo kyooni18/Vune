@@ -17,7 +17,7 @@ import {
   type BuilderCall,
 } from "./scanner.js"
 import * as Core from "@vune-ui/core"
-import { resolveSemanticCall, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
+import { resolveSemanticCall, swiftUIAnimationFactoryArgumentLabels, swiftUIInitializerSymbols, swiftUIModifierLowering, swiftUIViewNames, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
 
 const nonBindingDollarNames = new Set([
@@ -30,6 +30,13 @@ for (const [name, value] of Object.entries(Core)) {
   if (typeof value !== "function") continue
   const viewType = (value as { readonly viewType?: { readonly name?: string; readonly semanticSymbol?: { readonly initializers: readonly SemanticInitializerSymbol[] } } }).viewType
   if (viewType?.name && viewType.semanticSymbol) canonicalInitializerSymbols.set(name, viewType.semanticSymbol.initializers)
+}
+// Canonical SwiftUI authoring signatures override compatibility/runtime-only
+// overloads when the manifest has an entry. This keeps compiler diagnostics
+// and closure-role resolution pinned to the public parity surface.
+for (const name of swiftUIViewNames()) {
+  const symbols = swiftUIInitializerSymbols(name)
+  if (symbols) canonicalInitializerSymbols.set(name, symbols)
 }
 
 type InitializerSymbolRegistry = ReadonlyMap<string, readonly SemanticInitializerSymbol[]>
@@ -153,9 +160,10 @@ function closureRoleForKnownCall(
   context: { readonly position: "argument" | "trailing"; readonly argumentIndex?: number; readonly label?: string },
   registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
 ): "value" | "viewBuilder" | "action" | undefined {
+  if ((call.callee === "withAnimation" || call.callee === "withTransaction") && context.position === "trailing") return "action"
   const resolved = resolveKnownCall(call, registry)
   const resolvedArgumentIndex = context.position === "trailing"
-    ? call.arguments.length
+    ? Math.max(0, knownCallArguments(call).length - 1)
     : context.label
       ? call.arguments.findIndex(argument => argument.label === context.label)
       : context.argumentIndex ?? 0
@@ -228,6 +236,82 @@ function lowerShorthand(source: string): string {
     result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
   }
   return result
+}
+
+/**
+ * Lower Swift-style implicit member expressions used by the Vune authoring
+ * language. Bare enum-like cases become inert string values, matching the
+ * existing Alignment/Edge-style runtime representation. Animation factories
+ * keep their value semantics and are qualified with Animation instead.
+ */
+function lowerImplicitMemberShorthand(source: string): string {
+  const animationFactories = new Set(["linear", "easeIn", "easeOut", "easeInOut", "spring", "interactiveSpring", "smooth", "snappy", "bouncy"])
+  const animationProperties = new Set(["default"])
+  let result = source.replace(
+    /(^|[(:,=]\s*)\.([A-Za-z_$][A-Za-z0-9_$]*)\s*(?=\()/g,
+    (match, prefix: string, name: string) => animationFactories.has(name) ? `${prefix}Animation.${name}` : match,
+  )
+  result = lowerNamedAnimationFactoryCalls(result)
+  result = result.replace(
+    /(^|[(:,=]\s*)\.([A-Za-z_$][A-Za-z0-9_$]*)(?!\s*\()/g,
+    (_match, prefix: string, name: string) => {
+      if (animationProperties.has(name)) return `${prefix}Animation.${name}`
+      // SwiftUI exposes common timing curves as static Animation values as
+      // well as duration-taking factories. The JavaScript runtime keeps only
+      // the factory form, so an implicit member value lowers to its zero-arg
+      // equivalent without changing Vune authoring syntax.
+      if (animationFactories.has(name)) return `${prefix}Animation.${name}()`
+      return `${prefix}${JSON.stringify(name)}`
+    },
+  )
+  return result
+}
+
+function lowerNamedAnimationFactoryCalls(source: string): string {
+  let output = source
+  let iterations = 0
+  while (true) {
+    if (++iterations > output.length + 1) throw syntaxError("Animation argument lowering did not advance", 0)
+    let candidate: { readonly name: string; readonly open: number; readonly close: number; readonly labels: readonly string[] } | undefined
+    for (let cursor = 0; cursor < output.length; cursor += 1) {
+      const index = output.indexOf("Animation.", cursor)
+      if (index < 0) break
+      const name = identifierAt(output, index + "Animation.".length)
+      if (!name) { cursor = index + 9; continue }
+      const labels = swiftUIAnimationFactoryArgumentLabels(name.name)
+      const open = skipTrivia(output, name.end)
+      if (!labels || output[open] !== "(") { cursor = name.end; continue }
+      const close = matching(output, open, "(", ")")
+      const argumentsSource = output.slice(open + 1, close)
+      if (splitTopLevel(argumentsSource).some(argument => topLevelColon(argument) >= 0)) candidate = { name: name.name, open, close, labels }
+      cursor = close
+    }
+    if (!candidate) return output
+
+    const entries = splitTopLevel(output.slice(candidate.open + 1, candidate.close)).map(value => {
+      const colon = topLevelColon(value)
+      const possibleLabel = colon < 0 ? undefined : value.slice(skipTrivia(value, 0), colon).trim()
+      const label = possibleLabel && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(possibleLabel) ? possibleLabel : undefined
+      return { label, value: (label ? value.slice(colon + 1) : value).trim() }
+    })
+    const slots: Array<string | undefined> = []
+    let positionalIndex = 0
+    for (const entry of entries) {
+      if (!entry.label) {
+        if (positionalIndex >= candidate.labels.length) throw syntaxError(`Too many arguments for Animation.${candidate.name}(...)`, candidate.open)
+        slots[positionalIndex++] = entry.value
+        continue
+      }
+      const index = candidate.labels.indexOf(entry.label)
+      if (index < 0) throw syntaxError(`Unknown labeled argument ${entry.label}: in Animation.${candidate.name}(...)`, candidate.open)
+      if (slots[index] !== undefined) throw syntaxError(`Duplicate argument ${entry.label}: in Animation.${candidate.name}(...)`, candidate.open)
+      slots[index] = entry.value
+    }
+    let end = slots.length
+    while (end > 0 && slots[end - 1] === undefined) end -= 1
+    const lowered = Array.from({ length: end }, (_value, index) => slots[index] ?? "undefined").join(", ")
+    output = output.slice(0, candidate.open + 1) + lowered + output.slice(candidate.close)
+  }
 }
 
 function containsAwaitKeyword(source: string): boolean {
@@ -409,13 +493,13 @@ function lowerArguments(source: string, calleeName?: string, registry: Initializ
 function lowerClosureOrExpression(source: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const value = source.trim()
   if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1 && !/^(?:\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|["'][^"']*["']|-?\d+(?:\.\d+)?)\s*:)/.test(value.slice(1, -1))) return lowerClosure(value, role, registry)
-  return lowerShorthand(lowerRange(value, registry))
+  return lowerImplicitMemberShorthand(lowerShorthand(lowerRange(value, registry)))
 }
 
 function lowerForEachIdentityOptions(source: string, call: VuneCallExpression, argumentIndex: number, registry: InitializerSymbolRegistry): string {
   const value = source.trim()
   if (call.callee !== "ForEach" || argumentIndex !== 1 || !value.startsWith("{") || matching(value, 0, "{", "}") !== value.length - 1) {
-    return lowerRange(source, registry)
+    return lowerImplicitMemberShorthand(lowerRange(source, registry))
   }
   const entries = splitTopLevel(value.slice(1, -1)).map(entry => {
     const colon = topLevelColon(entry)
@@ -1204,6 +1288,79 @@ function lowerNamedVuneCalls(source: string, registry: InitializerSymbolRegistry
   }
 }
 
+/**
+ * SwiftUI modifiers use argument labels even though their JavaScript runtime
+ * implementation ultimately receives positional values or an option record.
+ * Lower those labels before the source reaches TypeScript so authoring syntax
+ * can stay SwiftUI-shaped without teaching TypeScript a second call grammar.
+ */
+function lowerNamedModifierCalls(source: string): string {
+  let output = source
+  let iterations = 0
+  while (true) {
+    if (++iterations > output.length + 1) throw syntaxError("Vune modifier argument lowering did not advance", 0)
+    let candidate: { readonly name: string; readonly open: number; readonly close: number } | undefined
+    for (let cursor = 0; cursor < output.length; cursor += 1) {
+      const character = output[cursor]
+      if (character === "\"" || character === "'" || character === "`") { cursor = skipString(output, cursor) - 1; continue }
+      if (character === "/" && (output[cursor + 1] === "/" || output[cursor + 1] === "*")) { cursor = skipComment(output, cursor) - 1; continue }
+      if (character === "/" && regexCanStart(output, cursor)) { cursor = skipRegex(output, cursor) - 1; continue }
+      if (character !== ".") continue
+      const identifier = identifierAt(output, cursor + 1)
+      if (!identifier || !staticModifierNames.has(identifier.name) || !swiftUIModifierLowering(identifier.name)) continue
+      const open = skipTrivia(output, identifier.end)
+      if (output[open] !== "(") continue
+      const close = matching(output, open, "(", ")")
+      const argumentsSource = output.slice(open + 1, close)
+      if (!splitTopLevel(argumentsSource).some(argument => topLevelColon(argument) >= 0)) {
+        cursor = close
+        continue
+      }
+      candidate = { name: identifier.name, open, close }
+      cursor = close
+    }
+    if (!candidate) return output
+
+    const lowering = swiftUIModifierLowering(candidate.name)!
+    const entries = splitTopLevel(output.slice(candidate.open + 1, candidate.close)).map(source => {
+      const colon = topLevelColon(source)
+      const label = colon < 0 ? undefined : source.slice(skipTrivia(source, 0), colon).trim()
+      const validLabel = label && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(label) ? label : undefined
+      return {
+        label: validLabel,
+        value: (validLabel ? source.slice(colon + 1) : source).trim(),
+      }
+    })
+    const positional = entries.filter(entry => !entry.label).map(entry => lowerImplicitMemberShorthand(lowerShorthand(entry.value)))
+    const named = new Map<string, string>()
+    for (const entry of entries) {
+      if (!entry.label) continue
+      if (named.has(entry.label)) throw syntaxError(`Duplicate labeled argument ${entry.label}: in .${candidate.name}(...)`, candidate.open)
+      named.set(entry.label, lowerImplicitMemberShorthand(lowerShorthand(entry.value)))
+    }
+
+    let lowered: string
+    if (lowering.kind === "object") {
+      if (positional.length > 0) throw syntaxError(`.${candidate.name}(...) does not mix positional and labeled arguments in this overload`, candidate.open)
+      for (const label of named.keys()) if (!lowering.labels.includes(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
+      lowered = `{ ${lowering.labels.flatMap(label => named.has(label) ? [`${label}: ${named.get(label)}`] : []).join(", ")} }`
+    } else if (lowering.kind === "ordered") {
+      for (const label of named.keys()) if (!lowering.labels.includes(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
+      lowered = [...positional, ...lowering.labels.flatMap(label => named.has(label) ? [named.get(label)!] : [])].join(", ")
+    } else {
+      const allowed = new Set([...lowering.objectLabels, ...lowering.orderedLabels])
+      for (const label of named.keys()) if (!allowed.has(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
+      const objectEntries = lowering.objectLabels.flatMap(label => named.has(label) ? [`${label}: ${named.get(label)}`] : [])
+      if (objectEntries.length > 0 && positional.length > 0) throw syntaxError(`.${candidate.name}(...) cannot mix its x/y labeled overload with a positional scale`, candidate.open)
+      lowered = [
+        ...(objectEntries.length > 0 ? [`{ ${objectEntries.join(", ")} }`] : positional),
+        ...lowering.orderedLabels.flatMap(label => named.has(label) ? [named.get(label)!] : []),
+      ].join(", ")
+    }
+    output = output.slice(0, candidate.open + 1) + lowered + output.slice(candidate.close)
+  }
+}
+
 function initializerRegistryFor(declarations: readonly VuneStruct[]): Map<string, readonly SemanticInitializerSymbol[]> {
   const registry = new Map(canonicalInitializerSymbols)
   const add = (declaration: VuneStruct): void => {
@@ -1291,14 +1448,16 @@ function lowerReactComponentImports(source: string): string {
 export function transformVuneSource(source: string, fileName = "vune-source.ts"): string {
   const withVueImports = lowerVueComponentImports(source)
   const withForeignImports = lowerReactComponentImports(withVueImports)
-  const declarations = parseVuneStructs(withForeignImports)
+  const withAnimationArguments = lowerNamedAnimationFactoryCalls(withForeignImports)
+  const withModifierArguments = lowerNamedModifierCalls(withAnimationArguments)
+  const declarations = parseVuneStructs(withModifierArguments)
   const registry = initializerRegistryFor(declarations)
-  validateKnownCalls(parseVuneBuilder(withForeignImports), registry)
-  validateKnownTypeScriptCalls(withForeignImports, registry)
+  validateKnownCalls(parseVuneBuilder(withModifierArguments), registry)
+  validateKnownTypeScriptCalls(withModifierArguments, registry)
   for (const declaration of declarations) {
     validateKnownCalls(parseVuneBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
   }
-  const withStructs = lowerStructs(withForeignImports, registry)
+  const withStructs = lowerStructs(withModifierArguments, registry)
   const withNamedArguments = lowerNamedVuneCalls(withStructs, registry)
   const withBuilderSyntax = lowerRange(withNamedArguments, registry)
   // State ownership is resolved only after Vune-only syntax has become valid

@@ -1,7 +1,8 @@
+import type { Animation } from "../animation.js"
 import type { FrameOptions } from "../layout.js"
 import type { VuneStyleProperties } from "../html.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
-import type { ClassValue, Length, ModifiableViewNode, Modifiers, ViewModifierNode, ViewNode } from "./types.js"
+import type { ClassValue, Length, ModifiableViewNode, Modifiers, OffsetValue, ScaleEffectValue, ViewModifierNode, ViewNode } from "./types.js"
 
 const decoratedNodes = new WeakMap<object, ModifiableViewNode>()
 
@@ -115,9 +116,17 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
   frame(this: ViewNode, options: FrameOptions) { return applyModifier(this, "frame", [options]) },
   font(this: ViewNode, value: string) { return applyModifier(this, "font", [value]) },
   fontSize(this: ViewNode, value: Length) { return applyModifier(this, "fontSize", [value]) },
-  bold(this: ViewNode) { return applyModifier(this, "bold", []) },
+  bold(this: ViewNode, isActive = true) { return applyModifier(this, "bold", [isActive]) },
   foreground(this: ViewNode, value: string) { return applyModifier(this, "foreground", [value]) },
-  background(this: ViewNode, value: string) { return applyModifier(this, "background", [value]) },
+  foregroundStyle(this: ViewNode, value: string) { return applyModifier(this, "foregroundStyle", [value]) },
+  background(this: ViewNode, value: string, alignment = "center") { return applyModifier(this, "background", [value, alignment]) },
+  opacity(this: ViewNode, value: number) { return applyModifier(this, "opacity", [value]) },
+  scaleEffect(this: ViewNode, value: ScaleEffectValue, anchor = "center") { return applyModifier(this, "scaleEffect", [value, anchor]) },
+  rotationEffect(this: ViewNode, value: number, anchor = "center") { return applyModifier(this, "rotationEffect", [value, anchor]) },
+  offset(this: ViewNode, valueOrX: OffsetValue | number, y?: number) {
+    return applyModifier(this, "offset", typeof valueOrX === "number" ? [valueOrX, y ?? 0] : [valueOrX])
+  },
+  animation(this: ViewNode, animation: Animation | null, value: unknown) { return applyModifier(this, "animation", [animation, value]) },
   style(this: ViewNode, value: VuneStyleProperties) { return applyModifier(this, "style", [value]) },
   className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },
   withProps(this: ViewNode, value: Record<string, unknown>) { return applyModifier(this, "withProps", [value]) },

@@ -29,6 +29,11 @@ The repository root publishes the canonical `vune-ui` authoring package. New
 language and graph behavior belongs in `@vune-ui/core`; behavior that requires a
 specific runtime belongs in that renderer package.
 
+SwiftUI-compatible authoring declarations are centralized in the core API manifest;
+compiler and runtime consumers must not maintain parallel modifier or initializer
+allow-lists. See [SwiftUI API parity](./SWIFTUI_PARITY.md) for the SDK snapshot and
+animation transaction contracts.
+
 The canonical imports are `vune-ui`, `@vune-ui/core`, `@vune-ui/compiler`, `@vune-ui/react`,
 `@vune-ui/vue`, `@vune-ui/web`, and `@vune-ui/vite`. The root package also exposes
 `vune-ui/core` and `vune-ui/vune` for explicit core and React entry points. Legacy

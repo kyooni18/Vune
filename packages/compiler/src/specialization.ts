@@ -1,4 +1,5 @@
 import * as ts from "typescript"
+import { swiftUIStaticModifierNames } from "@vune-ui/core"
 
 function compilerRootFileName(fileName: string): string {
   const resolvePath = (ts.sys as typeof ts.sys & { resolvePath?: (value: string) => string }).resolvePath
@@ -84,10 +85,7 @@ function createVuneTypeScriptProgram(source: string, fileName: string): VuneType
   return sourceFile ? { sourceFile, checker: program.getTypeChecker() } : undefined
 }
 
-export const staticModifierNames = new Set([
-  "padding", "margin", "gap", "frame", "font", "fontSize", "bold", "foreground", "background",
-  "style", "className", "withProps", "keyed", "elementRef",
-])
+export const staticModifierNames = new Set(swiftUIStaticModifierNames)
 
 function isVuneViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return false

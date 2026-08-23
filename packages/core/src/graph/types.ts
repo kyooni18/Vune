@@ -1,3 +1,4 @@
+import type { Animation } from "../animation.js"
 import type { FrameOptions } from "../layout.js"
 import type { VuneStyleProperties } from "../html.js"
 import type { ViewIdentity } from "../identity.js"
@@ -10,6 +11,11 @@ export type ViewGraphChild = ViewGraphValue
 export type ViewValue = ViewGraphValue
 export type Length = number | string
 export type ClassValue = string | false | null | undefined | readonly ClassValue[]
+
+export interface Point { readonly x: number; readonly y: number }
+export interface Size { readonly width: number; readonly height: number }
+export type ScaleEffectValue = number | Point | Size
+export type OffsetValue = Point | Size
 
 export interface GeometryFrame {
   readonly x: number
@@ -137,9 +143,16 @@ export interface Modifiers {
   frame(options: FrameOptions): ModifiableViewNode
   font(value: string): ModifiableViewNode
   fontSize(value: Length): ModifiableViewNode
-  bold(): ModifiableViewNode
+  bold(isActive?: boolean): ModifiableViewNode
   foreground(value: string): ModifiableViewNode
-  background(value: string): ModifiableViewNode
+  foregroundStyle(value: string): ModifiableViewNode
+  background(value: string, alignment?: string): ModifiableViewNode
+  opacity(value: number): ModifiableViewNode
+  scaleEffect(value: ScaleEffectValue, anchor?: string): ModifiableViewNode
+  rotationEffect(value: number, anchor?: string): ModifiableViewNode
+  offset(value: OffsetValue): ModifiableViewNode
+  offset(x: number, y: number): ModifiableViewNode
+  animation(animation: Animation | null, value: unknown): ModifiableViewNode
   style(value: VuneStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode
   withProps(value: Record<string, unknown>): ModifiableViewNode

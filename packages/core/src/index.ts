@@ -1,3 +1,5 @@
+export * from "./animation.js"
+export * from "./api-manifest.js"
 export * from "./closures.js"
 export * from "./controls.js"
 export * from "./advanced.js"

@@ -11,21 +11,28 @@ import {
 } from "react"
 import { createRoot, hydrateRoot, type Root } from "react-dom/client"
 import {
+  animationCSSStyle,
   collectStateReads,
+  currentRenderTransaction,
   classNameOf,
   edgeInsetsFromCss,
   frameStyle,
   isForeignComponent,
   layoutLength,
   renderViewNode,
+  stateTransaction,
   stateVersion,
   subscribeState,
+  swiftUIAnimatableModifierNames,
   viewIdentityKey,
+  withRenderTransaction,
   zeroGeometry,
+  type Animation,
   type GeometryProxy,
   type ModifiableViewNode,
   type VuneRenderer,
   type StateRef,
+  type Transaction,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
@@ -33,25 +40,56 @@ import {
 
 function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
   const [value] = modifier.arguments
+  let result: Record<string, unknown>
   switch (modifier.name) {
-    case "padding": return { style: { padding: layoutLength(value) } }
-    case "margin": return { style: { margin: layoutLength(value) } }
-    case "gap": return { style: { gap: layoutLength(value) } }
-    case "font": return { style: { font: value } }
-    case "fontSize": return { style: { fontSize: layoutLength(value) } }
-    case "bold": return { style: { fontWeight: 600 } }
-    case "foreground": return { style: { color: value } }
-    case "background": return { style: { background: value } }
-    case "style": return { style: value }
-    case "className": return { className: classNameOf(value) }
-    case "withProps": return value && typeof value === "object" ? value as Record<string, unknown> : {}
-    case "keyed": return { key: value }
-    case "elementRef": return { ref: value }
-    case "frame": {
-      return { style: frameStyle(value && typeof value === "object" ? value : {}) }
+    case "padding": result = { style: { padding: layoutLength(value) } }; break
+    case "margin": result = { style: { margin: layoutLength(value) } }; break
+    case "gap": result = { style: { gap: layoutLength(value) } }; break
+    case "font": result = { style: { font: value } }; break
+    case "fontSize": result = { style: { fontSize: layoutLength(value) } }; break
+    case "bold": result = { style: { fontWeight: value === false ? "normal" : 600 } }; break
+    case "foreground":
+    case "foregroundStyle": result = { style: { color: value } }; break
+    case "background": result = { style: { background: value } }; break
+    case "opacity": {
+      const opacity = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
+      result = { style: { opacity } }
+      break
     }
-    default: return {}
+    case "scaleEffect": {
+      const scale = typeof value === "number" ? `${value}`
+        : value && typeof value === "object" ? `${Number((value as { x?: unknown; width?: unknown }).x ?? (value as { width?: unknown }).width ?? 1)}, ${Number((value as { y?: unknown; height?: unknown }).y ?? (value as { height?: unknown }).height ?? 1)}` : "1"
+      result = { style: { transform: `scale(${scale})` } }
+      break
+    }
+    case "rotationEffect": result = { style: { transform: `rotate(${typeof value === "number" && Number.isFinite(value) ? value : 0}deg)` } }; break
+    case "offset": {
+      const second = modifier.arguments[1]
+      let x = 0
+      let y = 0
+      if (typeof value === "number") { x = value; y = typeof second === "number" ? second : 0 }
+      else if (value && typeof value === "object") {
+        const point = value as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+        x = Number(point.x ?? point.width ?? 0); y = Number(point.y ?? point.height ?? 0)
+      }
+      result = { style: { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` } }
+      break
+    }
+    case "style": result = { style: value }; break
+    case "className": result = { className: classNameOf(value) }; break
+    case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break
+    case "keyed": result = { key: value }; break
+    case "elementRef": result = { ref: value }; break
+    case "frame": result = { style: frameStyle(value && typeof value === "object" ? value : {}) }; break
+    case "animation": result = { style: animationCSSStyle(value as Animation | null) ?? {} }; break
+    default: result = {}
   }
+  const transaction = currentRenderTransaction()
+  if (swiftUIAnimatableModifierNames.has(modifier.name) && transaction.animation && !transaction.disablesAnimations) {
+    const animationStyle = animationCSSStyle(transaction.animation)
+    if (animationStyle) result = { ...result, style: { ...(result.style && typeof result.style === "object" ? result.style : {}), ...animationStyle } }
+  }
+  return result
 }
 
 function nativeElementProps(props: Record<string, unknown>): Record<string, unknown> {
@@ -87,10 +125,12 @@ function applyProps(content: ReactNode, extra: Record<string, unknown>): ReactNo
     const currentClass = typeof current.className === "string" ? current.className : ""
     const nextClass = typeof appliedExtra.className === "string" ? appliedExtra.className : ""
     const className = [currentClass, nextClass].filter(Boolean).join(" ")
+    const composedStyle = nextStyle ? { ...currentStyle, ...nextStyle } : currentStyle
+    if (nextStyle?.transform && currentStyle.transform) composedStyle.transform = `${currentStyle.transform} ${nextStyle.transform}`
     const props = {
       ...appliedExtra,
       ...(className ? { className } : {}),
-      ...( "style" in appliedExtra ? { style: { ...currentStyle, ...nextStyle } } : {}),
+      ...( "style" in appliedExtra ? { style: composedStyle } : {}),
     }
     return cloneElement(element, props)
   }
@@ -143,18 +183,31 @@ function normalizeForeignProps(
   return next
 }
 
-function useReactiveGraph<T>(compute: () => T): T {
+interface ReactiveGraph<T> {
+  readonly value: T
+  readonly transaction?: Transaction
+}
+
+function useReactiveGraph<T>(compute: () => T): ReactiveGraph<T> {
+  const previousVersions = useRef(new Map<StateRef<unknown>, number>())
+  let transaction: Transaction | undefined
+  for (const [dependency, previousVersion] of previousVersions.current) {
+    if (stateVersion(dependency) === previousVersion) continue
+    const candidate = stateTransaction(dependency)
+    if (!transaction || candidate.animation || candidate.disablesAnimations) transaction = candidate
+  }
   const dependencies = new Set<StateRef<unknown>>()
-  const value = collectStateReads(compute, dependency => dependencies.add(dependency))
+  const value = withRenderTransaction(transaction, () => collectStateReads(compute, dependency => dependencies.add(dependency)))
+  previousVersions.current = new Map([...dependencies].map(dependency => [dependency, stateVersion(dependency)]))
   useSyncExternalStore(
     listener => {
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, listener))
+      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => listener()))
       return () => unsubscribers.forEach(unsubscribe => unsubscribe())
     },
     () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
     () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
   )
-  return value
+  return { value, transaction }
 }
 
 function geometryFromElement(element: Element): GeometryProxy {
@@ -195,7 +248,7 @@ function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
 function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNode }): ReactNode {
   const host = useRef<HTMLDivElement | null>(null)
   const [geometry, setGeometry] = useState<GeometryProxy>(zeroGeometry)
-  const value = useReactiveGraph(() => render(geometry))
+  const reactive = useReactiveGraph(() => render(geometry))
   useEffect(() => {
     const element = host.current
     if (!element) return undefined
@@ -212,14 +265,14 @@ function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNo
       window.removeEventListener("resize", update)
     }
   }, [])
-  return createElement("div", { ref: host, "data-vune": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value)
+  return createElement("div", { ref: host, "data-vune": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, reactive.value)
 }
 
 function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } & Record<string, unknown>): ReactNode {
   const [state] = useState(() => node.state?.(node.props) ?? {})
   const resolvedProps = { ...node.props, ...state }
-  const value = useReactiveGraph(() => node.render(resolvedProps))
-  return applyProps(renderViewNode(value, renderer), forwardedProps)
+  const reactive = useReactiveGraph(() => node.render(resolvedProps))
+  return applyProps(withRenderTransaction(reactive.transaction, () => renderViewNode(reactive.value, renderer)), forwardedProps)
 }
 
 const renderer: VuneRenderer<ReactNode> = {
@@ -248,8 +301,8 @@ const renderer: VuneRenderer<ReactNode> = {
 }
 
 function RenderValue({ value, body }: { value?: ViewGraphValue; body?: () => ViewGraphValue }): ReactNode {
-  const resolved = useReactiveGraph(() => body ? body() : value ?? null)
-  return renderViewNode(resolved, renderer)
+  const reactive = useReactiveGraph(() => body ? body() : value ?? null)
+  return withRenderTransaction(reactive.transaction, () => renderViewNode(reactive.value, renderer))
 }
 
 export function render(value: ViewGraphValue): ReactNode {
@@ -299,8 +352,8 @@ function StatefulVuneView<State extends object, Props extends object>({
   props: Props
 }): ReactNode {
   const [state] = useState(() => definition.state(props))
-  const value = useReactiveGraph(() => definition.body(state, props))
-  return createElement(RenderValue, { value })
+  const reactive = useReactiveGraph(() => definition.body(state, props))
+  return withRenderTransaction(reactive.transaction, () => renderViewNode(reactive.value, renderer))
 }
 
 export function statefulView<State extends object, Props extends object = Record<string, unknown>>(

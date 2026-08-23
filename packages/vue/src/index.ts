@@ -20,8 +20,10 @@ import {
   type VNodeChild,
 } from "vue"
 import {
+  animationCSSStyle,
   Binding,
   classNameOf,
+  currentRenderTransaction,
   collectStateReads,
   defineView,
   edgeInsetsFromCss,
@@ -31,14 +33,18 @@ import {
   isForeignComponent,
   layoutLength,
   renderViewNode,
+  swiftUIAnimatableModifierNames,
   subscribeState,
+  withRenderTransaction,
   viewIdentityKey,
   zeroGeometry,
+  type Animation,
   type GeometryProxy,
   type BindingRef,
   type ModifiableViewNode,
   type VuneRenderer,
   type StateRef,
+  type Transaction,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
@@ -65,34 +71,65 @@ export type VueComponentView<C extends VueComponentType> = ((...args: VueCompone
 
 function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
   const [value] = modifier.arguments
+  let result: Record<string, unknown>
   switch (modifier.name) {
-    case "padding": return { style: { padding: layoutLength(value) } }
-    case "margin": return { style: { margin: layoutLength(value) } }
-    case "gap": return { style: { gap: layoutLength(value) } }
-    case "font": return { style: { font: value } }
-    case "fontSize": return { style: { fontSize: layoutLength(value) } }
-    case "bold": return { style: { fontWeight: 600 } }
-    case "foreground": return { style: { color: value } }
-    case "background": return { style: { background: value } }
-    case "style": return value && typeof value === "object" ? { style: value } : {}
-    case "className": return { class: classNameOf(value) }
-    case "withProps": return value && typeof value === "object" ? value as Record<string, unknown> : {}
-    case "keyed": return { key: value }
-    case "elementRef": return { ref: value }
-    case "frame": {
-      return { style: frameStyle(value && typeof value === "object" ? value : {}) }
+    case "padding": result = { style: { padding: layoutLength(value) } }; break
+    case "margin": result = { style: { margin: layoutLength(value) } }; break
+    case "gap": result = { style: { gap: layoutLength(value) } }; break
+    case "font": result = { style: { font: value } }; break
+    case "fontSize": result = { style: { fontSize: layoutLength(value) } }; break
+    case "bold": result = { style: { fontWeight: value === false ? "normal" : 600 } }; break
+    case "foreground":
+    case "foregroundStyle": result = { style: { color: value } }; break
+    case "background": result = { style: { background: value } }; break
+    case "opacity": {
+      const opacity = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
+      result = { style: { opacity } }; break
     }
-    default: return {}
+    case "scaleEffect": {
+      const scale = typeof value === "number" ? `${value}`
+        : value && typeof value === "object" ? `${Number((value as { x?: unknown; width?: unknown }).x ?? (value as { width?: unknown }).width ?? 1)}, ${Number((value as { y?: unknown; height?: unknown }).y ?? (value as { height?: unknown }).height ?? 1)}` : "1"
+      result = { style: { transform: `scale(${scale})` } }; break
+    }
+    case "rotationEffect": result = { style: { transform: `rotate(${typeof value === "number" && Number.isFinite(value) ? value : 0}deg)` } }; break
+    case "offset": {
+      const second = modifier.arguments[1]
+      let x = 0; let y = 0
+      if (typeof value === "number") { x = value; y = typeof second === "number" ? second : 0 }
+      else if (value && typeof value === "object") {
+        const point = value as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+        x = Number(point.x ?? point.width ?? 0); y = Number(point.y ?? point.height ?? 0)
+      }
+      result = { style: { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` } }; break
+    }
+    case "style": result = value && typeof value === "object" ? { style: value } : {}; break
+    case "className": result = { class: classNameOf(value) }; break
+    case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break
+    case "keyed": result = { key: value }; break
+    case "elementRef": result = { ref: value }; break
+    case "frame": result = { style: frameStyle(value && typeof value === "object" ? value : {}) }; break
+    case "animation": result = { style: animationCSSStyle(value as Animation | null) ?? {} }; break
+    default: result = {}
   }
+  const transaction = currentRenderTransaction()
+  if (swiftUIAnimatableModifierNames.has(modifier.name) && transaction.animation && !transaction.disablesAnimations) {
+    const animationStyle = animationCSSStyle(transaction.animation)
+    if (animationStyle) result = { ...result, style: { ...(result.style && typeof result.style === "object" ? result.style : {}), ...animationStyle } }
+  }
+  return result
 }
 
 function mergeProps(current: Record<string, unknown> | null | undefined, extra: Record<string, unknown>): Record<string, unknown> {
-  const currentStyle = current?.style && typeof current.style === "object" ? current.style : {}
-  const extraStyle = extra.style && typeof extra.style === "object" ? extra.style : undefined
+  const currentStyle: Record<string, unknown> = current?.style && typeof current.style === "object" ? current.style as Record<string, unknown> : {}
+  const extraStyle: Record<string, unknown> | undefined = extra.style && typeof extra.style === "object" ? extra.style as Record<string, unknown> : undefined
+  const style: Record<string, unknown> = extraStyle ? { ...currentStyle, ...extraStyle } : currentStyle
+  if (extraStyle && typeof extraStyle.transform === "string" && typeof currentStyle.transform === "string") {
+    style.transform = `${currentStyle.transform} ${extraStyle.transform}`
+  }
   return {
     ...(current ?? {}),
     ...extra,
-    ...(extraStyle ? { style: { ...currentStyle, ...extraStyle } } : {}),
+    ...(extraStyle ? { style } : {}),
   }
 }
 
@@ -167,9 +204,12 @@ const renderer: VuneRenderer<VNodeChild> = {
       return h("div", modifierProps(modifier), [content])
     }
     const extra = modifierProps(modifier)
-    return content && typeof content === "object" && "type" in content
-      ? cloneVNode(content as VNode, typeof (content as VNode).type === "string" && !((content as VNode).type as string).includes("-") ? nativeElementProps(extra) : extra)
-      : h(Fragment, modifierProps(modifier), [content])
+    if (content && typeof content === "object" && "type" in content) {
+      const vnode = content as VNode
+      const merged = mergeProps(vnode.props as Record<string, unknown> | null | undefined, extra)
+      return cloneVNode(vnode, typeof vnode.type === "string" && !vnode.type.includes("-") ? nativeElementProps(merged) : merged)
+    }
+    return h(Fragment, extra, [content])
   },
   view(node, _render, identity) {
     return h(VuneViewHost, { key: viewIdentityKey(identity), node })
@@ -179,8 +219,8 @@ const renderer: VuneRenderer<VNodeChild> = {
   },
 }
 
-function RenderValue({ value }: { value: ViewGraphValue }): VNodeChild {
-  return renderViewNode(value, renderer)
+function RenderValue({ value, transaction }: { value: ViewGraphValue; transaction?: Transaction }): VNodeChild {
+  return withRenderTransaction(transaction, () => renderViewNode(value, renderer))
 }
 
 const ReactiveVuneValue = defineComponent({
@@ -191,16 +231,21 @@ const ReactiveVuneValue = defineComponent({
   setup(props) {
     const value = shallowRef<ViewGraphValue>(null)
     const version = shallowRef(0)
+    const transaction = shallowRef<Transaction | undefined>(undefined)
+    let pendingTransaction: Transaction | undefined
     watchEffect(onCleanup => {
       void version.value
       const dependencies = new Set<StateRef<unknown>>()
-      value.value = collectStateReads(props.factory, dependency => dependencies.add(dependency))
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => {
+      transaction.value = pendingTransaction
+      value.value = withRenderTransaction(pendingTransaction, () => collectStateReads(props.factory, dependency => dependencies.add(dependency)))
+      pendingTransaction = undefined
+      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, nextTransaction => {
+        pendingTransaction = nextTransaction
         version.value += 1
       }))
       onCleanup(() => unsubscribers.forEach(unsubscribe => unsubscribe()))
     })
-    return () => h(RenderValue, { value: value.value })
+    return () => h(RenderValue, { value: value.value, transaction: transaction.value })
   },
 })
 
@@ -249,12 +294,14 @@ const GeometryVuneValue = defineComponent({
     const geometry = shallowRef<GeometryProxy>(zeroGeometry)
     const value = shallowRef<VNodeChild>(null)
     const version = shallowRef(0)
+    let pendingTransaction: Transaction | undefined
     let disconnect = () => undefined
     watchEffect(onCleanup => {
       void version.value
       const dependencies = new Set<StateRef<unknown>>()
-      value.value = collectStateReads(() => props.render(geometry.value), dependency => dependencies.add(dependency))
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => { version.value += 1 }))
+      value.value = withRenderTransaction(pendingTransaction, () => collectStateReads(() => props.render(geometry.value), dependency => dependencies.add(dependency)))
+      pendingTransaction = undefined
+      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => { pendingTransaction = transaction; version.value += 1 }))
       onCleanup(() => unsubscribers.forEach(unsubscribe => unsubscribe()))
     })
     onMounted(() => {
