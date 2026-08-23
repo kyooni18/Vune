@@ -17,7 +17,7 @@ import {
   type BuilderCall,
 } from "./scanner.js"
 import * as Core from "@vune-ui/core"
-import { resolveSemanticCall, swiftUIAnimationFactoryArgumentLabels, swiftUIInitializerSymbols, swiftUIModifierLowering, swiftUIViewNames, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
+import { resolveSemanticCall, swiftUIAnimationFactoryArgumentLabels, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
 
 const nonBindingDollarNames = new Set([
@@ -31,14 +31,6 @@ for (const [name, value] of Object.entries(Core)) {
   const viewType = (value as { readonly viewType?: { readonly name?: string; readonly semanticSymbol?: { readonly initializers: readonly SemanticInitializerSymbol[] } } }).viewType
   if (viewType?.name && viewType.semanticSymbol) canonicalInitializerSymbols.set(name, viewType.semanticSymbol.initializers)
 }
-// Canonical SwiftUI authoring signatures override compatibility/runtime-only
-// overloads when the manifest has an entry. This keeps compiler diagnostics
-// and closure-role resolution pinned to the public parity surface.
-for (const name of swiftUIViewNames()) {
-  const symbols = swiftUIInitializerSymbols(name)
-  if (symbols) canonicalInitializerSymbols.set(name, symbols)
-}
-
 type InitializerSymbolRegistry = ReadonlyMap<string, readonly SemanticInitializerSymbol[]>
 
 function symbolsForCall(call: VuneCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): readonly SemanticInitializerSymbol[] | undefined {

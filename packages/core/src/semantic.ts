@@ -508,8 +508,14 @@ function normalizeArguments(
           return nextPositional
         })()
       : parameters.findIndex(parameter => parameterIndexForArgument(parameter, argument))
-    if (index < 0 || index >= parameters.length || used.has(index)) return undefined
+    if (index < 0 || index >= parameters.length) return undefined
     const parameter = parameters[index]
+    const propertyArgument = argument.label !== undefined && parameter.properties?.includes(argument.label) === true
+    if (used.has(index)) {
+      const previous = normalized[index]
+      const previousProperty = previous?.label !== undefined && parameter.properties?.includes(previous.label) === true
+      if (!propertyArgument || !previousProperty || previous.label === argument.label) return undefined
+    }
     if (argument.label === undefined && parameter.labelRequired) return undefined
     if (argument.label !== undefined) {
       if (index < lastLabeledIndex) return undefined
@@ -519,7 +525,7 @@ function normalizeArguments(
     if (argument.trailing && (!parameter.trailing || index !== parameters.length - 1)) return undefined
     if (argument.label === undefined) nextPositional = index + 1
     used.add(index)
-    normalized[index] = argument
+    if (!normalized[index]) normalized[index] = argument
   }
   for (let index = 0; index < parameters.length; index += 1) {
     if (normalized[index]) continue
@@ -545,9 +551,8 @@ function candidateScore(
   genericParameters?: string,
 ): number | undefined {
   const parameters = candidate.parameters
-  const variadic = parameters.at(-1)?.variadic === true
   const required = parameters.filter(parameter => parameter.required !== false).length
-  if (original.length < required || (!variadic && original.length > parameters.length)) return undefined
+  if (original.length < required) return undefined
   let score = 0
   // Labels are the first discriminator, including their source order.
   const labeled = original.filter(argument => argument.label !== undefined)

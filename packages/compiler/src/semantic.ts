@@ -5,8 +5,6 @@ import {
   resolveSemanticCall,
   semanticHtmlAttributeSpec,
   semanticHtmlTagSpec,
-  swiftUIInitializerSymbols,
-  swiftUIViewNames,
   type SemanticBuilderTypeSymbol,
   type SemanticForeignComponentTypeSymbol,
   type SemanticHtmlAttributeSymbol,
@@ -317,19 +315,6 @@ function canonicalViewSymbols(): Map<string, SemanticViewTypeSymbol> {
     if (typeof value !== "function") continue
     const symbol = (value as { readonly viewType?: { readonly semanticSymbol?: SemanticViewTypeSymbol } }).viewType?.semanticSymbol
     if (symbol) result.set(name, symbol)
-  }
-  for (const name of swiftUIViewNames()) {
-    const initializers = swiftUIInitializerSymbols(name)
-    if (!initializers) continue
-    const current = result.get(name)
-    result.set(name, {
-      kind: "view",
-      name,
-      qualifiedName: current?.qualifiedName ?? name,
-      initializers,
-      fields: current?.fields ?? [],
-      ...(current?.genericParameters ? { genericParameters: current.genericParameters } : {}),
-    })
   }
   return result
 }

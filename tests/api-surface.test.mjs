@@ -22,6 +22,9 @@ const coreRuntimeExports = [
   "vuneForeignComponent", "vuneInitializers", "vuneNamedArguments", "vuneView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
   "resolveBuilderClosure", "resolveInitializer", "resolveSemanticCall", "resolveSemanticInitializer", "resolveValue", "SemanticModel", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure", "viewBuilderSemanticSymbol",
   "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "viewTypeIdentity", "zeroGeometry",
+  "Animation", "Transaction", "animationCSSStyle", "currentRenderTransaction", "currentTransaction", "snapshotTransaction", "stateTransaction",
+  "swiftUIAnimatableModifierNames", "swiftUIAnimationFactoryArgumentLabels", "swiftUIApiManifest", "swiftUICanonicalModifierNames",
+  "swiftUIInitializerSymbols", "swiftUIModifierLowering", "swiftUIStaticModifierNames", "swiftUIViewNames", "withAnimation", "withRenderTransaction", "withTransaction",
 ].sort()
 
 const coreTypeOnlyExports = [
@@ -38,6 +41,8 @@ const coreTypeOnlyExports = [
   "VStackOptions", "VStackProps", "Value", "View", "ViewBuilderClosure", "ViewBuilderContent", "ViewBuilderResult", "ViewConstructor",
   "ViewConstructorMetadata", "ViewDefinition", "ViewFieldDefinition", "ViewGraphChild", "ViewGraphLeaf", "ViewGraphValue", "ViewHostNode",
   "ViewIdentity", "ViewIdentitySegment", "ViewModifier", "ViewModifierNode", "ViewNode", "ViewValue", "ZStackOptions", "ZStackProps",
+  "AnimationCSSStyle", "AnimationDescriptor", "AnimationKind", "OffsetValue", "Point", "ScaleEffectValue", "Size", "SwiftUIApiKind",
+  "SwiftUIInitializerSpec", "SwiftUIModifierLoweringSpec", "SwiftUIModifierSpec", "SwiftUIViewSpec", "TransactionOptions",
 ].sort()
 
 function declarationExports(path) {

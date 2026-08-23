@@ -162,12 +162,11 @@ const htmlRenderer: VuneRenderer<string> = {
       let nextAttributes = attributes
       const styleMatch = /\sstyle="([^"]*)"/.exec(attributes)
       const extraStyles = [extraStyle, propStyle].filter(Boolean).join(";")
-      const escapedExtraStyles = escapeAttribute(extraStyles)
       if (styleMatch && extraStyles) {
-        const merged = mergeSerializedStyles(styleMatch[1], escapedExtraStyles)
-        nextAttributes = nextAttributes.replace(styleMatch[0], ` style="${merged}"`)
+        const merged = mergeSerializedStyles(deserializeEscapedText(styleMatch[1]), extraStyles)
+        nextAttributes = nextAttributes.replace(styleMatch[0], ` style="${escapeAttribute(merged)}"`)
       } else if (extraStyles) {
-        nextAttributes += ` style="${escapedExtraStyles}"`
+        nextAttributes += ` style="${escapeAttribute(extraStyles)}"`
       }
       if (propClass) {
         const classMatch = /\sclass="([^"]*)"/.exec(nextAttributes)
