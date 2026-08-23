@@ -361,7 +361,15 @@ function compilerSemanticArgument(
 ): SemanticArgument {
   const value = source.trim()
   if (/^(?:\$[A-Za-z_$][A-Za-z0-9_$]*|Binding\s*\()/.test(value)) return { label, kind: "binding", type: "binding" }
-  if (/^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)$/.test(value)) return { label, type: "string" }
+  if (/^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)$/.test(value)) {
+    const literalFile = ts.createSourceFile("literal.ts", `(${value})`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const statement = literalFile.statements[0]
+    const expression = statement && ts.isExpressionStatement(statement) ? statement.expression : undefined
+    const unwrapped = expression && ts.isParenthesizedExpression(expression) ? expression.expression : expression
+    return unwrapped && ts.isStringLiteralLike(unwrapped)
+      ? { label, type: "string", value: unwrapped.text }
+      : { label, type: "string" }
+  }
   if (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return { label, type: "number" }
   if (/^(?:true|false)$/.test(value)) return { label, type: "boolean" }
   if (/^null$/.test(value)) return { label, type: "null" }
@@ -563,6 +571,7 @@ function typescriptGraphSymbols(
   const htmlDiagnostics: VuneSemanticHtmlDiagnostic[] = []
   const foreignComponents: VuneSemanticForeignComponent[] = []
   const vueImports = new Map<string, string>()
+  const reactImports = new Map<string, string>()
   let elementCursor = 0
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
@@ -570,13 +579,20 @@ function typescriptGraphSymbols(
     if (!/\.vue$/i.test(module) || !statement.importClause?.name) continue
     vueImports.set(statement.importClause.name.text, module)
   }
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const module = statement.moduleSpecifier.text
+    if (!/\.(?:tsx|jsx)$/i.test(module) || !statement.importClause?.name) continue
+    reactImports.set(statement.importClause.name.text, module)
+  }
 
   const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isCallExpression(node.initializer)) {
       const expression = node.initializer.expression
       const argument = node.initializer.arguments[0]
-      if (ts.isIdentifier(expression) && /^(?:__vuneForeignComponent|__vuneVueComponent)/.test(expression.text) && ts.isIdentifier(argument)) {
-        const module = vueImports.get(argument.text)
+      if (ts.isIdentifier(expression) && /^(?:__vuneForeignComponent|__vuneVueComponent|__vuneReactComponent)/.test(expression.text) && ts.isIdentifier(argument)) {
+        const isReact = expression.text === "__vuneReactComponent"
+        const module = (isReact ? reactImports : vueImports).get(argument.text)
         if (module) {
           const generatedRange = { start: node.getStart(sourceFile), end: node.end }
           foreignComponents.push({
@@ -588,7 +604,7 @@ function typescriptGraphSymbols(
               kind: "foreign-component",
               localName: node.name.text,
               module,
-              rendererAdapter: "@vune-ui/vue",
+              rendererAdapter: isReact ? "@vune-ui/react" : "@vune-ui/vue",
             },
           })
         }

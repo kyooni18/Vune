@@ -1,8 +1,108 @@
 import type { FrameOptions } from "../layout.js"
 import type { VuneStyleProperties } from "../html.js"
+import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import type { ClassValue, Length, ModifiableViewNode, Modifiers, ViewModifierNode, ViewNode } from "./types.js"
 
 const decoratedNodes = new WeakMap<object, ModifiableViewNode>()
+
+function snapshotStyleRecord(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value
+  const array = arrayCheck(value)
+  if (array === true) return value
+  if (array === undefined) return Object.freeze({})
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return Object.freeze({})
+    const clone = Object.create(prototype) as Record<PropertyKey, unknown>
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") continue
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      const item = descriptor.value
+      if (item !== undefined && typeof item !== "string" && (typeof item !== "number" || !Number.isFinite(item))) continue
+      Object.defineProperty(clone, key, descriptor)
+    }
+    return Object.freeze(clone)
+  } catch {
+    return Object.freeze({})
+  }
+}
+
+export function snapshotRecord(value: unknown, snapshotStyle = false): unknown {
+  if (typeof value !== "object" || value === null) return value
+  const array = arrayCheck(value)
+  if (array === true) return value
+  if (array === undefined) return Object.freeze({})
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return value
+    const clone = Object.create(prototype) as Record<PropertyKey, unknown>
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      const normalized = snapshotStyle && key === "style"
+        ? { ...descriptor, value: snapshotStyleRecord(descriptor.value) }
+        : descriptor
+      Object.defineProperty(clone, key, normalized)
+    }
+    return Object.freeze(clone)
+  } catch {
+    return Object.freeze({})
+  }
+}
+
+function snapshotClassValue(value: unknown, seen = new Set<unknown[]>()): unknown {
+  const array = arrayCheck(value)
+  if (array === undefined) return false
+  if (!array) return value
+  const values = value as unknown[]
+  if (seen.has(values)) return false
+  seen.add(values)
+  try {
+    const length = Object.getOwnPropertyDescriptor(values, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return false
+    const snapshot: unknown[] = []
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (descriptor && "value" in descriptor) snapshot.push(snapshotClassValue(descriptor.value, seen))
+    }
+    return Object.freeze(snapshot)
+  } catch {
+    return false
+  } finally {
+    seen.delete(values)
+  }
+}
+
+function snapshotModifierArgument(name: string, value: unknown): unknown {
+  if (name === "style") return snapshotStyleRecord(value)
+  if (name === "frame") return snapshotRecord(value)
+  if (name === "className") return snapshotClassValue(value)
+  if (name === "withProps") return snapshotRecord(value, true)
+  return value
+}
+
+function ownDataValue(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function snapshotModifierNode(value: unknown): ViewModifierNode | undefined {
+  const name = ownDataValue(value, "name")
+  const arguments_ = ownDataValue(value, "arguments")
+  if (typeof name !== "string" || arrayCheck(arguments_) !== true) return undefined
+  const props = ownDataValue(value, "props")
+  return Object.freeze({
+    name,
+    arguments: Object.freeze(snapshotArrayValues(arguments_ as readonly unknown[]).map(item => snapshotModifierArgument(name, item))),
+    ...(props === undefined ? {} : { props: props === null ? null : snapshotRecord(props, true) as object }),
+  })
+}
 
 function applyModifier(content: ViewNode, name: string, arguments_: readonly unknown[]): ModifiableViewNode {
   return modifiedContent(content, { name, arguments: arguments_ })
@@ -43,13 +143,12 @@ export function decorate(node: ViewNode, owned = false): ModifiableViewNode {
 }
 
 export function modifiedContent(content: ViewNode, modifier: ViewModifierNode | readonly ViewModifierNode[]): ModifiableViewNode {
-  const incoming = Array.isArray(modifier) ? modifier : [modifier]
-  if (incoming.length === 0) return decorate(content)
-  const normalizedIncoming = incoming.map(item => Object.freeze({
-    name: item.name,
-    arguments: Object.freeze([...item.arguments]),
-    props: item.props,
-  }))
+  const incoming = arrayCheck(modifier) === true ? snapshotArrayValues(modifier as readonly ViewModifierNode[]) : [modifier]
+  const normalizedIncoming = incoming.flatMap(item => {
+    const snapshot = snapshotModifierNode(item)
+    return snapshot ? [snapshot] : []
+  })
+  if (normalizedIncoming.length === 0) return decorate(content)
   const normalizedModifiers = Object.freeze(content.kind === "modified"
     ? [...content.modifiers, ...normalizedIncoming]
     : normalizedIncoming)

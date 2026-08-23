@@ -9,12 +9,14 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react"
+import { createRoot, hydrateRoot, type Root } from "react-dom/client"
 import {
   collectStateReads,
   classNameOf,
   edgeInsetsFromCss,
   frameStyle,
   isForeignComponent,
+  layoutLength,
   renderViewNode,
   stateVersion,
   subscribeState,
@@ -29,18 +31,14 @@ import {
   type ViewModifierNode,
 } from "@vune-ui/core"
 
-function cssLength(value: unknown): string | number | undefined {
-  return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
-}
-
 function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
   const [value] = modifier.arguments
   switch (modifier.name) {
-    case "padding": return { style: { padding: cssLength(value) } }
-    case "margin": return { style: { margin: cssLength(value) } }
-    case "gap": return { style: { gap: cssLength(value) } }
+    case "padding": return { style: { padding: layoutLength(value) } }
+    case "margin": return { style: { margin: layoutLength(value) } }
+    case "gap": return { style: { gap: layoutLength(value) } }
     case "font": return { style: { font: value } }
-    case "fontSize": return { style: { fontSize: cssLength(value) } }
+    case "fontSize": return { style: { fontSize: layoutLength(value) } }
     case "bold": return { style: { fontWeight: 600 } }
     case "foreground": return { style: { color: value } }
     case "background": return { style: { background: value } }
@@ -56,19 +54,43 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
   }
 }
 
+function nativeElementProps(props: Record<string, unknown>): Record<string, unknown> {
+  try {
+    const normalized: Record<string, unknown> = {}
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") continue
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      const value = descriptor.value
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (primitive
+        || (key === "style" && typeof value === "object" && value !== null)
+        || (key === "ref" && (typeof value === "object" || typeof value === "function"))
+        || (/^on[A-Za-z]/.test(key) && typeof value === "function")) {
+        Object.defineProperty(normalized, key, { ...descriptor, configurable: true })
+      }
+    }
+    return normalized
+  } catch {
+    return {}
+  }
+}
+
 function applyProps(content: ReactNode, extra: Record<string, unknown>): ReactNode {
   if (content && typeof content === "object" && "type" in content && "props" in content) {
     const element = content as Parameters<typeof cloneElement>[0]
+    const appliedExtra = typeof element.type === "string" && !element.type.includes("-") ? nativeElementProps(extra) : extra
     const current = (element.props ?? {}) as Record<string, unknown>
     const currentStyle = current.style && typeof current.style === "object" ? current.style as CSSProperties : {}
-    const nextStyle = extra.style && typeof extra.style === "object" ? extra.style as CSSProperties : undefined
+    const nextStyle = appliedExtra.style && typeof appliedExtra.style === "object" ? appliedExtra.style as CSSProperties : undefined
     const currentClass = typeof current.className === "string" ? current.className : ""
-    const nextClass = typeof extra.className === "string" ? extra.className : ""
+    const nextClass = typeof appliedExtra.className === "string" ? appliedExtra.className : ""
     const className = [currentClass, nextClass].filter(Boolean).join(" ")
     const props = {
-      ...extra,
+      ...appliedExtra,
       ...(className ? { className } : {}),
-      ...( "style" in extra ? { style: { ...currentStyle, ...nextStyle } } : {}),
+      ...( "style" in appliedExtra ? { style: { ...currentStyle, ...nextStyle } } : {}),
     }
     return cloneElement(element, props)
   }
@@ -225,23 +247,43 @@ const renderer: VuneRenderer<ReactNode> = {
   },
 }
 
-function RenderValue({ value }: { value: ViewGraphValue }): ReactNode {
-  return renderViewNode(value, renderer)
+function RenderValue({ value, body }: { value?: ViewGraphValue; body?: () => ViewGraphValue }): ReactNode {
+  const resolved = useReactiveGraph(() => body ? body() : value ?? null)
+  return renderViewNode(resolved, renderer)
 }
 
 export function render(value: ViewGraphValue): ReactNode {
   return renderViewNode(value, renderer)
 }
 
-export function VuneView<Props extends Record<string, unknown> = Record<string, unknown>>({
-  body,
-  props,
-}: {
-  body: (props: Props) => ViewGraphValue
-  props: Props
-}): ReactNode {
-  const value = useReactiveGraph(() => body(props))
-  return createElement(RenderValue, { value })
+/** Subscribe a React component to a Vune State without making State a React primitive. */
+export function useVuneState<T>(state: StateRef<T>): T {
+  useSyncExternalStore(
+    listener => subscribeState(state, listener),
+    () => stateVersion(state),
+    () => stateVersion(state),
+  )
+  return state.value
+}
+
+export interface VuneViewProps<Props extends Record<string, unknown> = Record<string, unknown>> {
+  readonly value?: ViewGraphValue
+  readonly render?: () => ViewGraphValue
+  /** Compatibility graph factory used by the existing `view()` adapter. */
+  readonly body?: (props: Props) => ViewGraphValue
+  readonly props?: Props
+}
+
+export function VuneView<Props extends Record<string, unknown> = Record<string, unknown>>({ value, render: renderBody, body, props }: VuneViewProps<Props>): ReactNode {
+  const factory = renderBody ?? (body ? () => body(props ?? {} as Props) : undefined)
+  return createElement(RenderValue, { value, body: factory })
+}
+
+/** Wrap a graph factory as a React component, retaining React props at the bridge. */
+export function createReactView<Props extends Record<string, unknown> = Record<string, unknown>>(
+  body: (props: Props) => ViewGraphValue,
+): (props: Props) => ReactNode {
+  return (props: Props) => createElement(VuneView<Props>, { body, props })
 }
 
 export interface StatefulViewDefinition<State extends object, Props extends object = Record<string, unknown>> {
@@ -274,8 +316,25 @@ export function view<Props extends Record<string, unknown> = Record<string, unkn
   body: (props: Props) => ViewGraphValue,
 ): (props: Props) => ReactNode
 export function view(input: ((props: Record<string, unknown>) => ViewGraphValue) | StatefulViewDefinition<object, Record<string, unknown>>): (props: Record<string, unknown>) => ReactNode {
-  if (typeof input === "function") return (props: Record<string, unknown>) => createElement(VuneView as any, { body: input, props })
+  if (typeof input === "function") return createReactView(input)
   return (props: Record<string, unknown>) => createElement(StatefulVuneView as any, { definition: input, props })
+}
+
+export interface ReactMountOptions {
+  readonly hydrate?: boolean
+}
+
+/** Mount a graph into a React-managed DOM root, optionally hydrating SSR markup. */
+export function mount(value: ViewGraphValue, target: Element, options: ReactMountOptions = {}): () => void {
+  const element = createElement(VuneView, { value })
+  let root: Root
+  if (options.hydrate) {
+    root = hydrateRoot(target, element)
+  } else {
+    root = createRoot(target)
+    root.render(element)
+  }
+  return () => root.unmount()
 }
 
 export function createRenderer(): VuneRenderer<ReactNode> {

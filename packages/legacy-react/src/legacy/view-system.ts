@@ -3,6 +3,7 @@ import { useReactiveValue } from './state.js'
 import { finalize } from './modifiers.js'
 import { materializeViewNode, reactRenderer } from './runtime/renderer.js'
 import { isViewNode, markViewNode, viewElement, viewFragment, viewGraphChild, viewHost, type ViewGraphValue, type ViewNode } from './runtime/view-graph.js'
+import { arrayCheck, snapshotArrayValues } from './runtime/arrays.js'
 import { useViewIdentityStorage } from './runtime/view-storage.js'
 import { markIntrinsic } from './layout.js'
 import { closureForKind, closureKindOf, closureVariantsOf, markVuneClosure, type VuneClosureKind } from './closures.js'
@@ -296,7 +297,9 @@ export function assertInitializerCall(target: unknown, args: readonly unknown[])
 
 export function flattenViewBuilder(value: ViewBuilderResult): View[] {
   if (value === null || value === undefined || value === false) return []
-  if (Array.isArray(value)) return value.flatMap(item => flattenViewBuilder(item as ViewBuilderResult))
+  const array = arrayCheck(value)
+  if (array === undefined) throw new TypeError('Legacy ViewBuilder arrays must be inspectable')
+  if (array) return snapshotArrayValues(value as readonly unknown[]).flatMap(item => flattenViewBuilder(item as ViewBuilderResult))
   return [value as View]
 }
 
@@ -311,7 +314,8 @@ export const ViewBuilder = Object.freeze({
     return flattenViewBuilder(second === undefined ? first : second)
   },
   buildArray(values: readonly ViewBuilderResult[]): View[] {
-    return values.flatMap(flattenViewBuilder)
+    if (arrayCheck(values) !== true) throw new TypeError('Legacy ViewBuilder arrays must be inspectable')
+    return snapshotArrayValues(values).flatMap(item => flattenViewBuilder(item as ViewBuilderResult))
   },
 })
 
@@ -330,7 +334,9 @@ function renderView(value: View): ReactNode {
 
 /** Render a View value at the React ownership boundary. */
 export function renderViewTree(value: ViewBuilderResult): ReactNode {
-  if (Array.isArray(value)) return value.map(item => renderViewTree(item as ViewBuilderResult))
+  const array = arrayCheck(value)
+  if (array === undefined) throw new TypeError('Legacy ViewBuilder arrays must be inspectable')
+  if (array) return snapshotArrayValues(value as readonly unknown[]).map(item => renderViewTree(item as ViewBuilderResult))
   if (value === null || value === undefined || value === false) return value as any
   return renderView(value as View)
 }

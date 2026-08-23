@@ -24,7 +24,12 @@ The canonical `vune-ui` entry point is the renderer-independent graph surface:
 
 Renderer-specific entry points add only materialization and runtime bridges:
 
-- `@vune-ui/react` — React materialization and optional React compatibility APIs.
+- `@vune-ui/react` — React materialization and explicit React interop APIs:
+  `Component`, `reactComponent`/`foreignComponent`, `createReactView`, `mount`,
+  and `VuneView`. `useVuneState` subscribes a React component to a Vune
+  `State`, while `fromReactState` adapts a React `useState` pair to a Vune
+  `Binding`. `mount(value, target, { hydrate: true })` hydrates React SSR
+  markup.
 - `@vune-ui/vue` — Vue VNodes, `VuneView`, `createVueView`, `Component`, generic
   foreign-component slots, and
   explicit `toVueRef`/`fromVueRef` bridges. `mount(value, target, { hydrate: true })`

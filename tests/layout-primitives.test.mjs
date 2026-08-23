@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom"
 import { renderToStaticMarkup } from "react-dom/server"
 import { createSSRApp } from "vue"
 import { renderToString } from "@vue/server-renderer"
-import { Divider, Element, Group, HStack, SafeArea, ScrollView, Spacer, Text, VStack, ZStack, defineView, initializer } from "../packages/core/dist/index.js"
+import { Divider, Element, Grid, Group, HStack, LazyGrid, LazyVStack, RoundedRectangle, SafeArea, ScrollView, Spacer, Text, VStack, ZStack, defineView, initializer } from "../packages/core/dist/index.js"
 import { render as renderReact } from "../packages/react/dist/index.js"
 import { render as renderVue } from "../packages/vue/dist/index.js"
 import { renderToHTML } from "../packages/web/dist/index.js"
@@ -76,6 +76,131 @@ test("frame creates the same alignment host across React, Vue, and Web renderers
     assert.equal(frame?.firstElementChild?.textContent, "Aligned")
     assert.equal(frame?.firstElementChild?.style.display, "")
   }
+})
+
+test("layout primitives omit invalid numeric CSS values in every renderer", async () => {
+  const value = VStack({ spacing: Number.NaN },
+    Text("Finite").padding(Number.NaN).margin(Number.POSITIVE_INFINITY).frame({
+      width: Number.NaN,
+      height: Number.NEGATIVE_INFINITY,
+    }),
+    Spacer(Number.POSITIVE_INFINITY),
+    RoundedRectangle(Number.NaN),
+    LazyVStack({ spacing: Number.NEGATIVE_INFINITY, estimatedItemSize: Number.NaN, overscan: Number.NaN }, Text("Lazy")),
+    Grid({ columns: Number.NaN, rows: Number.POSITIVE_INFINITY }, Text("Grid")),
+    LazyGrid({ columns: 0, rows: 1.5, estimatedItemSize: Number.NaN, overscan: Number.POSITIVE_INFINITY }, Text("Lazy grid")),
+  )
+  const outputs = [
+    renderToStaticMarkup(renderReact(value)),
+    await renderToString(createSSRApp({ render: () => renderVue(value) })),
+    renderToHTML(value),
+  ]
+  for (const html of outputs) {
+    assert.doesNotMatch(html, /NaN|Infinity/)
+    assert.doesNotMatch(html, /repeat\((?:0|1\.5),/)
+  }
+})
+
+test("layout option records are immutable data-only snapshots", () => {
+  let getterCalls = 0
+  const stackOptions = { alignment: "leading", spacing: 4 }
+  Object.defineProperty(stackOptions, "unknown", {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      throw new Error("unknown stack options must not be read")
+    },
+  })
+  const gridOptions = { columns: 2, autoFlow: "row" }
+  const stack = VStack(stackOptions, Text("Stack"))
+  const grid = Grid(gridOptions, Text("Grid"))
+  stackOptions.alignment = "trailing"
+  stackOptions.spacing = 20
+  gridOptions.columns = 5
+  gridOptions.autoFlow = "column"
+
+  const stackHTML = renderToHTML(stack)
+  const gridHTML = renderToHTML(grid)
+  assert.match(stackHTML, /align-items:flex-start/)
+  assert.match(stackHTML, /gap:4px/)
+  assert.doesNotMatch(stackHTML, /20px|flex-end/)
+  assert.match(gridHTML, /grid-template-columns:repeat\(2,/)
+  assert.match(gridHTML, /grid-auto-flow:row/)
+  assert.doesNotMatch(gridHTML, /repeat\(5,|grid-auto-flow:column/)
+  assert.equal(getterCalls, 0)
+
+  const accessorOptions = {}
+  Object.defineProperty(accessorOptions, "spacing", {
+    get() {
+      getterCalls += 1
+      throw new Error("declared option accessors must not run")
+    },
+  })
+  Object.defineProperty(accessorOptions, "columns", {
+    get() {
+      getterCalls += 1
+      throw new Error("declared option accessors must not run")
+    },
+  })
+  assert.throws(() => VStack(accessorOptions, Text("Invalid")), /VStack options must be a data-only record/)
+  assert.throws(() => Grid(accessorOptions, Text("Invalid")), /Grid options must be a data-only record/)
+  assert.equal(getterCalls, 0)
+})
+
+test("grid option values cannot trigger coercion during rendering", async () => {
+  let getterCalls = 0
+  const hostile = {}
+  Object.defineProperty(hostile, "toString", {
+    get() {
+      getterCalls += 1
+      throw new Error("grid options must not coerce objects")
+    },
+  })
+  const value = VStack(
+    Grid({ columns: hostile, rows: hostile, autoFlow: hostile }, Text("Grid")),
+    LazyGrid({ columns: hostile, autoFlow: hostile, estimatedItemSize: hostile }, Text("Lazy grid")),
+  )
+  const outputs = [
+    renderToStaticMarkup(renderReact(value)),
+    await renderToString(createSSRApp({ render: () => renderVue(value) })),
+    renderToHTML(value),
+  ]
+  assert.equal(getterCalls, 0)
+  for (const html of outputs) assert.doesNotMatch(html, /\[object Object\]/)
+})
+
+test("SafeArea snapshots edge arrays without executing indexed accessors", () => {
+  const edges = ["top"]
+  const value = SafeArea(edges, () => Text("Safe"))
+  edges.push("left")
+  const html = renderToHTML(value)
+  assert.match(html, /padding-top:env\(safe-area-inset-top\)/)
+  assert.doesNotMatch(html, /padding-left/)
+
+  let getterCalls = 0
+  const accessorEdges = []
+  Object.defineProperty(accessorEdges, "0", {
+    configurable: true,
+    get() {
+      getterCalls += 1
+      throw new Error("edge getters must not run")
+    },
+  })
+  accessorEdges.length = 1
+  assert.throws(
+    () => SafeArea(accessorEdges, () => Text("Invalid")),
+    /SafeArea edges must be a data-only edge or edge array/,
+  )
+  assert.equal(getterCalls, 0)
+})
+
+test("ScrollView rejects axes outside its declared literal contract", () => {
+  assert.throws(() => ScrollView("sideways", () => Text("Invalid")), /No matching initializer/)
+  assert.throws(() => ScrollView(Text("Invalid"), "sideways"), /No matching initializer/)
+
+  const html = renderToHTML(ScrollView("both", () => Text("Valid")))
+  assert.match(html, /overflow-x:auto/)
+  assert.match(html, /overflow-y:auto/)
 })
 
 test("custom View modifiers reach the rendered root in every renderer", async () => {

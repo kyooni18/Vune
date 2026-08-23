@@ -207,6 +207,14 @@ VueChart(values: values)`
   assert.equal(model.typescriptDiagnostics.length, 0)
 })
 
+test("semantic model records React foreign components with the React adapter", () => {
+  const source = `import ReactChart from "./ReactChart.tsx"
+ReactChart(values: values)`
+  const model = createVuneSemanticModel(source, "ReactInterop.vune.ts")
+  assert.deepEqual(model.foreignComponents.map(component => [component.localName, component.module, component.symbol.rendererAdapter]), [["ReactChart", "./ReactChart.tsx", "@vune-ui/react"]])
+  assert.equal(source.slice(model.foreignComponents[0].range.start, model.foreignComponents[0].range.end), "ReactChart(values: values)")
+})
+
 test("HTML semantic symbols validate standard attributes while preserving custom elements", () => {
   const validSource = `const id = "email"
 <input type="email" aria-label="Email" data-test-id={id} oninput={event => save(event)} />
@@ -439,6 +447,15 @@ Chart(values: values)`
   assert.doesNotMatch(output, /const Ignored\s*=/)
   assert.match(output, /Chart\(namedArguments\(\{ values: values \}\)\)/)
   assert.equal(ts.createSourceFile("AstVueImport.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("React TSX and JSX default imports become transparent Vune Views", () => {
+  const output = transformVuneSource(`import ReactChart from "./ReactChart.tsx"
+ReactChart(values: values)`, "ReactChart.vune.ts")
+  assert.match(output, /import \{ reactComponent as __vuneReactComponent \} from "@vune-ui\/react"/)
+  assert.match(output, /const ReactChart = __vuneReactComponent\(__vuneReactComponent0\)/)
+  assert.match(output, /ReactChart\(namedArguments\(\{ values: values \}\)\)/)
+  assert.equal(ts.createSourceFile("ReactChart.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("the canonical compiler preserves host stylesheet imports", () => {

@@ -64,6 +64,31 @@ test("Vue components enter Vune before Vue materialization and Vune Views enter 
   assert.match(greetingHtml, /Hello Vune/)
 })
 
+test("Vue component adapters isolate revoked and accessor props", () => {
+  const Badge = defineComponent({ props: { label: String }, render() { return h("span", null, this.label) } })
+  const pair = Proxy.revocable({}, {})
+  pair.revoke()
+  const direct = Component(Badge, pair.proxy)
+  assert.deepEqual(direct.type.props, {})
+
+  const AdaptedBadge = vueComponent(Badge)
+  assert.throws(() => AdaptedBadge(pair.proxy), /No matching initializer/)
+
+  let getterCalls = 0
+  const props = { label: "safe" }
+  Object.defineProperty(props, "slots", {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      throw new Error("component slots getter must not run")
+    },
+  })
+  const value = Component(Badge, props)
+  assert.deepEqual(value.type.props, { label: "safe" })
+  assert.deepEqual(value.type.slots, {})
+  assert.equal(getterCalls, 0)
+})
+
 test("Vue scoped slots and provide/inject cross the Vune graph without losing Vue ownership", async () => {
   const key = Symbol("vune-context")
   const Provider = defineComponent({

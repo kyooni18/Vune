@@ -1,10 +1,11 @@
 import { isForeignComponent, renderViewNode, zeroGeometry, type VuneRenderer, type ViewGraphValue, type ViewHostNode } from "@vune-ui/core"
-import { classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, propsOf, styleAttribute, styleOf, styleText, voidHtmlElements } from "./shared.js"
+import { assertHtmlName, classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, nativeElementProps, normalizedRawTextValue, normalizedTextAreaValue, propsOf, rawTextHtmlElements, styleAttribute, styleOf, styleText, validTableChildElements, voidHtmlElements } from "./shared.js"
 
 
 function serializedAttribute(key: string, value: unknown): string | undefined {
-  if (key === "children" || key === "key" || key === "ref" || value === undefined || value === null || typeof value === "function") return undefined
-  const name = htmlAttributeName(key)
+  if (key === "children" || key === "key" || key === "ref" || /^on[A-Za-z]/.test(key) || value === undefined || value === null || typeof value === "function") return undefined
+  if (typeof value === "object" && key !== "style" && key !== "className" && key !== "class") return undefined
+  const name = assertHtmlName(htmlAttributeName(key), "attribute")
   const serialized = key === "style" ? styleAttribute(value) : key === "className" || key === "class" ? classNameOf(value) : String(value)
   if (serialized === undefined) return undefined
   if (isBooleanHtmlAttribute(name)) return value ? name : undefined
@@ -17,19 +18,106 @@ function serializedAttribute(key: string, value: unknown): string | undefined {
   return `${name}="${escapeAttribute(serialized)}"`
 }
 
+function serializedTextAreaValue(value: unknown): string {
+  const text = normalizedTextAreaValue(value)
+  // The HTML parser strips one leading LF from textarea content. A synthetic
+  // LF preserves the normalized value exposed by HTMLTextAreaElement.value.
+  const serialized = escape(text)
+  return text.startsWith("\n") ? `\n${serialized}` : serialized
+}
+
+function deserializeEscapedText(value: string): string {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&gt;", ">")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&amp;", "&")
+}
+
+function serializeRawText(tag: string, children: readonly string[]): string {
+  if (children.some(child => child.includes("<"))) {
+    throw new TypeError(`<${tag.toLowerCase()}> only accepts text children`)
+  }
+  return normalizedRawTextValue(tag, deserializeEscapedText(children.join("")))
+}
+
+function serializeSelectedOption(content: string, value: unknown): string {
+  const expectedAttribute = escapeAttribute(String(value))
+  const expectedText = escape(String(value))
+  let matched = false
+  return content.replace(/<option(?=\s|>)([^>]*)>([\s\S]*?)<\/option>/gi, (_match, attributes: string, body: string) => {
+    const cleaned = attributes.replace(/\sselected(?:="[^"]*")?/gi, "")
+    const explicitValue = /\svalue="([^"]*)"/i.exec(cleaned)?.[1]
+    const selected = !matched && (explicitValue === undefined ? body === expectedText : explicitValue === expectedAttribute)
+    if (selected) matched = true
+    return `<option${cleaned}${selected ? " selected" : ""}>${body}</option>`
+  })
+}
+
+function serializeTableChildren(children: readonly string[]): string {
+  let result = ""
+  let group: { kind: "row" | "column" | "cell"; content: string } | undefined
+  const flushGroup = (): void => {
+    if (!group) return
+    result += group.kind === "row"
+      ? `<tbody>${group.content}</tbody>`
+      : group.kind === "column"
+        ? `<colgroup>${group.content}</colgroup>`
+        : `<tbody><tr>${group.content}</tr></tbody>`
+    group = undefined
+  }
+  for (const child of children) {
+    const tag = /^<([A-Za-z][A-Za-z0-9-]*)(?:\s|>)/.exec(child)?.[1]?.toLowerCase()
+    const kind = tag === "tr" ? "row" : tag === "col" ? "column" : tag === "td" || tag === "th" ? "cell" : undefined
+    if (kind) {
+      if (group?.kind !== kind) flushGroup()
+      group = { kind, content: `${group?.content ?? ""}${child}` }
+      continue
+    }
+    flushGroup()
+    if (!tag && child.trim()) {
+      throw new TypeError("<table> only accepts table sections, rows, columns, cells, scripts, templates, or whitespace")
+    }
+    if (tag && !validTableChildElements.has(tag)) {
+      throw new TypeError("<table> only accepts table sections, rows, columns, cells, scripts, templates, or whitespace")
+    }
+    result += child
+  }
+  flushGroup()
+  return result
+}
+
 const htmlRenderer: VuneRenderer<string> = {
   element(type, props, ...children) {
     const foreign = isForeignComponent(type) ? type : undefined
-    const tag = typeof type === "string" ? type : "div"
+    const tag = assertHtmlName(typeof type === "string" ? type : "div", "tag")
     const effectiveProps = foreign
       ? { ...foreign.props, ...foreign.events, ...(foreign.ref === undefined ? {} : { ref: foreign.ref }), ...(props ?? {}), "data-vune-foreign": foreign.name }
       : props
+    const isTextArea = tag.toLowerCase() === "textarea"
+    const isSelect = tag.toLowerCase() === "select"
+    const isRawText = rawTextHtmlElements.has(tag.toLowerCase())
+    const textAreaValue = isTextArea ? effectiveProps?.value : undefined
+    const selectValue = isSelect ? effectiveProps?.value : undefined
+    const hasTextAreaValue = textAreaValue !== undefined && textAreaValue !== null
+    const hasSelectValue = selectValue !== undefined && selectValue !== null
     const attributes = Object.entries(effectiveProps ?? {})
+      .filter(([key]) => !((isTextArea || isSelect) && htmlAttributeName(key).toLowerCase() === "value"))
       .map(([key, value]) => serializedAttribute(key, value))
       .filter((value): value is string => Boolean(value))
       .join(" ")
     const opening = `<${tag}${attributes ? ` ${attributes}` : ""}>`
-    return voidHtmlElements.has(tag.toLowerCase()) ? opening : `${opening}${children.join("")}</${tag}>`
+    const childContent = isRawText
+      ? serializeRawText(tag, children)
+      : tag.toLowerCase() === "table"
+        ? serializeTableChildren(children)
+        : children.join("")
+    const content = hasTextAreaValue
+      ? serializedTextAreaValue(textAreaValue)
+      : hasSelectValue
+        ? serializeSelectedOption(childContent, selectValue)
+        : childContent
+    return voidHtmlElements.has(tag.toLowerCase()) ? opening : `${opening}${content}</${tag}>`
   },
   fragment(children) { return children.join("") },
   value(value) { return value === null || value === undefined || value === false ? "" : escape(value) },
@@ -39,29 +127,43 @@ const htmlRenderer: VuneRenderer<string> = {
       return `<div${style ? ` style="${escapeAttribute(style)}"` : ""}>${content}</div>`
     }
     const extraStyle = styleText(styleOf(modifier))
-    const extraProps = propsOf(modifier)
+    const modifierProps = propsOf(modifier)
+    const rootTag = /^<([A-Za-z][A-Za-z0-9-]*)(?:\s|>)/.exec(content)?.[1]
+    const extraProps = rootTag && !rootTag.includes("-") ? nativeElementProps(modifierProps) : modifierProps
     const propStyle = styleAttribute(extraProps.style)
     const propClass = classNameOf(extraProps.className ?? extraProps.class)
     if (!extraStyle && !propStyle && !propClass && Object.keys(extraProps).length === 0) return content
-    return content.replace(/^(<[^ >]+)([^>]*)(>)/, (_match, start: string, attributes: string, end: string) => {
+    const isTextArea = /^<textarea(?:\s|>)/i.test(content)
+    const isSelect = /^<select(?:\s|>)/i.test(content)
+    const hasTextAreaValue = isTextArea
+      && Object.prototype.hasOwnProperty.call(extraProps, "value")
+      && extraProps.value !== undefined
+      && extraProps.value !== null
+    const withAttributes = content.replace(/^(<[^ >]+)([^>]*)(>)/, (_match, start: string, attributes: string, end: string) => {
       let nextAttributes = attributes
       const styleMatch = /\sstyle="([^"]*)"/.exec(attributes)
       const extraStyles = [extraStyle, propStyle].filter(Boolean).join(";")
+      const escapedExtraStyles = escapeAttribute(extraStyles)
       if (styleMatch && extraStyles) {
-        const merged = `${styleMatch[1]};${extraStyles}`
+        const merged = `${styleMatch[1]};${escapedExtraStyles}`
         nextAttributes = nextAttributes.replace(styleMatch[0], ` style="${merged}"`)
       } else if (extraStyles) {
-        nextAttributes += ` style="${extraStyles}"`
+        nextAttributes += ` style="${escapedExtraStyles}"`
       }
       if (propClass) {
         const classMatch = /\sclass="([^"]*)"/.exec(nextAttributes)
-        const merged = [classMatch?.[1], propClass].filter(Boolean).join(" ")
-        if (classMatch) nextAttributes = nextAttributes.replace(classMatch[0], ` class="${escapeAttribute(merged)}"`)
-        else nextAttributes += ` class="${escapeAttribute(propClass)}"`
+        const escapedPropClass = escapeAttribute(propClass)
+        const merged = [classMatch?.[1], escapedPropClass].filter(Boolean).join(" ")
+        if (classMatch) nextAttributes = nextAttributes.replace(classMatch[0], ` class="${merged}"`)
+        else nextAttributes += ` class="${escapedPropClass}"`
       }
       for (const [key, value] of Object.entries(extraProps)) {
-        const name = htmlAttributeName(key)
+        const name = assertHtmlName(htmlAttributeName(key), "attribute")
         if (name === "class" || name === "style" || name === "key" || name === "ref" || name === "children") continue
+        if ((isTextArea || isSelect) && name.toLowerCase() === "value") {
+          nextAttributes = nextAttributes.replace(/\svalue(?:="[^"]*")?/i, "")
+          continue
+        }
         const attribute = serializedAttribute(key, value)
         const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         const pattern = new RegExp(`\\s${escapedName}(?:="[^"]*")?`)
@@ -72,6 +174,17 @@ const htmlRenderer: VuneRenderer<string> = {
       }
       return `${start}${nextAttributes}${end}`
     })
+    if (hasTextAreaValue) {
+      return withAttributes.replace(
+        /^(<textarea(?:\s[^>]*)?>)[\s\S]*(<\/textarea>)$/i,
+        (_match, opening: string, closing: string) => `${opening}${serializedTextAreaValue(extraProps.value)}${closing}`,
+      )
+    }
+    const hasSelectValue = isSelect
+      && Object.prototype.hasOwnProperty.call(extraProps, "value")
+      && extraProps.value !== undefined
+      && extraProps.value !== null
+    return hasSelectValue ? serializeSelectedOption(withAttributes, extraProps.value) : withAttributes
   },
   view(node: ViewHostNode, render) {
     const state = node.state?.(node.props) ?? {}

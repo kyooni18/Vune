@@ -153,7 +153,12 @@ forms remain available only through the explicit `vune-ui` compatibility
 entry point; they are not part of the canonical compiler or editor surface.
 
 At the React boundary, call `render(viewValue)` or use `VuneView`; do not pass a
-core graph object directly to `react-dom`.
+core graph object directly to `react-dom`. React components enter the graph
+with `Component` or the typed `reactComponent`/`foreignComponent` adapter. A
+graph enters an existing React tree through `VuneView` or `createReactView`;
+`mount` owns the React root and can hydrate markup produced by
+`react-dom/server`. Props, children, hooks, refs, context, and lifecycle remain
+React-owned.
 
 At the Vue boundary, use `@vune-ui/vue`'s `VuneView` or `createVueView`. Vue
 components enter the graph with `Component`; `toVueRef` and `fromVueRef` are

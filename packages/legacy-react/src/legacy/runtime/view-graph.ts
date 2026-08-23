@@ -1,4 +1,4 @@
-import { isValidElement } from "react"
+import { isValidElement, type ReactNode } from "react"
 import {
   isViewNode as isCoreViewNode,
   viewElement as createCoreElement,
@@ -7,21 +7,23 @@ import {
   type ElementViewNode,
   type FragmentViewNode,
   type ModifiedContent,
-  type ViewGraphChild,
-  type ViewGraphLeaf,
-  type ViewGraphValue,
+  type ViewGraphChild as CoreViewGraphChild,
+  type ViewGraphValue as CoreViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
   type ViewNode,
 } from "@vune-ui/core"
+import { snapshotArrayValues } from "./arrays.js"
+
+/** Legacy-only graph leaves retain direct ReactNode compatibility. */
+export type ViewGraphLeaf = ReactNode
+export type ViewGraphValue = ReactNode | ViewNode | readonly ViewGraphValue[]
+export type ViewGraphChild = ViewGraphValue
 
 export type {
   ElementViewNode,
   FragmentViewNode,
   ModifiedContent,
-  ViewGraphChild,
-  ViewGraphLeaf,
-  ViewGraphValue,
   ViewHostNode,
   ViewModifierNode,
   ViewNode,
@@ -31,11 +33,11 @@ export type {
 const nodes = new WeakMap<object, ViewNode>()
 
 export function viewElement(type: unknown, props: object | null = null, children: readonly ViewGraphChild[] = []): ElementViewNode {
-  return createCoreElement(type, props as Record<string, unknown> | null, children) as ElementViewNode
+  return createCoreElement(type, props as Record<string, unknown> | null, children as unknown as readonly CoreViewGraphChild[]) as ElementViewNode
 }
 
 export function viewFragment(children: readonly ViewGraphChild[] = []): FragmentViewNode {
-  return createCoreFragment(children) as FragmentViewNode
+  return createCoreFragment(children as unknown as readonly CoreViewGraphChild[]) as FragmentViewNode
 }
 
 export function viewHost(
@@ -44,7 +46,13 @@ export function viewHost(
   props: object,
   render: (props: object) => ViewGraphValue,
 ): ViewHostNode {
-  return createCoreHost(name, host, props as Record<string, unknown>, value => render(value), undefined) as ViewHostNode
+  return createCoreHost(
+    name,
+    host,
+    props as Record<string, unknown>,
+    value => render(value) as unknown as CoreViewGraphValue,
+    undefined,
+  ) as ViewHostNode
 }
 
 export function isViewNode(value: unknown): value is ViewNode {
@@ -61,7 +69,7 @@ export function viewGraphChild(value: unknown): ViewGraphChild {
 }
 
 export function viewGraphChildren(values: readonly unknown[]): ViewGraphChild[] {
-  return values.map(value => viewGraphChild(value))
+  return snapshotArrayValues(values).map(value => viewGraphChild(value))
 }
 
 export function markViewNode(element: object, node: ViewNode): object {

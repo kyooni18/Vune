@@ -26,20 +26,36 @@ function framePlaceItems(alignment: FrameAlignment = "center"): string {
   }
 }
 
+function ownFrameValue(options: FrameOptions, key: keyof FrameOptions): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(options, key)
+    return descriptor && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function layoutLength(value: unknown): string | undefined {
-  return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
+  return typeof value === "number" ? Number.isFinite(value) ? `${value}px` : undefined : typeof value === "string" ? value : undefined
 }
 
 export function frameStyle(options: FrameOptions): Record<string, string | undefined> {
+  const width = ownFrameValue(options, "width")
+  const height = ownFrameValue(options, "height")
+  const minWidth = ownFrameValue(options, "minWidth")
+  const maxWidth = ownFrameValue(options, "maxWidth")
+  const minHeight = ownFrameValue(options, "minHeight")
+  const maxHeight = ownFrameValue(options, "maxHeight")
+  const alignment = ownFrameValue(options, "alignment")
   return {
     boxSizing: "border-box",
     display: "grid",
-    placeItems: framePlaceItems(options.alignment),
-    width: layoutLength(options.width),
-    height: layoutLength(options.height),
-    minWidth: layoutLength(options.minWidth),
-    maxWidth: options.maxWidth === "infinity" ? "100%" : layoutLength(options.maxWidth),
-    minHeight: layoutLength(options.minHeight),
-    maxHeight: options.maxHeight === "infinity" ? "100%" : layoutLength(options.maxHeight),
+    placeItems: framePlaceItems(typeof alignment === "string" ? alignment as FrameAlignment : undefined),
+    width: layoutLength(width),
+    height: layoutLength(height),
+    minWidth: layoutLength(minWidth),
+    maxWidth: maxWidth === "infinity" ? "100%" : layoutLength(maxWidth),
+    minHeight: layoutLength(minHeight),
+    maxHeight: maxHeight === "infinity" ? "100%" : layoutLength(maxHeight),
   }
 }

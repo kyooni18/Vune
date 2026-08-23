@@ -4,9 +4,9 @@ import type { ViewIdentity } from "../identity.js"
 import type { ViewType } from "./initializers.js"
 import type { vuneForeignComponent, vuneInitializers, vuneView } from "./symbols.js"
 
-export type ViewGraphLeaf = string | number | bigint | boolean | null | undefined | object
-export type ViewGraphChild = ViewGraphLeaf | ViewNode
-export type ViewGraphValue = ViewGraphChild | readonly ViewGraphValue[]
+export type ViewGraphLeaf = string | number | bigint | boolean | null | undefined
+export type ViewGraphValue = ViewGraphLeaf | ViewNode | readonly ViewGraphValue[]
+export type ViewGraphChild = ViewGraphValue
 export type ViewValue = ViewGraphValue
 export type Length = number | string
 export type ClassValue = string | false | null | undefined | readonly ClassValue[]

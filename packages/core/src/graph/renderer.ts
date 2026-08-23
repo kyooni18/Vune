@@ -1,4 +1,5 @@
 import { keyedViewIdentity, viewTypeIdentity, type ViewIdentity } from "../identity.js"
+import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { isForeignComponent, isViewNode } from "./nodes.js"
 import { zeroGeometry } from "./environment.js"
 import type { GeometryProxy, LazyViewRange, VuneRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
@@ -7,18 +8,18 @@ export type { VuneRenderer }
 
 /** Collect View host identities already present in a graph without evaluating View bodies. */
 export function collectLogicalViewIdentities(value: ViewGraphValue, identity: ViewIdentity = ["root"]): ViewIdentity[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((item, index) => collectLogicalViewIdentities(item, [...identity, "array", index]))
+  if (arrayCheck(value) === true) {
+    return snapshotArrayValues(value as readonly unknown[]).flatMap((item, index) => collectLogicalViewIdentities(item as ViewGraphValue, [...identity, "array", index]))
   }
   if (!isViewNode(value)) return []
   switch (value.kind) {
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
       const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
-      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...elementIdentity, "element", index]))
+      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...elementIdentity, "element", index]))
     }
     case "fragment":
-      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...identity, "fragment", index]))
+      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "fragment", index]))
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {
@@ -33,7 +34,7 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     case "geometry":
       return []
     case "lazy":
-      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child, [...identity, "lazy", index]))
+      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "lazy", index]))
   }
 }
 
@@ -42,12 +43,12 @@ export function renderViewNode<Output>(value: ViewGraphValue, renderer: VuneRend
 }
 
 function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
-  if (Array.isArray(value)) return renderer.fragment(value.map((item, index) => renderViewNodeAt(item, renderer, [...identity, "array", index])))
+  if (arrayCheck(value) === true) return renderer.fragment(snapshotArrayValues(value as readonly unknown[]).map((item, index) => renderViewNodeAt(item as ViewGraphValue, renderer, [...identity, "array", index])))
   if (!isViewNode(value)) {
     if (value === null || value === undefined || typeof value === "boolean") {
       return renderer.value ? renderer.value(null) : null as Output
     }
-    if (typeof value === "object") {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
       throw new TypeError("Vune View graph leaves must be renderable primitives or View nodes; wrap renderer-specific values in an explicit adapter.")
     }
     return renderer.value ? renderer.value(value) : value as Output
@@ -56,10 +57,10 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
       const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
-      return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...elementIdentity, "element", index])))
+      return renderer.element(value.type, value.props, ...snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...elementIdentity, "element", index])))
     }
     case "fragment":
-      return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "fragment", index])))
+      return renderer.fragment(snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "fragment", index])))
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {
@@ -85,11 +86,11 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<
       const renderChildren = (range?: LazyViewRange): Output => {
         const start = Math.max(0, range?.start ?? 0)
         const end = Math.min(value.children.length, range?.end ?? value.children.length)
-        return renderer.fragment(value.children.slice(start, end).map((child, index) => renderViewNodeAt(child, renderer, [...identity, "lazy", start + index])))
+        return renderer.fragment(snapshotArrayValues(value.children).slice(start, end).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", start + index])))
       }
       return renderer.lazy
         ? renderer.lazy(value, renderChildren, identity)
-        : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeAt(child, renderer, [...identity, "lazy", index])))
+        : renderer.element("div", value.props, ...snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])))
     }
   }
 }

@@ -112,6 +112,15 @@ Vue components inside a Vune graph and `VuneView` or `createVueView()` for a
 Vune graph inside a Vue SFC. Props, events, keys, refs, and default/named slots
 stay at the Vue boundary.
 
+React interop follows the same explicit boundary. Use `Component()` for a
+React component inside a Vune graph, `reactComponent()` (or its generic
+`foreignComponent()` alias) when a typed reusable Vune callable is useful, and
+`VuneView`/`createReactView()` when a graph is consumed from React. Use
+`mount(value, target, { hydrate: true })` to attach React to server-rendered
+markup. Props, children, hooks, refs, context, and lifecycle remain React-owned.
+Use `useVuneState(state)` and `fromReactState(value, setValue)` for explicit
+State/Binding bridges at the React boundary.
+
 ## Compatibility macro
 
 Existing applications may continue using `vune-ui/vite` and its

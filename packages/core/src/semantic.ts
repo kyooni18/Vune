@@ -6,6 +6,8 @@
  * exposes the same symbols for runtime resolution and tooling.
  */
 
+import { arrayCheck } from "./graph/arrays.js"
+
 export type SemanticInitializerParameterKind = "value" | "binding" | "viewBuilder" | "action"
 
 export interface SemanticInitializerParameter {
@@ -351,7 +353,7 @@ function runtimeKind(value: unknown): SemanticArgumentKind | undefined {
 function runtimeType(value: unknown): string | undefined {
   if (value === undefined) return "undefined"
   if (value === null) return "null"
-  if (Array.isArray(value)) return "array"
+  if (arrayCheck(value) === true) return "array"
   if (typeof value === "function") return "function"
   if (typeof value === "object") return "object"
   return typeof value
@@ -394,6 +396,32 @@ function normalizedType(type: string): string {
   return type.trim().replace(/\s+/g, " ").replace(/\?$/, "")
 }
 
+function stringLiteralTypeValue(type: string | undefined): string | undefined {
+  if (!type || !/^['"].*['"]$/.test(type)) return undefined
+  if (type.startsWith('"')) {
+    try { return JSON.parse(type) as string } catch { return undefined }
+  }
+  return type.slice(1, -1)
+}
+
+function semanticArrayValues(value: unknown): readonly unknown[] | undefined {
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
+  try {
+    const length = Object.getOwnPropertyDescriptor(values, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
+    const items: unknown[] = []
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!descriptor || !("value" in descriptor)) return undefined
+      items.push(descriptor.value)
+    }
+    return items
+  } catch {
+    return undefined
+  }
+}
+
 /** Return true for an exact match, false for a contradiction, undefined for an unknown. */
 function typeMatch(type: string | undefined, argument: SemanticArgument, genericParameters?: string): boolean | undefined {
   if (!type) return undefined
@@ -421,18 +449,31 @@ function typeMatch(type: string | undefined, argument: SemanticArgument, generic
   }
 
   if (/^(?:some\s+)?View$/.test(expected)) return actual === "View" || actual === "element" || actual === "view" || (!!actual && !/^(?:string|number|boolean|function|unknown|any|null|undefined|void|array)$/.test(actual) && !/=>/.test(actual))
-  if (expected === "string") return comparableType === "string"
+  if (expected === "string") return comparableType === "string" || stringLiteralTypeValue(comparableType) !== undefined
   if (expected === "number") return comparableType === "number"
   if (expected === "boolean") return comparableType === "boolean"
   if (expected === "object" || expected.startsWith("Record<")) return comparableType === "object" || (!!comparableType && !/^(?:string|number|boolean|function|unknown|any|null|undefined|void|array)$/.test(comparableType) && !/=>/.test(comparableType) && !/\[\]$/.test(comparableType))
   if (expected === "Function" || expected === "function" || expected.includes("=>")) return comparableType === "function" || comparableType?.includes("=>") === true || comparableType === "Function"
-  if (/^(?:Array|ReadonlyArray)\s*</.test(expected) || /\[\]$/.test(expected)) {
-    return valueType === "array" || /(?:Array|ReadonlyArray)\s*</.test(valueType ?? "") || /\[\]$/.test(valueType ?? "")
+  const arrayElement = /^(?:Array|ReadonlyArray)\s*<([\s\S]+)>$/.exec(expected) ?? /^([\s\S]+)\[\]$/.exec(expected)
+  if (arrayElement) {
+    const arrayType = valueType === "array" || /(?:Array|ReadonlyArray)\s*</.test(valueType ?? "") || /\[\]$/.test(valueType ?? "")
+    if (!arrayType) return false
+    if (value === undefined) return true
+    const items = semanticArrayValues(value)
+    if (items === undefined) return false
+    const matches = items.map(item => typeMatch(arrayElement[1], { value: item }, genericParameters))
+    if (matches.some(match => match === false)) return false
+    return matches.some(match => match === undefined) ? undefined : true
   }
   if (expected.toLowerCase() === "array") return valueType === "array" || /(?:Array|ReadonlyArray)\s*</.test(valueType ?? "") || /\[\]$/.test(valueType ?? "")
   if (/^Binding(?:Ref)?\s*</.test(expected)) return argument.kind === "binding" || actual === "binding"
   if (/^State(?:Ref)?\s*</.test(expected)) return actual === "state"
-  if (/^['"].*['"]$/.test(expected)) return value === expected.slice(1, -1) || actual === "string"
+  if (/^['"].*['"]$/.test(expected)) {
+    const expectedValue = stringLiteralTypeValue(expected)
+    if (typeof value === "string") return value === expectedValue
+    const actualValue = stringLiteralTypeValue(actual)
+    return actualValue === undefined ? actual === "string" : actualValue === expectedValue
+  }
   if (actual && normalizedType(actual) === expected) return true
   if (actual === "literal") return undefined
   return undefined

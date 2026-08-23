@@ -1,6 +1,7 @@
 import { Fragment, cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { isViewNode, markViewNode, viewGraphChild, type ViewGraphValue, type ViewHostNode, type ViewModifierNode, type ViewNode } from './view-graph.js'
 import { zeroGeometry } from '@vune-ui/core'
+import { arrayCheck, snapshotArrayValues } from './arrays.js'
 
 export type RendererChild<Output> = Output | readonly RendererChild<Output>[]
 
@@ -26,15 +27,19 @@ export function renderViewNode<Output>(
   value: ViewGraphValue,
   renderer: VuneRenderer<Output>,
 ): RendererChild<Output> {
-  if (Array.isArray(value)) {
-    return value.map(child => renderViewNode(child as ViewGraphValue, renderer)) as unknown as RendererChild<Output>
+  const array = arrayCheck(value)
+  if (array === undefined) throw new TypeError('Legacy Vune View graph array inputs must be inspectable')
+  if (array) {
+    return snapshotArrayValues(value as readonly unknown[]).map(child => renderViewNode(child as ViewGraphValue, renderer)) as unknown as RendererChild<Output>
   }
   if (!isViewNode(value)) return renderer.value?.(value) ?? value as RendererChild<Output>
   if (value.kind === 'view') {
     if (renderer.view) return renderer.view(value)
     const rendered = value.render(value.props)
-    const graphValue = Array.isArray(rendered)
-      ? rendered.map(child => viewGraphChild(child as ReactNode | ViewNode)) as unknown as ViewGraphValue
+    const renderedArray = arrayCheck(rendered)
+    if (renderedArray === undefined) throw new TypeError('Legacy Vune View graph array inputs must be inspectable')
+    const graphValue = renderedArray
+      ? snapshotArrayValues(rendered as readonly unknown[]).map(child => viewGraphChild(child as ReactNode | ViewNode)) as unknown as ViewGraphValue
       : viewGraphChild(rendered as ReactNode | ViewNode)
     return renderViewNode(graphValue, renderer)
   }
@@ -44,7 +49,7 @@ export function renderViewNode<Output>(
     return content
   }
   if (value.kind === 'fragment') {
-    return renderer.fragment(value.children.map(child => renderViewNode(child, renderer)))
+    return renderer.fragment(snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)))
   }
   if (value.kind === 'geometry') {
     return renderViewNode(value.content(zeroGeometry), renderer)
@@ -53,13 +58,13 @@ export function renderViewNode<Output>(
     return renderer.element(
       'div',
       value.props,
-      ...value.children.map(child => renderViewNode(child, renderer)),
+      ...snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)),
     )
   }
   return renderer.element(
     value.type,
     value.props,
-    ...value.children.map(child => renderViewNode(child, renderer)),
+    ...snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)),
   )
 }
 

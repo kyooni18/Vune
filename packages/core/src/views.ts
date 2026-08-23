@@ -17,8 +17,11 @@ import {
   viewFragment,
 } from "./graph.js"
 import type { VuneCustomElementAttributes, VuneHtmlAttributes, VuneHtmlTagName } from "./html.js"
+import { layoutLength } from "./layout.js"
+import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
+import { arrayCheck } from "./graph/arrays.js"
 
 export interface VStackOptions {
   readonly alignment?: "leading" | "center" | "trailing"
@@ -62,16 +65,10 @@ export const Text = defineBuiltinView<TextProps>(
 ) as TypedViewConstructor<TextProps, TextCall>
 
 function stackChildren(value: unknown): ViewValue[] {
-  return Array.isArray(value)
-    ? value.flatMap(item => stackChildren(item))
-    : [value as ViewValue]
+  return ViewBuilder.buildBlock(value as ViewValue)
 }
 
-function isOptions(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && !isViewNode(value)
-}
-
-function stackInitializers(optionsParameter: ReturnType<typeof initializerKinds.value>) {
+function stackInitializers(name: string, optionsParameter: ReturnType<typeof initializerKinds.value>, optionKeys: readonly string[]) {
   const variadicOptions = initializerKinds.value(true, optionsParameter.label, optionsParameter.properties, optionsParameter.type, true)
   return [
     initializer(
@@ -82,14 +79,17 @@ function stackInitializers(optionsParameter: ReturnType<typeof initializerKinds.
     ),
     initializer(
       "options, @ViewBuilder content",
-      args => args.length === 2 && isOptions(args[0]) && typeof args[1] === "function",
-      args => ({ options: args[0], content: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      args => args.length === 2 && snapshotOptionRecord(args[0], optionKeys) !== undefined && typeof args[1] === "function",
+      args => ({
+        ...(args[0] === undefined ? {} : { options: requireOptionRecord(args[0], optionKeys, name) }),
+        content: resolveBuilderClosure(args[1] as () => ViewValue),
+      }),
       [optionsParameter, genericStackContent],
     ),
     initializer(
       "options, ...children",
-      args => args.length >= 1 && isOptions(args[0]) && args.slice(1).every(value => typeof value !== "function"),
-      args => ({ options: args[0], content: args.slice(1).flatMap(stackChildren) }),
+      args => args.length >= 1 && snapshotOptionRecord(args[0], optionKeys) !== undefined && args.slice(1).every(value => typeof value !== "function"),
+      args => ({ options: requireOptionRecord(args[0], optionKeys, name), content: args.slice(1).flatMap(stackChildren) }),
       [variadicOptions],
     ),
     initializer(
@@ -110,7 +110,7 @@ export interface StackCall<Options> {
 
 export const VStack = defineBuiltinView<VStackProps>(
   "VStack",
-  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
+  stackInitializers("VStack", initializerKinds.value(false, "options", ["alignment", "spacing"], "object"), ["alignment", "spacing"]),
   ({ options = {}, content }) => viewElement("div", {
     "data-vune": "VStack",
     style: {
@@ -119,7 +119,7 @@ export const VStack = defineBuiltinView<VStackProps>(
       width: "100%",
       boxSizing: "border-box",
       alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : "center",
-      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      gap: layoutLength(options.spacing),
     },
   }, content),
   "Content: View",
@@ -128,7 +128,7 @@ export const VStack = defineBuiltinView<VStackProps>(
 export interface HStackProps { readonly options?: HStackOptions; readonly content: ViewValue[] }
 export const HStack = defineBuiltinView<HStackProps>(
   "HStack",
-  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
+  stackInitializers("HStack", initializerKinds.value(false, "options", ["alignment", "spacing"], "object"), ["alignment", "spacing"]),
   ({ options = {}, content }) => viewElement("div", {
     "data-vune": "HStack",
     style: {
@@ -137,7 +137,7 @@ export const HStack = defineBuiltinView<HStackProps>(
       width: "100%",
       boxSizing: "border-box",
       alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
-      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      gap: layoutLength(options.spacing),
     },
   }, content),
   "Content: View",
@@ -164,8 +164,8 @@ export const ZStack = defineBuiltinView<ZStackProps>(
   "ZStack",
   [
     initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [genericStackContent]),
-    initializer("options, @ViewBuilder content", args => args.length === 2 && isOptions(args[0]) && typeof args[1] === "function", args => ({ options: args[0], content: resolveBuilderClosure(args[1] as () => ViewValue) }), [zStackOptions, genericStackContent]),
-    initializer("options, ...children", args => args.length >= 1 && isOptions(args[0]) && args.slice(1).every(value => typeof value !== "function"), args => ({ options: args[0], content: args.slice(1).flatMap(stackChildren) }), [zStackVariadicOptions]),
+    initializer("options, @ViewBuilder content", args => args.length === 2 && snapshotOptionRecord(args[0], ["alignment"]) !== undefined && typeof args[1] === "function", args => ({ ...(args[0] === undefined ? {} : { options: requireOptionRecord(args[0], ["alignment"], "ZStack") }), content: resolveBuilderClosure(args[1] as () => ViewValue) }), [zStackOptions, genericStackContent]),
+    initializer("options, ...children", args => args.length >= 1 && snapshotOptionRecord(args[0], ["alignment"]) !== undefined && args.slice(1).every(value => typeof value !== "function"), args => ({ options: requireOptionRecord(args[0], ["alignment"], "ZStack"), content: args.slice(1).flatMap(stackChildren) }), [zStackVariadicOptions]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
   ({ options = {}, content }) => viewElement("div", {
@@ -183,7 +183,13 @@ export const ZStack = defineBuiltinView<ZStackProps>(
 export type ScrollAxis = "vertical" | "horizontal" | "both"
 
 const scrollContent = initializerKinds.viewBuilder(true, "content")
-const scrollAxis = initializerKinds.value(false, "axis", undefined, "string")
+const scrollAxisType = '"vertical" | "horizontal" | "both"'
+const scrollAxis = initializerKinds.value(false, "axis", undefined, scrollAxisType)
+const scrollAxes = new Set<ScrollAxis>(["vertical", "horizontal", "both"])
+
+function isScrollAxis(value: unknown): value is ScrollAxis {
+  return typeof value === "string" && scrollAxes.has(value as ScrollAxis)
+}
 
 export interface ScrollViewProps { readonly axis?: ScrollAxis; readonly content: ViewValue[] }
 export interface ScrollViewCall {
@@ -202,13 +208,13 @@ export const ScrollView = defineBuiltinView<ScrollViewProps>(
     ),
     initializer(
       "ScrollView(axis, @ViewBuilder content)",
-      args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function",
+      args => args.length === 2 && isScrollAxis(args[0]) && typeof args[1] === "function",
       args => ({ axis: args[0] as ScrollAxis, content: resolveBuilderClosure(args[1] as () => ViewValue) }),
-      [initializerKinds.value(true, "axis", undefined, "string"), scrollContent],
+      [initializerKinds.value(true, "axis", undefined, scrollAxisType), scrollContent],
     ),
     initializer(
       "ScrollView(content, axis?)",
-      args => args.length >= 1 && args.length <= 2 && typeof args[0] !== "function",
+      args => args.length >= 1 && args.length <= 2 && typeof args[0] !== "function" && (args[1] === undefined || isScrollAxis(args[1])),
       args => ({ content: stackChildren(args[0] as ViewValue), axis: args[1] as ScrollAxis | undefined }),
       [initializerKinds.value(true, "content"), scrollAxis],
     ),
@@ -225,8 +231,35 @@ export const ScrollView = defineBuiltinView<ScrollViewProps>(
 
 export type SafeAreaEdge = "top" | "right" | "bottom" | "left" | "all"
 
+const safeAreaEdges = new Set<SafeAreaEdge>(["top", "right", "bottom", "left", "all"])
+
+function snapshotSafeAreaEdges(value: unknown): SafeAreaEdge | readonly SafeAreaEdge[] | undefined {
+  if (typeof value === "string") return safeAreaEdges.has(value as SafeAreaEdge) ? value as SafeAreaEdge : undefined
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
+  try {
+    const length = Object.getOwnPropertyDescriptor(values, "length")
+    if (!length || !("value" in length) || typeof length.value !== "number") return undefined
+    const snapshot: SafeAreaEdge[] = []
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string" || !safeAreaEdges.has(descriptor.value as SafeAreaEdge)) return undefined
+      snapshot.push(descriptor.value as SafeAreaEdge)
+    }
+    return Object.freeze(snapshot)
+  } catch {
+    return undefined
+  }
+}
+
+function requireSafeAreaEdges(value: unknown): SafeAreaEdge | readonly SafeAreaEdge[] {
+  const snapshot = snapshotSafeAreaEdges(value)
+  if (snapshot === undefined) throw new TypeError("SafeArea edges must be a data-only edge or edge array")
+  return snapshot
+}
+
 function hasSafeAreaEdge(edges: SafeAreaEdge | readonly SafeAreaEdge[], edge: Exclude<SafeAreaEdge, "all">): boolean {
-  return edges === "all" || (Array.isArray(edges) ? edges.includes("all") || edges.includes(edge) : edges === edge)
+  return edges === "all" || (arrayCheck(edges) === true ? (edges as readonly SafeAreaEdge[]).includes("all") || (edges as readonly SafeAreaEdge[]).includes(edge) : edges === edge)
 }
 
 const safeAreaContent = initializerKinds.viewBuilder(true, "content")
@@ -247,8 +280,8 @@ export const SafeArea = defineBuiltinView<SafeAreaProps>(
     ),
     initializer(
       "SafeArea(edges, @ViewBuilder content)",
-      args => args.length === 2 && (typeof args[0] === "string" || Array.isArray(args[0])) && typeof args[1] === "function",
-      args => ({ edges: args[0] as SafeAreaEdge | readonly SafeAreaEdge[], content: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      args => args.length === 2 && snapshotSafeAreaEdges(args[0]) !== undefined && typeof args[1] === "function",
+      args => ({ edges: requireSafeAreaEdges(args[0]), content: resolveBuilderClosure(args[1] as () => ViewValue) }),
       [initializerKinds.value(true, "edges"), safeAreaContent],
     ),
   ],
@@ -282,7 +315,7 @@ export interface SpacerCall { (minLength?: number | string): ReturnType<typeof v
 export const Spacer = defineBuiltinView<SpacerProps>(
   "Spacer",
   [initializer("Spacer(minLength?)", args => args.length <= 1 && typeof args[0] !== "function", args => ({ minLength: args[0] as number | string | undefined }), [initializerKinds.value(false, "minLength")])],
-  ({ minLength }) => viewElement("div", { "data-vune": "Spacer", style: { flexGrow: 1, flexShrink: 0, flexBasis: typeof minLength === "number" ? `${minLength}px` : minLength } }),
+  ({ minLength }) => viewElement("div", { "data-vune": "Spacer", style: { flexGrow: 1, flexShrink: 0, flexBasis: layoutLength(minLength) } }),
 ) as TypedViewConstructor<SpacerProps, SpacerCall>
 
 export const Divider = defineBuiltinView("Divider", [initializer("Divider()", args => args.length === 0)], () => viewElement("hr", { "data-vune": "Divider" }))
@@ -348,6 +381,10 @@ export const Button = defineBuiltinView<ButtonProps>(
 
 type CollectionKey = string | number
 type CollectionKeySelector<Item> = (item: Item, index: number) => CollectionKey
+type InferredCollectionKey = CollectionKey | boolean | bigint | null | undefined
+
+const noPrimitiveCollectionKey = Symbol("noPrimitiveCollectionKey")
+const noOwnDataProperty = Symbol("noOwnDataProperty")
 
 const warnedForEachIdentity = new Set<string>()
 
@@ -363,44 +400,73 @@ function deterministicIdentityPart(value: unknown, seen = new Set<object>(), dep
   if (value === null) return "null"
   if (value === undefined) return "undefined"
   if (typeof value === "string") return `string:${JSON.stringify(value)}`
-  if (typeof value === "number") return `number:${Number.isNaN(value) ? "NaN" : String(value)}`
+  if (typeof value === "number") return `number:${Number.isNaN(value) ? "NaN" : Object.is(value, -0) ? "-0" : String(value)}`
   if (typeof value === "boolean") return `boolean:${String(value)}`
   if (typeof value === "bigint") return `bigint:${String(value)}`
-  if (typeof value === "symbol") return `symbol:${String(value)}`
+  if (typeof value === "symbol") return undefined
   if (typeof value === "function") return undefined
   if (seen.has(value)) return undefined
   seen.add(value)
-  if (Array.isArray(value)) {
-    const values = value.map(item => deterministicIdentityPart(item, seen, depth + 1))
-    return values.some(item => item === undefined) ? undefined : `array:[${values.join(",")}]`
+  try {
+    if (arrayCheck(value) === true) {
+      const items = value as readonly unknown[]
+      const length = Object.getOwnPropertyDescriptor(items, "length")
+      if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
+      const values: Array<string | undefined> = []
+      for (let index = 0; index < length.value; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(items, String(index))
+        if (descriptor && !("value" in descriptor)) return undefined
+        values.push(descriptor ? deterministicIdentityPart(descriptor.value, seen, depth + 1) : "hole")
+      }
+      return values.some(item => item === undefined) ? undefined : `array:[${values.join(",")}]`
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== null && prototype !== Object.prototype) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const entries = Object.keys(descriptors).filter(key => descriptors[key].enumerable).sort().map(key => {
+      const descriptor = descriptors[key]
+      if (!("value" in descriptor)) return undefined
+      const item = deterministicIdentityPart(descriptor.value, seen, depth + 1)
+      return item === undefined ? undefined : `${JSON.stringify(key)}=${item}`
+    })
+    return entries.some(item => item === undefined) ? undefined : `object:{${entries.join(",")}}`
+  } catch {
+    return undefined
+  } finally {
+    seen.delete(value)
   }
-  const entries = Object.keys(value as Record<string, unknown>).sort().map(key => {
-    const item = deterministicIdentityPart((value as Record<string, unknown>)[key], seen, depth + 1)
-    return item === undefined ? undefined : `${JSON.stringify(key)}=${item}`
-  })
-  return entries.some(item => item === undefined) ? undefined : `object:{${entries.join(",")}}`
 }
 
-function primitiveCollectionKey(value: unknown): CollectionKey | undefined {
-  if (typeof value === "string" || typeof value === "number") return value
-  if (typeof value === "boolean" || value === null || value === undefined || typeof value === "bigint") return `${typeof value}:${String(value)}`
-  return undefined
+function primitiveCollectionKey(value: unknown): InferredCollectionKey | typeof noPrimitiveCollectionKey {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" || value === null || value === undefined) return value
+  return noPrimitiveCollectionKey
 }
 
 function explicitCollectionKey(value: unknown): CollectionKey | undefined {
   return typeof value === "string" || typeof value === "number" ? value : undefined
 }
 
-function collectionKey<Item>(item: Item, index: number, selector?: CollectionKeySelector<Item>): CollectionKey {
+function ownDataProperty(value: object, key: PropertyKey): unknown | typeof noOwnDataProperty {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor && "value" in descriptor ? descriptor.value : noOwnDataProperty
+  } catch {
+    return noOwnDataProperty
+  }
+}
+
+function collectionKey<Item>(item: Item, index: number, selector?: CollectionKeySelector<Item>): InferredCollectionKey {
   const selected = selector ? selector(item, index) : undefined
   const selectedKey = typeof selected === "string" || typeof selected === "number" ? selected : undefined
   if (selector && selectedKey !== undefined) return selectedKey
   if (selector) warnForEachIdentity("ForEach key selector must return a stable string or number; falling back to inferred identity.")
   const primitive = primitiveCollectionKey(item)
-  if (primitive !== undefined) return primitive
+  if (primitive !== noPrimitiveCollectionKey) return primitive
   if (item && typeof item === "object") {
-    const candidate = item as { readonly id?: unknown; readonly key?: unknown }
-    const explicit = explicitCollectionKey(candidate.id) ?? explicitCollectionKey(candidate.key)
+    const id = ownDataProperty(item, "id")
+    const key = ownDataProperty(item, "key")
+    const explicit = explicitCollectionKey(id === noOwnDataProperty ? undefined : id)
+      ?? explicitCollectionKey(key === noOwnDataProperty ? undefined : key)
     if (explicit !== undefined) return explicit
     const deterministic = deterministicIdentityPart(item)
     if (deterministic !== undefined) {
@@ -409,12 +475,12 @@ function collectionKey<Item>(item: Item, index: number, selector?: CollectionKey
     }
   }
   warnForEachIdentity("ForEach item has no stable identity. Provide key: item => item.id (or another stable primitive key).")
-  return `unstable:${typeof item}:${String(item)}:${index}`
+  return `unstable:${typeof item}:${index}`
 }
 
-function encodedCollectionKey(key: CollectionKey): string {
-  const value = String(key)
-  const type = typeof key === "number" ? "number" : "string"
+function encodedCollectionKey(key: InferredCollectionKey): string {
+  const value = typeof key === "number" && Object.is(key, -0) ? "-0" : String(key)
+  const type = key === null ? "null" : typeof key
   return `${type}:${value.length}:${value}`
 }
 
@@ -434,6 +500,31 @@ function keyedCollectionChildren(value: ViewValue, key: string): ViewValue[] {
   return ViewBuilder.buildBlock(value).map((child, index) => isViewNode(child)
     ? modifier(child, "keyed", `${key}|child:${index}`)
     : child)
+}
+
+function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
+  try {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(values, "length")
+    if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) return undefined
+    const snapshot = new Array<unknown>(lengthDescriptor.value)
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!descriptor) continue
+      if (!("value" in descriptor)) return undefined
+      snapshot[index] = descriptor.value
+    }
+    return Object.freeze(snapshot)
+  } catch {
+    return undefined
+  }
+}
+
+function requireCollectionItems(value: unknown): readonly unknown[] {
+  const snapshot = snapshotCollectionItems(value)
+  if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
+  return snapshot
 }
 
 interface ForEachProps<Item> {
@@ -469,7 +560,7 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
     ),
   ],
   ({ items, key, content }) => {
-    const collection = (isStateRef(items) ? items.value : items) as readonly unknown[]
+    const collection = requireCollectionItems(isStateRef(items) ? items.value : items)
     const keys = collectionKeys(collection, key as CollectionKeySelector<unknown> | undefined)
     return viewFragment(collection.flatMap((item, index) => keyedCollectionChildren(content(item, index), keys[index])))
   },
@@ -501,15 +592,23 @@ export const List = defineBuiltinView<{ content: ViewValue[] }>(
 )
 
 function lazyStyle(options: LazyOptions): Record<string, string | undefined> {
-  const estimated = options.estimatedItemSize === undefined ? "44px" : typeof options.estimatedItemSize === "number" ? `${options.estimatedItemSize}px` : options.estimatedItemSize
+  const estimated = layoutLength(normalizedLazyEstimate(options.estimatedItemSize)) ?? "44px"
   return { contentVisibility: "auto", containIntrinsicSize: `auto ${estimated}` }
+}
+
+function normalizedLazyEstimate(value: number | string | undefined): number | string | undefined {
+  return typeof value === "number" ? Number.isFinite(value) && value > 0 ? value : undefined : value
+}
+
+function normalizedLazyOverscan(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 function lazyData(options: LazyOptions, axis: "vertical" | "horizontal"): Record<string, unknown> {
   return {
     "data-vune-lazy": axis,
-    "data-vune-lazy-estimate": options.estimatedItemSize,
-    "data-vune-lazy-overscan": options.overscan,
+    "data-vune-lazy-estimate": normalizedLazyEstimate(options.estimatedItemSize),
+    "data-vune-lazy-overscan": normalizedLazyOverscan(options.overscan),
     style: lazyStyle(options),
   }
 }
@@ -519,7 +618,7 @@ export interface LazyHStackProps { readonly options?: LazyHStackOptions; readonl
 
 export const LazyVStack = defineBuiltinView<LazyVStackProps>(
   "LazyVStack",
-  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
+  stackInitializers("LazyVStack", initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object"), ["alignment", "spacing", "estimatedItemSize", "overscan"]),
   ({ options = {}, content }) => lazyView("LazyVStack", "vertical", {
     "data-vune": "LazyVStack",
     ...lazyData(options, "vertical"),
@@ -529,7 +628,7 @@ export const LazyVStack = defineBuiltinView<LazyVStackProps>(
       width: "100%",
       boxSizing: "border-box",
       alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : "center",
-      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      gap: layoutLength(options.spacing),
       ...lazyStyle(options),
     },
   }, content),
@@ -538,7 +637,7 @@ export const LazyVStack = defineBuiltinView<LazyVStackProps>(
 
 export const LazyHStack = defineBuiltinView<LazyHStackProps>(
   "LazyHStack",
-  stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
+  stackInitializers("LazyHStack", initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object"), ["alignment", "spacing", "estimatedItemSize", "overscan"]),
   ({ options = {}, content }) => lazyView("LazyHStack", "horizontal", {
     "data-vune": "LazyHStack",
     ...lazyData(options, "horizontal"),
@@ -548,7 +647,7 @@ export const LazyHStack = defineBuiltinView<LazyHStackProps>(
       width: "100%",
       boxSizing: "border-box",
       alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
-      gap: typeof options.spacing === "number" ? `${options.spacing}px` : options.spacing,
+      gap: layoutLength(options.spacing),
       ...lazyStyle(options),
     },
   }, content),

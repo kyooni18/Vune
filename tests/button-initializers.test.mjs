@@ -33,6 +33,23 @@ test("Button rejects legacy closure ordering and unlabeled custom labels", () =>
   assert.throws(() => resolveInitializer(Button, [namedArguments({ label, action })]), /No matching initializer/)
 })
 
+test("named argument resolution does not execute carrier getters", () => {
+  let getterCalls = 0
+  const carrier = { label: () => Text("Save") }
+  Object.defineProperty(carrier, "action", {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      throw new Error("initializer resolution must not execute argument getters")
+    },
+  })
+  namedArguments(carrier)
+
+  assert.throws(() => resolveInitializer(Button, [carrier]), /No matching initializer/)
+  assert.throws(() => Button.viewType.createNodeSpecialized(1, [carrier]), /No matching initializer/)
+  assert.equal(getterCalls, 0)
+})
+
 test("custom views and ViewBuilder composition use the same graph boundary", () => {
   const html = renderToStaticMarkup(render(VStack(() => [Text("Header"), Text("Body")])) )
   assert.match(html, /Header/)

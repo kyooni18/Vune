@@ -7,6 +7,7 @@ import {
   viewElement,
 } from "./graph.js"
 import { isBinding, resolveValue, type BindingRef, type Value } from "./state.js"
+import { requireOptionRecord } from "./options.js"
 import { Text } from "./views.js"
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -63,18 +64,33 @@ export const Slider = defineBuiltinView<SliderProps>(
   [initializer(
     "Slider(value, range?)",
     args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || isObject(args[1])),
-    args => ({ value: args[0] as BindingRef<number>, ...(isObject(args[1]) ? args[1] : {}) }),
+    args => {
+      const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["min", "max", "step"], "Slider")
+      return {
+        value: args[0] as BindingRef<number>,
+        min: options.min as number | undefined,
+        max: options.max as number | undefined,
+        step: options.step as number | undefined,
+      }
+    },
     [initializerKinds.binding(true, "value", "number"), initializerKinds.value(false, "range", ["min", "max", "step"], "object")],
   )],
-  ({ value, min = 0, max = 1, step }) => viewElement("input", {
-    "data-vune": "Slider",
-    type: "range",
-    value: value.value,
-    min,
-    max,
-    step,
-    onInput(event: { target?: { value?: string } }) { value.value = Number(event.target && event.target.value !== undefined ? event.target.value : 0) },
-  }),
+  ({ value, min = 0, max = 1, step }) => {
+    const normalizedMin = Number.isFinite(min) ? min : 0
+    const finiteMax = Number.isFinite(max) ? max : 1
+    const normalizedMax = Math.max(normalizedMin, finiteMax)
+    const normalizedValue = Number.isFinite(value.value) ? value.value : normalizedMin
+    const normalizedStep = step !== undefined && Number.isFinite(step) && step > 0 ? step : undefined
+    return viewElement("input", {
+      "data-vune": "Slider",
+      type: "range",
+      value: normalizedValue,
+      min: normalizedMin,
+      max: normalizedMax,
+      step: normalizedStep,
+      onInput(event: { target?: { value?: string } }) { value.value = Number(event.target && event.target.value !== undefined ? event.target.value : normalizedMin) },
+    })
+  },
 ) as TypedViewConstructor<SliderProps, SliderCall>
 
 export interface ImageOptions { readonly alt?: string }
@@ -86,7 +102,10 @@ export const Image = defineBuiltinView<ImageProps>(
   [initializer(
     "Image(source, options?)",
     args => args.length >= 1 && args.length <= 2 && (typeof args[0] === "string" || typeof args[0] === "function") && (args[1] === undefined || isObject(args[1])),
-    args => ({ source: String(resolveValue(args[0] as Value<string>)), ...(isObject(args[1]) ? args[1] : {}) }),
+    args => {
+      const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["alt"], "Image")
+      return { source: String(resolveValue(args[0] as Value<string>)), alt: typeof options.alt === "string" ? options.alt : undefined }
+    },
     [initializerKinds.value(true, "source", undefined, "Value<string>"), initializerKinds.value(false, "options", ["alt"], "object")],
   )],
   ({ source, alt }) => viewElement("img", { src: source, alt }),

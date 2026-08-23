@@ -1,4 +1,5 @@
 import {
+  ViewBuilder,
   defineBuiltinView,
   initializer,
   initializerKinds,
@@ -12,14 +13,17 @@ import {
   viewElement,
 } from "./graph.js"
 import { isBinding, isStateRef, resolveValue, type BindingRef, type Value } from "./state.js"
+import { layoutLength } from "./layout.js"
+import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { HStack, ScrollView, Text } from "./views.js"
+import { arrayCheck } from "./graph/arrays.js"
 
 function flattenChildren(values: readonly ViewBuilderContent[]): ViewValue[] {
-  return values.flatMap(value => Array.isArray(value) ? flattenChildren(value) : value === null || value === undefined || value === false ? [] : [value]) as ViewValue[]
+  return ViewBuilder.buildArray(values)
 }
 
 const staticChildren = (args: readonly unknown[]) => args.every(value => typeof value !== "function")
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && arrayCheck(value) === false
 
 export interface BoxProps { readonly children: ViewValue[] }
 interface BoxCall {
@@ -51,10 +55,31 @@ interface RoundedRectangleCall { (radius?: number | string): ModifiableViewNode 
 export const RoundedRectangle = defineBuiltinView<RoundedRectangleProps>(
   "RoundedRectangle",
   [initializer("RoundedRectangle(radius?)", args => args.length <= 1 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "string"), args => ({ radius: args[0] as number | string | undefined }), [initializerKinds.value(false, "radius", undefined, "number | string")])],
-  ({ radius = 8 }) => viewElement("div", { "data-vune": "RoundedRectangle", style: { borderRadius: typeof radius === "number" ? `${radius}px` : radius } }),
+  ({ radius = 8 }) => viewElement("div", { "data-vune": "RoundedRectangle", style: { borderRadius: layoutLength(radius) } }),
 ) as TypedViewConstructor<RoundedRectangleProps, RoundedRectangleCall>
 
 export interface GridOptions { readonly columns?: number | string; readonly rows?: number | string; readonly autoFlow?: string }
+
+function gridTrackTemplate(value: unknown): string | undefined {
+  if (typeof value === "string") return value
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? `repeat(${value}, minmax(0, 1fr))`
+    : undefined
+}
+
+function normalizedGridAutoFlow(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function normalizedLazyEstimate(value: unknown): number | string | undefined {
+  if (typeof value === "string") return value
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function normalizedLazyOverscan(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
 export interface GridProps { readonly options?: GridOptions; readonly children: ViewValue[] }
 interface GridCall {
   // Keep overload order aligned with the runtime initializer table below.
@@ -67,18 +92,18 @@ interface GridCall {
 export const Grid = defineBuiltinView<GridProps>(
   "Grid",
   [
-    initializer("Grid(options, @ViewBuilder content)", args => args.length === 2 && isObject(args[0]) && typeof args[1] === "function", args => ({ options: args[0] as GridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object"), initializerKinds.viewBuilder(true, "content")]),
+    initializer("Grid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow"], "Grid") as GridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object"), initializerKinds.viewBuilder(true, "content")]),
     initializer("Grid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
-    initializer("Grid(options, ...children)", args => args.length >= 1 && isObject(args[0]) && staticChildren(args.slice(1)), args => ({ options: args[0] as GridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object", true)]),
+    initializer("Grid(options, ...children)", args => args.length >= 1 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow"]) !== undefined && staticChildren(args.slice(1)), args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow"], "Grid") as GridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object", true)]),
     initializer("Grid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
   ({ options = {}, children }) => viewElement("div", {
     "data-vune": "Grid",
     style: {
       display: "grid",
-      gridTemplateColumns: options.columns === undefined ? undefined : typeof options.columns === "number" ? `repeat(${options.columns}, minmax(0, 1fr))` : options.columns,
-      gridTemplateRows: options.rows === undefined ? undefined : typeof options.rows === "number" ? `repeat(${options.rows}, minmax(0, 1fr))` : options.rows,
-      gridAutoFlow: options.autoFlow,
+      gridTemplateColumns: gridTrackTemplate(options.columns),
+      gridTemplateRows: gridTrackTemplate(options.rows),
+      gridAutoFlow: normalizedGridAutoFlow(options.autoFlow),
     },
   }, children),
 ) as TypedViewConstructor<GridProps, GridCall>
@@ -94,9 +119,49 @@ export const TextArea = defineBuiltinView<TextAreaProps>(
 export interface PickerOption<T extends string | number> { readonly label: string; readonly value: T; readonly disabled?: boolean }
 export interface PickerProps { readonly value: BindingRef<string | number>; readonly options: readonly PickerOption<string | number>[] }
 interface PickerCall { <T extends string | number>(value: BindingRef<T>, options: readonly PickerOption<NoInfer<T>>[]): ModifiableViewNode }
+
+function snapshotPickerOptions(value: unknown): readonly PickerOption<string | number>[] | undefined {
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
+  try {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(values, "length")
+    if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) return undefined
+    const result: PickerOption<string | number>[] = []
+    const serializedValues = new Set<string>()
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const itemDescriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!itemDescriptor || !("value" in itemDescriptor) || !isObject(itemDescriptor.value)) return undefined
+      const labelDescriptor = Object.getOwnPropertyDescriptor(itemDescriptor.value, "label")
+      const valueDescriptor = Object.getOwnPropertyDescriptor(itemDescriptor.value, "value")
+      const disabledDescriptor = Object.getOwnPropertyDescriptor(itemDescriptor.value, "disabled")
+      if (!labelDescriptor || !("value" in labelDescriptor) || typeof labelDescriptor.value !== "string") return undefined
+      if (!valueDescriptor || !("value" in valueDescriptor) || (typeof valueDescriptor.value !== "string" && typeof valueDescriptor.value !== "number")) return undefined
+      if (typeof valueDescriptor.value === "number" && !Number.isFinite(valueDescriptor.value)) return undefined
+      if (disabledDescriptor && (!("value" in disabledDescriptor) || (disabledDescriptor.value !== undefined && typeof disabledDescriptor.value !== "boolean"))) return undefined
+      const serializedValue = String(valueDescriptor.value)
+      if (serializedValues.has(serializedValue)) return undefined
+      serializedValues.add(serializedValue)
+      result.push(Object.freeze({
+        label: labelDescriptor.value,
+        value: valueDescriptor.value,
+        ...(!disabledDescriptor || disabledDescriptor.value === undefined ? {} : { disabled: disabledDescriptor.value }),
+      }))
+    }
+    return Object.freeze(result)
+  } catch {
+    return undefined
+  }
+}
+
+function requirePickerOptions(value: unknown): readonly PickerOption<string | number>[] {
+  const options = snapshotPickerOptions(value)
+  if (options === undefined) throw new TypeError("Picker options must contain data-only records with finite, uniquely serialized string or number values")
+  return options
+}
+
 export const Picker = defineBuiltinView<PickerProps>(
   "Picker",
-  [initializer("Picker(value, options)", args => args.length === 2 && isBinding(args[0]) && Array.isArray(args[1]), args => ({ value: args[0] as BindingRef<string | number>, options: args[1] as readonly PickerOption<string | number>[] }), [initializerKinds.binding(true, "value", "string | number"), initializerKinds.value(true, "options", undefined, "array")])],
+  [initializer("Picker(value, options)", args => args.length === 2 && isBinding(args[0]) && snapshotPickerOptions(args[1]) !== undefined, args => ({ value: args[0] as BindingRef<string | number>, options: requirePickerOptions(args[1]) }), [initializerKinds.binding(true, "value", "string | number"), initializerKinds.value(true, "options", undefined, "array")])],
   ({ value, options }) => viewElement("select", { "data-vune": "Picker", value: value.value, onChange(event: { target?: { value?: string } }) { const selectedValue = event.target ? event.target.value : undefined; const option = options.find(item => String(item.value) === selectedValue); if (option) value.value = option.value } }, options.map(option => viewElement("option", { value: option.value, disabled: option.disabled }, [option.label]))),
 ) as TypedViewConstructor<PickerProps, PickerCall>
 
@@ -105,8 +170,19 @@ export interface ProgressViewProps extends ProgressViewOptions { readonly value?
 interface ProgressViewCall { (value?: Value<number>, options?: ProgressViewOptions): ModifiableViewNode }
 export const ProgressView = defineBuiltinView<ProgressViewProps>(
   "ProgressView",
-  [initializer("ProgressView(value?, options?)", args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "function" || isBinding(args[0]) || isStateRef(args[0])) && (args[1] === undefined || isObject(args[1])), args => ({ value: args[0] === undefined ? undefined : Number(resolveValue(args[0] as Value<number>)), ...(isObject(args[1]) ? args[1] : {}) }), [initializerKinds.value(false, "value", undefined, "Value<number>"), initializerKinds.value(false, "options", ["label", "max"], "object")])],
-  ({ value, label, max = 1 }) => viewElement("div", { "data-vune": "ProgressView" }, [viewElement("progress", { max, ...(value === undefined ? {} : { value }) }), ...(label === undefined ? [] : [Text(label)])]),
+  [initializer("ProgressView(value?, options?)", args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "function" || isBinding(args[0]) || isStateRef(args[0])) && (args[1] === undefined || isObject(args[1])), args => {
+    const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["label", "max"], "ProgressView")
+    return {
+      value: args[0] === undefined ? undefined : Number(resolveValue(args[0] as Value<number>)),
+      label: typeof options.label === "string" ? options.label : undefined,
+      max: options.max as number | undefined,
+    }
+  }, [initializerKinds.value(false, "value", undefined, "Value<number>"), initializerKinds.value(false, "options", ["label", "max"], "object")])],
+  ({ value, label, max = 1 }) => {
+    const normalizedMax = Number.isFinite(max) && max > 0 ? max : 1
+    const normalizedValue = value !== undefined && Number.isFinite(value) ? Math.min(normalizedMax, Math.max(0, value)) : undefined
+    return viewElement("div", { "data-vune": "ProgressView" }, [viewElement("progress", { max: normalizedMax, ...(normalizedValue === undefined ? {} : { value: normalizedValue }) }), ...(label === undefined ? [] : [Text(label)])])
+  },
 ) as TypedViewConstructor<ProgressViewProps, ProgressViewCall>
 
 export interface LabelProps { readonly title: string; readonly icon: ModifiableViewNode }
@@ -122,7 +198,10 @@ interface StepperCall { (value: BindingRef<number>, step?: number): ModifiableVi
 export const Stepper = defineBuiltinView<StepperProps>(
   "Stepper",
   [initializer("Stepper(value, step?)", args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || typeof args[1] === "number"), args => ({ value: args[0] as BindingRef<number>, step: args[1] as number | undefined }), [initializerKinds.binding(true, "value", "number"), initializerKinds.value(false, "step", undefined, "number")])],
-  ({ value, step = 1 }) => HStack(Text(String(value.value)), viewElement("button", { type: "button", onClick() { value.value += step } }, ["+"])).withProps({ "data-vune": "Stepper" }),
+  ({ value, step = 1 }) => {
+    const normalizedStep = Number.isFinite(step) ? step : 1
+    return HStack(Text(String(value.value)), viewElement("button", { type: "button", onClick() { value.value += normalizedStep } }, ["+"])).withProps({ "data-vune": "Stepper" })
+  },
 ) as TypedViewConstructor<StepperProps, StepperCall>
 
 export interface LazyGridOptions extends GridOptions {
@@ -141,23 +220,24 @@ interface LazyGridCall {
 export const LazyGrid = defineBuiltinView<LazyGridProps>(
   "LazyGrid",
   [
-    initializer("LazyGrid(options, @ViewBuilder content)", args => args.length === 2 && isObject(args[0]) && typeof args[1] === "function", args => ({ options: args[0] as LazyGridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object"), initializerKinds.viewBuilder(true, "content")]),
+    initializer("LazyGrid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "LazyGrid") as LazyGridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object"), initializerKinds.viewBuilder(true, "content")]),
     initializer("LazyGrid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
-    initializer("LazyGrid(options, ...children)", args => args.length >= 1 && isObject(args[0]) && staticChildren(args.slice(1)), args => ({ options: args[0] as LazyGridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object", true)]),
+    initializer("LazyGrid(options, ...children)", args => args.length >= 1 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"]) !== undefined && staticChildren(args.slice(1)), args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "LazyGrid") as LazyGridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object", true)]),
     initializer("LazyGrid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
   ({ options = {}, children }) => {
-    const estimated = options.estimatedItemSize === undefined ? "44px" : typeof options.estimatedItemSize === "number" ? `${options.estimatedItemSize}px` : options.estimatedItemSize
+    const normalizedEstimate = normalizedLazyEstimate(options.estimatedItemSize)
+    const estimated = layoutLength(normalizedEstimate) ?? "44px"
     return lazyView("LazyGrid", "grid", {
       "data-vune": "LazyGrid",
       "data-vune-lazy": "grid",
-      "data-vune-lazy-estimate": options.estimatedItemSize,
-      "data-vune-lazy-overscan": options.overscan,
+      "data-vune-lazy-estimate": normalizedEstimate,
+      "data-vune-lazy-overscan": normalizedLazyOverscan(options.overscan),
       style: {
         display: "grid",
-        gridTemplateColumns: options.columns === undefined ? undefined : typeof options.columns === "number" ? `repeat(${options.columns}, minmax(0, 1fr))` : options.columns,
-        gridTemplateRows: options.rows === undefined ? undefined : typeof options.rows === "number" ? `repeat(${options.rows}, minmax(0, 1fr))` : options.rows,
-        gridAutoFlow: options.autoFlow,
+        gridTemplateColumns: gridTrackTemplate(options.columns),
+        gridTemplateRows: gridTrackTemplate(options.rows),
+        gridAutoFlow: normalizedGridAutoFlow(options.autoFlow),
         contentVisibility: "auto",
         containIntrinsicSize: `auto ${estimated}`,
       },

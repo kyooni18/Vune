@@ -13,6 +13,7 @@ import {
   type SemanticInitializerSymbol,
   type SemanticViewTypeSymbol,
 } from "../semantic.js"
+import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { decorate } from "./modifiers.js"
 import { isViewNode, viewFragment, viewHost } from "./nodes.js"
 import { vuneInitializers, vuneNamedArguments, vuneView, vuneViewNodeFactory } from "./symbols.js"
@@ -26,6 +27,31 @@ import type {
 const initializerSpecializations = new WeakMap<object, Map<string, InitializerMatch>>()
 const initializerSpecializationEligibility = new WeakMap<object, boolean>()
 
+function ownPropertyDescriptor(value: object, key: PropertyKey): PropertyDescriptor | undefined {
+  try {
+    return Object.getOwnPropertyDescriptor(value, key)
+  } catch {
+    return undefined
+  }
+}
+
+function ownDataValue(value: object, key: PropertyKey): unknown {
+  const descriptor = ownPropertyDescriptor(value, key)
+  return descriptor && "value" in descriptor ? descriptor.value : undefined
+}
+
+function genericParametersOf(target: unknown): string | undefined {
+  if (typeof target !== "function") return undefined
+  const viewType = ownDataValue(target, "viewType")
+  if ((typeof viewType !== "object" && typeof viewType !== "function") || viewType === null) return undefined
+  const value = ownDataValue(viewType, "genericParameters")
+  return typeof value === "string" ? value : undefined
+}
+
+function isRegisteredView(target: unknown): boolean {
+  return typeof target === "function" && ownDataValue(target, vuneView) === true
+}
+
 function specializationShape(value: unknown, depth = 0): string | undefined {
   if (depth > 3) return undefined
   if (value === undefined) return "undefined"
@@ -37,10 +63,23 @@ function specializationShape(value: unknown, depth = 0): string | undefined {
     const variantNames = variants ? Object.keys(variants).sort().join(",") : ""
     return `function:${closureKindOf(value) ?? "unmarked"}:${variantNames}`
   }
-  if (Array.isArray(value)) {
-    const items = value.slice(0, 16).map(item => specializationShape(item, depth + 1))
-    if (items.some(item => item === undefined)) return undefined
-    return `array:${value.length}:${items.join(",")}`
+  if (arrayCheck(value) === true) {
+    const values = value as readonly unknown[]
+    try {
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(values, "length")
+      if (!lengthDescriptor || !("value" in lengthDescriptor) || typeof lengthDescriptor.value !== "number") return undefined
+      const items: Array<string | undefined> = []
+      for (let index = 0; index < Math.min(lengthDescriptor.value, 16); index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+        if (!descriptor) { items.push("hole"); continue }
+        if (!("value" in descriptor)) return undefined
+        items.push(specializationShape(descriptor.value, depth + 1))
+      }
+      if (items.some(item => item === undefined)) return undefined
+      return `array:${lengthDescriptor.value}:${items.join(",")}`
+    } catch {
+      return undefined
+    }
   }
   switch (typeof value) {
     case "string": return value.length <= 128 ? `string:${JSON.stringify(value)}` : undefined
@@ -51,13 +90,19 @@ function specializationShape(value: unknown, depth = 0): string | undefined {
   }
   if (typeof value !== "object") return typeof value
   if (isViewNode(value)) return `view:${value.kind}`
-  const keys = Object.keys(value as Record<string, unknown>).sort()
-  const properties = keys.map(key => {
-    const item = specializationShape((value as Record<string, unknown>)[key], depth + 1)
-    return item === undefined ? undefined : `${key}=${item}`
-  })
-  if (properties.some(item => item === undefined)) return undefined
-  return `object:${properties.join(";")}`
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const properties = Object.keys(descriptors).filter(key => descriptors[key].enumerable).sort().map(key => {
+      const descriptor = descriptors[key]
+      if (!("value" in descriptor)) return undefined
+      const item = specializationShape(descriptor.value, depth + 1)
+      return item === undefined ? undefined : `${key}=${item}`
+    })
+    if (properties.some(item => item === undefined)) return undefined
+    return `object:${properties.join(";")}`
+  } catch {
+    return undefined
+  }
 }
 
 function specializationKey(args: readonly unknown[]): string | undefined {
@@ -174,7 +219,7 @@ function semanticInitializerSymbol(initializer: InitializerMatch, index: number)
 
 function semanticRuntimeArgument(value: unknown): SemanticArgument {
   if (isBinding(value)) return { value, kind: "binding", type: "binding", underlyingType: typeof value.value }
-  if (isStateRef(value)) return { value, kind: "value", type: "state", underlyingType: Array.isArray(value.value) ? "array" : typeof value.value }
+  if (isStateRef(value)) return { value, kind: "value", type: "state", underlyingType: arrayCheck(value.value) === true ? "array" : typeof value.value }
   const closureKind = closureKindOf(value)
   if (closureKind === "action" || closureKind === "viewBuilder") {
     return { value, kind: closureKind, closureRole: closureKind, type: "function" }
@@ -187,15 +232,25 @@ function semanticRuntimeArgument(value: unknown): SemanticArgument {
 function semanticRuntimeArguments(candidate: InitializerMatch, args: readonly unknown[]): readonly SemanticArgument[] {
   void candidate
   return args.flatMap(value => {
-    if (!value || typeof value !== "object" || !(value as Record<PropertyKey, unknown>)[vuneNamedArguments]) return [semanticRuntimeArgument(value)]
-    return Object.entries(value as Record<string, unknown>).map(([label, item]) => ({ label, ...semanticRuntimeArgument(item) }))
+    if (!value || typeof value !== "object") return [semanticRuntimeArgument(value)]
+    try {
+      const marker = Object.getOwnPropertyDescriptor(value, vuneNamedArguments)
+      if (!marker || !("value" in marker) || marker.value !== true) return [semanticRuntimeArgument(value)]
+      return Object.keys(value).map(label => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, label)
+        const item = descriptor && "value" in descriptor ? descriptor.value : undefined
+        return { label, ...semanticRuntimeArgument(item) }
+      })
+    } catch {
+      return [semanticRuntimeArgument(value)]
+    }
   })
 }
 
 function sharedRuntimeResolution(target: unknown, candidates: readonly InitializerMatch[], args: readonly unknown[]): InitializerResolution | undefined {
   if (candidates.length === 0 || candidates.some(candidate => !candidate.parameters)) return undefined
   const symbols = candidates.map(semanticInitializerSymbol).filter((item): item is SemanticInitializerSymbol => item !== undefined)
-  const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  const genericParameters = genericParametersOf(target)
   const supplied = suppliedInitializerArguments(args)
   const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
   const result = resolveSemanticInitializer(symbols, runtimeArguments, genericParameters)
@@ -217,18 +272,23 @@ function sharedRuntimeResolution(target: unknown, candidates: readonly Initializ
 }
 
 function displayNameOf(target: unknown): string {
-  return typeof target === "function" && ((target as { displayName?: string }).displayName || target.name)
-    || "View"
+  if (typeof target !== "function") return "View"
+  const displayName = ownDataValue(target, "displayName")
+  if (typeof displayName === "string" && displayName) return displayName
+  const name = ownDataValue(target, "name")
+  return typeof name === "string" && name ? name : "View"
 }
 
 function metadataOf(target: unknown): readonly InitializerMatch[] {
-  return typeof target === "function" ? ((target as Partial<ViewConstructor>)[vuneInitializers] ?? []) : []
+  if (typeof target !== "function") return []
+  const metadata = ownDataValue(target, vuneInitializers)
+  return arrayCheck(metadata) === true ? metadata as readonly InitializerMatch[] : []
 }
 
 export function registerInitializers<T extends Function>(target: T, initializers: readonly InitializerMatch[]): T {
   initializerSpecializations.delete(target as unknown as object)
   initializerSpecializationEligibility.set(target as unknown as object, canSpecialize(initializers))
-  if (!(target as { [vuneView]?: true })[vuneView]) {
+  if (!isRegisteredView(target)) {
     Object.defineProperty(target, vuneView, { configurable: true, enumerable: false, value: true })
   }
   Object.defineProperty(target, vuneInitializers, { configurable: true, enumerable: false, value: Object.freeze([...initializers]) })
@@ -248,12 +308,17 @@ export function namedArguments<T extends Record<string, unknown>>(value: T): Nam
   return value as NamedArguments<T>
 }
 
-function isNamedObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value) || isViewNode(value)) return false
-  // StateRef and BindingRef deliberately expose an accessor named `value`.
-  // They are value arguments, not labeled-argument carriers.
-  const valueDescriptor = Object.getOwnPropertyDescriptor(value, "value")
-  return !(valueDescriptor && (valueDescriptor.get || valueDescriptor.set))
+function namedObjectKeys(value: unknown): readonly string[] | undefined {
+  if (typeof value !== "object" || value === null || arrayCheck(value) !== false || isViewNode(value)) return undefined
+  try {
+    // StateRef and BindingRef deliberately expose an accessor named `value`.
+    // They are value arguments, not labeled-argument carriers.
+    const valueDescriptor = Object.getOwnPropertyDescriptor(value, "value")
+    if (valueDescriptor && (valueDescriptor.get || valueDescriptor.set)) return undefined
+    return Object.keys(value)
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeNamedArguments(candidate: InitializerMatch, args: readonly unknown[]): readonly unknown[] {
@@ -262,8 +327,8 @@ function normalizeNamedArguments(candidate: InitializerMatch, args: readonly unk
   const labels = new Set(parameters.flatMap(parameter => parameter.label ? [parameter.label] : []))
   const properties = new Set(parameters.flatMap(parameter => parameter.properties ?? []))
   const carriers = args.flatMap((value, index) => {
-    if (!isNamedObject(value)) return []
-    const keys = Object.keys(value)
+    const keys = namedObjectKeys(value)
+    if (!keys) return []
     if (keys.length === 0 || keys.some(key => !labels.has(key))) return []
     if (properties.size > 0 && keys.every(key => properties.has(key))) return []
     return [{ index, value, keys }]
@@ -287,7 +352,10 @@ function normalizeNamedArguments(candidate: InitializerMatch, args: readonly unk
   const positional = args.filter((_, index) => index !== carrier.index)
   let positionalIndex = 0
   const normalized = parameters.map(parameter => {
-    if (parameter.label && Object.prototype.hasOwnProperty.call(carrier.value, parameter.label)) return carrier.value[parameter.label]
+    if (parameter.label) {
+      const descriptor = ownPropertyDescriptor(carrier.value as object, parameter.label)
+      if (descriptor) return "value" in descriptor ? descriptor.value : undefined
+    }
     if (positionalIndex < positional.length) return positional[positionalIndex++]
     return undefined
   })
@@ -339,7 +407,7 @@ function typeMatchesSingle(type: string, value: unknown, genericParameters?: str
 
   const generic = genericConstraint(genericParameters, normalized)
   if (generic) {
-    if (/\bView\b/.test(generic)) return isViewNode(value) || (typeof value === "function" && !!(value as { [vuneView]?: true })[vuneView])
+    if (/\bView\b/.test(generic)) return isViewNode(value) || isRegisteredView(value)
     return undefined
   }
 
@@ -355,15 +423,15 @@ function typeMatchesSingle(type: string, value: unknown, genericParameters?: str
     return typeMatchesType(valueMatch[1], value, genericParameters)
   }
 
-  if (/^(?:some\s+)?View$/.test(normalized)) return isViewNode(value) || (typeof value === "function" && !!(value as { [vuneView]?: true })[vuneView])
+  if (/^(?:some\s+)?View$/.test(normalized)) return isViewNode(value) || isRegisteredView(value)
   if (/^(?:Function|function)$/.test(normalized) || normalized.includes("=>")) return typeof value === "function"
   const arrayMatch = /^(?:ReadonlyArray|Array)\s*<([\s\S]+)>$/.exec(normalized) ?? /^([\s\S]+)\[\]$/.exec(normalized)
-  if (arrayMatch) return Array.isArray(reference) && (reference as unknown[]).every(item => typeMatchesType(arrayMatch[1], item, genericParameters) !== false)
-  if (normalized.toLowerCase() === "array") return Array.isArray(reference)
+  if (arrayMatch) return arrayCheck(reference) === true && snapshotArrayValues(reference as readonly unknown[]).every(item => typeMatchesType(arrayMatch[1], item, genericParameters) !== false)
+  if (normalized.toLowerCase() === "array") return arrayCheck(reference) === true
   if (normalized === "string") return typeof reference === "string"
   if (normalized === "number") return typeof reference === "number"
   if (normalized === "boolean") return typeof reference === "boolean"
-  if (normalized === "object" || normalized.startsWith("Record<")) return typeof reference === "object" && reference !== null && !Array.isArray(reference) && !isViewNode(reference)
+  if (normalized === "object" || normalized.startsWith("Record<")) return typeof reference === "object" && reference !== null && arrayCheck(reference) === false && !isViewNode(reference)
   if (/^(?:true|false)$/.test(normalized)) return value === (normalized === "true")
   if (/^(?:\"[^\"]*\"|'[^']*')$/.test(normalized)) return value === normalized.slice(1, -1)
   if (/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return value === Number(normalized)
@@ -402,7 +470,7 @@ function genericViewType(type: string | undefined, genericParameters: string | u
 }
 
 function isViewBuilderValue(value: unknown): boolean {
-  if (Array.isArray(value)) return value.every(isViewBuilderValue)
+  if (arrayCheck(value) === true) return snapshotArrayValues(value as readonly unknown[]).every(isViewBuilderValue)
   return isViewNode(value)
 }
 
@@ -411,7 +479,7 @@ function validateGenericViewBuilders(
   resolution: InitializerResolution,
   props: Record<string, unknown>,
 ): void {
-  const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  const genericParameters = genericParametersOf(target)
   if (!genericParameters || !resolution.initializer.parameters) return
   for (const parameter of resolution.initializer.parameters) {
     if (parameter.kind !== "viewBuilder" || !genericViewType(parameter.type, genericParameters)) continue
@@ -423,10 +491,11 @@ function validateGenericViewBuilders(
 
 function labelOrderScore(candidate: InitializerMatch, original: readonly unknown[]): number {
   if (!candidate.parameters) return 0
-  const carrier = original.find(value => isNamedObject(value) && Object.keys(value).length > 0)
-  if (!carrier || !isNamedObject(carrier)) return 0
+  const carrier = original.map(value => ({ value, keys: namedObjectKeys(value) }))
+    .find(item => item.keys && item.keys.length > 0)
+  if (!carrier?.keys) return 0
   const labels = candidate.parameters.flatMap(parameter => parameter.label ? [parameter.label] : [])
-  return Object.keys(carrier).reduce((score, key, index) => score + (labels[index] === key ? 1 : 0), 0)
+  return carrier.keys.reduce((score, key, index) => score + (labels[index] === key ? 1 : 0), 0)
 }
 
 function score(candidate: InitializerMatch, original: readonly unknown[], args: readonly unknown[], genericParameters?: string): number {
@@ -461,8 +530,11 @@ function declaredParametersAccept(candidate: InitializerMatch, args: readonly un
   if (variadic && args.slice(parameters.length).some(value => typeof value === "function")) return false
   for (let index = 0; index < parameters.length; index += 1) {
     const value = args[index]
-    if (value === undefined) continue
     const parameter = parameters[index]
+    if (value === undefined) {
+      if (parameter.required !== false) return false
+      continue
+    }
     const variants = closureVariantsOf(value)
     if (variants && (parameter.kind === "viewBuilder" || parameter.kind === "action") && !variants[parameter.kind]) return false
     const kind = closureKindOf(value)
@@ -506,7 +578,7 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
   const cacheKey = cacheTarget && initializerSpecializationEligibility.get(cacheTarget) ? specializationKey(supplied) : undefined
   const cached = cacheKey && cacheTarget ? initializerSpecializations.get(cacheTarget)?.get(cacheKey) : undefined
   if (cached) {
-    const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+    const genericParameters = genericParametersOf(target)
     const normalized = normalizeNamedArguments(cached, supplied)
     if (declaredParametersAccept(cached, normalized, genericParameters) !== false) {
       const typed = cached.parameters
@@ -521,7 +593,7 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
     }
   }
   const candidates = metadataOf(target)
-  const genericParameters = typeof target === "function" ? (target as Partial<ViewConstructor>).viewType?.genericParameters : undefined
+  const genericParameters = genericParametersOf(target)
   const shared = sharedRuntimeResolution(target, candidates, supplied)
   if (shared) return shared
   if (candidates.length === 1 && candidates[0].parameters) {
@@ -585,7 +657,7 @@ export const viewBuilderSemanticSymbol: SemanticBuilderTypeSymbol = Object.freez
 
 export function flattenViewBuilder(value: ViewBuilderResult): ViewValue[] {
   if (value === null || value === undefined || value === false) return []
-  if (Array.isArray(value)) return value.flatMap(item => flattenViewBuilder(item))
+  if (arrayCheck(value) === true) return snapshotArrayValues(value as readonly unknown[]).flatMap(item => flattenViewBuilder(item as ViewBuilderResult))
   return [value]
 }
 
@@ -594,7 +666,7 @@ export const ViewBuilder = Object.freeze({
   buildBlock: (...values: ViewBuilderResult[]) => values.flatMap(flattenViewBuilder),
   buildOptional: (value: ViewBuilderResult | null | undefined) => flattenViewBuilder(value as ViewBuilderResult),
   buildEither: (first: ViewBuilderResult, second?: ViewBuilderResult) => flattenViewBuilder(second === undefined ? first : second),
-  buildArray: (values: readonly ViewBuilderResult[]) => values.flatMap(flattenViewBuilder),
+  buildArray: (values: readonly ViewBuilderResult[]) => snapshotArrayValues(values).flatMap(item => flattenViewBuilder(item as ViewBuilderResult)),
 })
 
 export function resolveBuilderClosure(closure: () => ViewBuilderResult): ViewValue[] {
@@ -679,8 +751,8 @@ export function defineView<
 export const structView = defineView
 
 export function createViewNode(target: unknown, args: readonly unknown[] = []): ModifiableViewNode {
-  const factory = typeof target === "function" ? (target as { [vuneViewNodeFactory]?: (...args: unknown[]) => ModifiableViewNode })[vuneViewNodeFactory] : undefined
-  if (!factory) throw new TypeError(`Target ${displayNameOf(target)} is not a Vune View constructor`)
+  const factory = typeof target === "function" ? ownDataValue(target, vuneViewNodeFactory) : undefined
+  if (typeof factory !== "function") throw new TypeError(`Target ${displayNameOf(target)} is not a Vune View constructor`)
   return factory(...args)
 }
 

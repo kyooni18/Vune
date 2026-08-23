@@ -63,7 +63,7 @@ test("the 1.0 candidate core runtime surface changes only through an explicit sn
 
 test("React adds only renderer APIs and preserves canonical export identity", () => {
   const reactOnly = Object.keys(react).filter(name => !(name in core)).sort()
-  assert.deepEqual(reactOnly, ["Component", "VuneView", "Raw", "createRenderer", "reactElement", "render", "statefulView", "view"].sort())
+  assert.deepEqual(reactOnly, ["Component", "VuneView", "Raw", "createReactView", "createRenderer", "foreignComponent", "fromReactState", "mount", "reactComponent", "reactElement", "render", "statefulView", "useVuneState", "view"].sort())
   for (const name of coreRuntimeExports) assert.equal(react[name], core[name], `${name} must remain a core compatibility re-export`)
 })
 
@@ -101,7 +101,7 @@ test("the 1.0 candidate declaration surface includes type-only exports in the fr
   assert.deepEqual(declarationExports("dist/index.d.ts"), coreDeclarations)
   const reactDeclarations = declarationExports("packages/react/dist/index.d.ts")
   assert.deepEqual(reactDeclarations.filter(name => !coreDeclarations.includes(name)), [
-    "Component", "VuneView", "Raw", "StatefulViewDefinition", "createRenderer", "reactElement", "render", "statefulView", "view",
+    "Component", "ReactComponentProps", "ReactComponentView", "ReactMountOptions", "Raw", "StatefulViewDefinition", "VuneView", "VuneViewProps", "createReactView", "createRenderer", "foreignComponent", "fromReactState", "mount", "reactComponent", "reactElement", "render", "statefulView", "useVuneState", "view",
   ].sort())
   assert.deepEqual(declarationExports("packages/vue/dist/index.d.ts"), [
     "Component", "VuneView", "VuneViewProps", "VuneVueSlot", "VueComponentProps", "VueComponentView", "VueMountOptions", "VueView",

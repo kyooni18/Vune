@@ -98,6 +98,11 @@ export default defineConfig({
 The plugin is a build-time syntax transform. It does not replace React or
 introduce a second renderer.
 
+In a `.vune.ts` graph, a default import from a `.tsx` or `.jsx` module is
+lowered to the typed React foreign-component adapter automatically. You can
+also use `Component(MyComponent, props)` or `reactComponent(MyComponent)`
+explicitly when the component is not a default file import.
+
 For Vue, install `@vitejs/plugin-vue` and keep the same `vunePlugin()` before
 it. The adapter lowers Vune syntax in `.vue` script blocks and Vue virtual
 script modules while leaving `<template>` and stylesheet modules to Vue/Vite:

@@ -44,10 +44,16 @@ export function isBinding(value: unknown): value is BindingRef<unknown> {
 }
 
 function reactiveContainer(value: unknown): value is object {
-  if (typeof value !== "object" || value === null || records.has(value) || isViewNode(value) || Object.isFrozen(value)) return false
-  if (Array.isArray(value)) return true
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
+  if (typeof value !== "object" || value === null || records.has(value) || isViewNode(value)) return false
+  try {
+    if (Object.isFrozen(value)) return false
+    if (owners.has(value)) return true
+    if (Array.isArray(value)) return true
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+  } catch {
+    return false
+  }
 }
 
 function unwrap<T>(value: T): T {
@@ -86,6 +92,17 @@ function detach(record: StateRecord<unknown>): void {
   record.owners.clear()
 }
 
+function samePropertyDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
+  if (!left || !right) return left === right
+  if (left.configurable !== right.configurable || left.enumerable !== right.enumerable) return false
+  const leftData = "value" in left || "writable" in left
+  const rightData = "value" in right || "writable" in right
+  if (leftData !== rightData) return false
+  return leftData
+    ? left.writable === right.writable && Object.is(unwrap(left.value), unwrap(right.value))
+    : left.get === right.get && left.set === right.set
+}
+
 function wrap<T>(value: T, record: StateRecord<unknown>): T {
   const raw = unwrap(value)
   if (!reactiveContainer(raw)) return raw
@@ -95,17 +112,37 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
   const proxy = new Proxy(raw, {
     get(target, property, receiver) { return wrap(Reflect.get(target, property, receiver), record) },
     set(target, property, next) {
-      const previous = Reflect.get(target, property, target)
-      const changed = !Object.is(unwrap(previous), unwrap(next))
-      const updated = Reflect.set(target, property, unwrap(next), target)
+      const normalized = unwrap(next)
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, property)
+      const changed = !descriptor || !("value" in descriptor) || !Object.is(unwrap(descriptor.value), normalized)
+      const updated = Reflect.set(target, property, normalized, target)
       if (updated && changed) notifyOwner(owner)
       return updated
     },
     deleteProperty(target, property) {
-      const existed = Reflect.has(target, property)
+      const existed = Reflect.getOwnPropertyDescriptor(target, property) !== undefined
       const deleted = Reflect.deleteProperty(target, property)
       if (deleted && existed) notifyOwner(owner)
       return deleted
+    },
+    defineProperty(target, property, descriptor) {
+      const previous = Reflect.getOwnPropertyDescriptor(target, property)
+      const normalized = "value" in descriptor ? { ...descriptor, value: unwrap(descriptor.value) } : descriptor
+      const defined = Reflect.defineProperty(target, property, normalized)
+      if (defined && !samePropertyDescriptor(previous, Reflect.getOwnPropertyDescriptor(target, property))) notifyOwner(owner)
+      return defined
+    },
+    setPrototypeOf(target, prototype) {
+      const previous = Reflect.getPrototypeOf(target)
+      const updated = Reflect.setPrototypeOf(target, prototype)
+      if (updated && previous !== prototype) notifyOwner(owner)
+      return updated
+    },
+    preventExtensions(target) {
+      const wasExtensible = Reflect.isExtensible(target)
+      const updated = Reflect.preventExtensions(target)
+      if (updated && wasExtensible) notifyOwner(owner)
+      return updated
     },
   })
   owner.proxies.set(record, proxy)

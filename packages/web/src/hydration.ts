@@ -1,5 +1,5 @@
-import { type DomRenderContext } from "./shared.js"
-import { rememberDomProps, setDomEvent } from "./props.js"
+import { domContentContainer, type DomRenderContext } from "./shared.js"
+import { rememberDomProps, setDomEvent, synchronizeDomSelectValue } from "./props.js"
 
 function synchronizeAttributes(source: Element, target: Element): void {
   const sourceAttributes = new Map([...source.attributes].map(attribute => [
@@ -46,20 +46,23 @@ export function hydrateNode(source: Node, target: Node, context: DomRenderContex
   const sourceElement = source as Element
   const targetElement = target as Element
   if (sourceElement.namespaceURI !== targetElement.namespaceURI || sourceElement.tagName !== targetElement.tagName) return false
-  const sourceChildren = [...source.childNodes]
-  const targetChildren = [...target.childNodes]
+  const sourceChildren = [...domContentContainer(sourceElement).childNodes]
+  const targetChildren = [...domContentContainer(targetElement).childNodes]
   if (sourceChildren.length !== targetChildren.length) return false
   activateHydratedProps(sourceElement, targetElement, context)
   const key = context.domKeys.get(sourceElement)
   if (key !== undefined) context.domKeys.set(targetElement, key)
   const lazyKey = context.lazyKeys.get(sourceElement)
   if (lazyKey) context.lazyKeys.set(targetElement, lazyKey)
-  return sourceChildren.every((child, index) => hydrateNode(child, targetChildren[index], context))
+  const hydrated = sourceChildren.every((child, index) => hydrateNode(child, targetChildren[index], context))
+  if (hydrated) synchronizeDomSelectValue(targetElement, context.hydrationProps.get(sourceElement))
+  return hydrated
 }
 
 function activateHydratedTree(node: Node, context: DomRenderContext): void {
   if (node.nodeType !== 1) return
-  activateHydratedProps(node as Element, node as Element, context)
-  node.childNodes.forEach(child => activateHydratedTree(child, context))
+  const element = node as Element
+  activateHydratedProps(element, element, context)
+  domContentContainer(element).childNodes.forEach(child => activateHydratedTree(child, context))
 }
 export { activateHydratedTree }

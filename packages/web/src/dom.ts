@@ -18,14 +18,42 @@ import {
 } from "@vune-ui/core"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
-import { applyDomProps, patchDomProps, setDomRef } from "./props.js"
-import { propsOf, styleOf, type DomRenderContext } from "./shared.js"
+import { applyDomProps, clearDomEvents, patchDomProps, setDomRef, synchronizeDomSelectValue } from "./props.js"
+import { domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
 
 function nodeKey(node: Node, context: DomRenderContext): string | number | undefined {
   return context.domKeys.get(node)
 }
 
-function replaceDomNode(parent: Node, current: Node, next: Node, _context: DomRenderContext): Node {
+function releaseDomSubtree(node: Node, context: DomRenderContext): void {
+  if (node.nodeType === 1) {
+    const element = node as Element
+    clearDomEvents(element, context)
+    for (const child of domContentContainer(element).childNodes) releaseDomSubtree(child, context)
+    return
+  }
+  for (const child of node.childNodes) releaseDomSubtree(child, context)
+}
+
+function collectDomElements(root: Node): Element[] {
+  const elements: Element[] = []
+  const visit = (node: Node): void => {
+    for (const child of node.childNodes) {
+      if (child.nodeType !== 1) {
+        visit(child)
+        continue
+      }
+      const element = child as Element
+      elements.push(element)
+      visit(domContentContainer(element))
+    }
+  }
+  visit(root)
+  return elements
+}
+
+function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
+  releaseDomSubtree(current, context)
   parent.replaceChild(next, current)
   return next
 }
@@ -74,7 +102,10 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   }
 
   for (const child of currentChildren) {
-    if (!used.has(child) && child.parentNode === parent) parent.removeChild(child)
+    if (!used.has(child) && child.parentNode === parent) {
+      releaseDomSubtree(child, context)
+      parent.removeChild(child)
+    }
   }
 }
 
@@ -96,7 +127,8 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   const nextKey = nodeKey(nextElement, context)
   if (nextKey !== undefined) context.domKeys.set(currentElement, nextKey)
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
-  reconcileDomChildren(currentElement, nextElement.childNodes, context)
+  reconcileDomChildren(domContentContainer(currentElement), domContentContainer(nextElement).childNodes, context)
+  synchronizeDomSelectValue(currentElement, context.domProps.get(nextElement))
   return current
 }
 
@@ -216,7 +248,9 @@ function normalizeChildNamespace(child: Element, parent: Element, context: DomRe
   context.domKeys.set(replacement, context.domKeys.get(child))
   const lazyKey = context.lazyKeys.get(child)
   if (lazyKey) context.lazyKeys.set(replacement, lazyKey)
-  for (const nested of [...child.childNodes]) appendDomChild(replacement, nested, context)
+  for (const nested of [...domContentContainer(child).childNodes]) {
+    appendDomChild(domContentContainer(replacement), nested, context)
+  }
   return replacement
 }
 
@@ -231,13 +265,78 @@ function appendDomChild(parent: Node, child: Node, context: DomRenderContext): v
   parent.appendChild(normalized)
 }
 
+function rawTextContent(tag: string, children: readonly Node[]): string {
+  let content = ""
+  const append = (node: Node): void => {
+    if (node.nodeType === 3) {
+      content += node.nodeValue ?? ""
+      return
+    }
+    if (node.nodeType === 11) {
+      for (const child of node.childNodes) append(child)
+      return
+    }
+    throw new TypeError(`<${tag.toLowerCase()}> only accepts text children`)
+  }
+  children.forEach(append)
+  return normalizedRawTextValue(tag, content)
+}
+
+function flattenedDomChildren(children: readonly Node[]): Node[] {
+  return children.flatMap(child => child.nodeType === 11
+    ? flattenedDomChildren([...child.childNodes])
+    : [child])
+}
+
+function appendElementChildren(element: Element, tag: string, children: readonly Node[], context: DomRenderContext): void {
+  const content = domContentContainer(element)
+  if (element.namespaceURI !== HTML_NS || tag.toLowerCase() !== "table") {
+    children.forEach(child => appendDomChild(content, child, context))
+    return
+  }
+  let implicitGroup: { readonly kind: "row" | "column" | "cell"; readonly parent: Element } | undefined
+  for (const child of flattenedDomChildren(children)) {
+    const childTag = child.nodeType === 1 && (child as Element).namespaceURI === HTML_NS
+      ? (child as Element).localName.toLowerCase()
+      : undefined
+    const kind = childTag === "tr" ? "row" : childTag === "col" ? "column" : childTag === "td" || childTag === "th" ? "cell" : undefined
+    if (!kind) {
+      implicitGroup = undefined
+      const isWhitespace = child.nodeType === 3 && !(child.nodeValue ?? "").trim()
+      if (!isWhitespace && (!childTag || !validTableChildElements.has(childTag))) {
+        throw new TypeError("<table> only accepts table sections, rows, columns, cells, scripts, templates, or whitespace")
+      }
+      appendDomChild(content, child, context)
+      continue
+    }
+    if (implicitGroup?.kind !== kind) {
+      const wrapper = createTaggedElement(context, kind === "column" ? "colgroup" : "tbody")
+      appendDomChild(content, wrapper, context)
+      const parent = kind === "cell" ? createTaggedElement(context, "tr") : wrapper
+      if (kind === "cell") appendDomChild(wrapper, parent, context)
+      implicitGroup = { kind, parent }
+    }
+    appendDomChild(implicitGroup.parent, child, context)
+  }
+}
+
 function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
   return {
     element(type, props, ...children) {
       const tag = typeof type === "string" ? type : "div"
       const element = createTaggedElement(context, tag)
       applyDomProps(element, props, context)
-      children.forEach(child => appendDomChild(element, child, context))
+      const hasTextAreaValue = element.namespaceURI === HTML_NS
+        && tag.toLowerCase() === "textarea"
+        && props?.value !== undefined
+        && props.value !== null
+      const isRawText = element.namespaceURI === HTML_NS && rawTextHtmlElements.has(tag.toLowerCase())
+      if (isRawText) {
+        element.textContent = rawTextContent(tag, children)
+      } else if (!voidHtmlElements.has(tag.toLowerCase()) && !hasTextAreaValue) {
+        appendElementChildren(element, tag, children, context)
+      }
+      synchronizeDomSelectValue(element, props)
       return element
     },
     fragment(children) {
@@ -296,7 +395,9 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       nodes.forEach(node => {
         if (node.nodeType !== 1) return
         if (key !== undefined) context.domKeys.set(node, key)
-        if (Object.keys(props).length > 0) applyDomProps(node as Element, props, context)
+        const element = node as Element
+        const appliedProps = element.localName.includes("-") ? props : nativeElementProps(props)
+        if (Object.keys(appliedProps).length > 0) applyDomProps(element, appliedProps, context)
       })
       return content
     },
@@ -391,7 +492,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const commitRefs = () => {
       if (!context.hasRefs && activeRefs.size === 0) return
       const desired = new Map<Element, unknown>()
-      container.querySelectorAll("*").forEach(element => {
+      collectDomElements(container).forEach(element => {
         const reference = context.domProps.get(element)?.ref
         if (reference !== undefined && reference !== null) desired.set(element, reference)
       })
@@ -568,6 +669,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       activeRefs.clear()
       lazyViewportCleanups.forEach(cleanup => cleanup())
       lazyViewportCleanups.length = 0
+      for (const child of container.childNodes) releaseDomSubtree(child, context)
       ;(container as Element & { replaceChildren(...nodes: Node[]): void }).replaceChildren()
     }
   }

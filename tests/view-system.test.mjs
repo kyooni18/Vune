@@ -387,6 +387,37 @@ test('ViewBuilder syntax lowers if/else and item closures with one normalization
   assert.deepEqual(ViewBuilder.buildArray([[child], null]), [child])
 })
 
+test('legacy renderer and ViewBuilder arrays do not execute accessors or leak revoked Proxy errors', () => {
+  let getterCalls = 0
+  const values = []
+  Object.defineProperty(values, '0', {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      throw new Error('legacy array getter must not run')
+    },
+  })
+  values.length = 1
+  assert.deepEqual(ViewBuilder.buildArray(values), [])
+
+  const renderer = {
+    element() { return null },
+    fragment(children) { return children },
+    value(value) { return value },
+    render(value) { return renderViewNode(value, this) },
+  }
+  assert.deepEqual(renderViewNode(values, renderer), [undefined])
+  assert.equal(getterCalls, 0)
+
+  const revoked = () => {
+    const pair = Proxy.revocable([], {})
+    pair.revoke()
+    return pair.proxy
+  }
+  assert.throws(() => ViewBuilder.buildArray(revoked()), /Legacy ViewBuilder arrays must be inspectable/)
+  assert.throws(() => renderViewNode(revoked(), renderer), /Legacy Vune View graph array inputs must be inspectable/)
+})
+
 test('Vune builder parser produces a source-ranged AST consumed by the lowering pass', () => {
   const source = `VStack(alignment: .leading, spacing: 12) {
     Text("Header")

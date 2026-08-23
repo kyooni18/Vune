@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
@@ -48,7 +49,12 @@ test('renderer-independent root does not force a renderer into canonical consume
 test('local package output never checks stale archives into source', () => {
   const localDir = resolve(root, 'local-packages')
   assert.equal(existsSync(resolve(localDir, 'README.md')), true)
-  assert.deepEqual(readdirSync(localDir).filter(name => name.endsWith('.tgz')), [])
+  const localArchives = readdirSync(localDir).filter(name => name.endsWith('.tgz'))
+  const trackedArchives = execFileSync('git', ['ls-files', '--', 'local-packages/*.tgz'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim().split('\n').filter(Boolean)
+  assert.deepEqual(trackedArchives, [], `local archives must stay untracked: ${localArchives.join(', ')}`)
   const ignore = readFileSync(resolve(root, '.gitignore'), 'utf8')
   assert.match(ignore, /^\.pi\/$/mu)
   assert.match(ignore, /^local-packages\/\*\.tgz$/mu)

@@ -31,7 +31,16 @@ import {
   namedArguments,
   type BindingRef,
   type ViewBuilderClosure,
+  type ViewGraphValue,
 } from '../packages/core/src/index.js'
+
+const bigintLeaf: ViewGraphValue = 1n
+// @ts-expect-error arbitrary objects are not renderer-neutral View graph leaves
+const objectLeaf: ViewGraphValue = { invalid: true }
+// @ts-expect-error functions must enter the graph through a declared View closure or adapter
+const functionLeaf: ViewGraphValue = () => undefined
+// @ts-expect-error symbols are not renderable View graph leaves
+const symbolLeaf: ViewGraphValue = Symbol('invalid')
 
 Text('Vune')
 Text(1)
@@ -162,4 +171,4 @@ Button('Missing action')
 // @ts-expect-error Button titles cannot be arbitrary objects
 Button({ title: 'Invalid' }, () => undefined)
 
-export { invalidBuilder }
+export { bigintLeaf, functionLeaf, invalidBuilder, objectLeaf, symbolLeaf }

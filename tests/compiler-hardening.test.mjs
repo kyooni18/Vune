@@ -112,6 +112,13 @@ Text(String(enabled))`
   assert.deepEqual(diagnostics, [])
 })
 
+test("semantic initializer matching preserves direct string literals for literal contracts", () => {
+  const valid = diagnoseVuneSource('ScrollView("both") { Text("valid") }').filter(item => item.code === "VUNE_INITIALIZER")
+  const invalid = diagnoseVuneSource('ScrollView("sideways") { Text("invalid") }').filter(item => item.code === "VUNE_INITIALIZER")
+  assert.deepEqual(valid, [])
+  assert.equal(invalid.length, 1)
+})
+
 test("raw HTML disambiguates TypeScript assertions and decodes character references", () => {
   const assertion = `const result = <Foo>input\nText(String(result))`
   const assertionOutput = transformVuneSource(assertion, "Assertion.vune.ts")

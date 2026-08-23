@@ -16,7 +16,7 @@ import {
   VStack,
   view,
 } from '../dist/legacy.js'
-import { GeometryReader, Text as CanonicalText, render as canonicalRender, view as canonicalView } from '../packages/react/dist/index.js'
+import { GeometryReader, Text as CanonicalText, mount as canonicalMount, render as canonicalRender, useVuneState, view as canonicalView } from '../packages/react/dist/index.js'
 import { ForEach, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
 
 function installDOM() {
@@ -158,6 +158,38 @@ test('canonical @vune-ui/react graph output hydrates through the standard React 
       serverButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
     assert.equal(container.textContent, 'Hydrated 1')
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
+test('@vune-ui/react mount owns a root and hydrates its graph boundary', async () => {
+  const restore = installDOM()
+  try {
+    const container = document.getElementById('root')
+    const value = CanonicalText('Mounted React')
+    container.innerHTML = renderToString(canonicalRender(value))
+    const unmount = canonicalMount(value, container, { hydrate: true })
+    await act(async () => {})
+    assert.equal(container.textContent, 'Mounted React')
+    await act(async () => { unmount() })
+    assert.equal(container.textContent, '')
+  } finally {
+    restore()
+  }
+})
+
+test('useVuneState is an explicit live bridge from core State into React', async () => {
+  const restore = installDOM()
+  try {
+    const state = State('before')
+    function Bridge() { return createElement('span', null, useVuneState(state)) }
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(Bridge)) })
+    assert.equal(document.body.textContent, 'before')
+    await act(async () => { state.value = 'after' })
+    assert.equal(document.body.textContent, 'after')
     await act(async () => { root.unmount() })
   } finally {
     restore()

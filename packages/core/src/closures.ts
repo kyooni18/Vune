@@ -14,6 +14,15 @@ export type VuneClosure<T extends (...args: any[]) => any> = T & {
   readonly [vuneClosureVariants]?: VuneClosureVariants
 }
 
+function ownDataValue(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function overloadClosure<Args extends any[] = any[], Result = any>(
   viewBuilder: (...args: Args) => Result,
   action: (...args: Args) => unknown,
@@ -22,15 +31,22 @@ export function overloadClosure<Args extends any[] = any[], Result = any>(
   Object.defineProperty(closure, vuneClosureVariants, {
     configurable: false,
     enumerable: false,
-    value: { viewBuilder, action },
+    value: Object.freeze({ viewBuilder, action }),
   })
   return closure
 }
 
 export function closureVariantsOf(value: unknown): VuneClosureVariants | undefined {
-  return typeof value === "function"
-    ? (value as VuneClosure<(...args: any[]) => any>)[vuneClosureVariants]
-    : undefined
+  if (typeof value !== "function") return undefined
+  const variants = ownDataValue(value, vuneClosureVariants)
+  if ((typeof variants !== "object" && typeof variants !== "function") || variants === null) return undefined
+  const snapshot: VuneClosureVariants = Object.freeze(Object.fromEntries(
+    (["value", "viewBuilder", "action"] as const).flatMap(kind => {
+      const variant = ownDataValue(variants, kind)
+      return typeof variant === "function" ? [[kind, variant]] : []
+    }),
+  ))
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined
 }
 
 export function closureForKind<T extends (...args: any[]) => any>(value: T, kind: VuneClosureKind): T {
@@ -38,7 +54,7 @@ export function closureForKind<T extends (...args: any[]) => any>(value: T, kind
 }
 
 export function markVuneClosure<T extends (...args: any[]) => any>(closure: T, kind: VuneClosureKind): VuneClosure<T> {
-  const current = (closure as VuneClosure<T>)[vuneClosureKind]
+  const current = ownDataValue(closure, vuneClosureKind)
   if (current === kind) return closure as VuneClosure<T>
   if (current !== undefined) {
     const wrapped = ((...args: any[]) => closure(...args)) as VuneClosure<T>
@@ -56,9 +72,9 @@ export function markVuneClosure<T extends (...args: any[]) => any>(closure: T, k
 }
 
 export function closureKindOf(value: unknown): VuneClosureKind | undefined {
-  return typeof value === "function"
-    ? (value as VuneClosure<(...args: any[]) => any>)[vuneClosureKind]
-    : undefined
+  if (typeof value !== "function") return undefined
+  const kind = ownDataValue(value, vuneClosureKind)
+  return kind === "value" || kind === "viewBuilder" || kind === "action" ? kind : undefined
 }
 
 export const viewBuilderClosure = <T extends (...args: any[]) => any>(closure: T) => markVuneClosure(closure, "viewBuilder")

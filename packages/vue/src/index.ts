@@ -29,6 +29,7 @@ import {
   frameStyle,
   initializer,
   isForeignComponent,
+  layoutLength,
   renderViewNode,
   subscribeState,
   viewIdentityKey,
@@ -62,18 +63,14 @@ export type VueComponentView<C extends VueComponentType> = ((...args: VueCompone
   readonly component: C
 }
 
-function cssLength(value: unknown): string | number | undefined {
-  return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
-}
-
 function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
   const [value] = modifier.arguments
   switch (modifier.name) {
-    case "padding": return { style: { padding: cssLength(value) } }
-    case "margin": return { style: { margin: cssLength(value) } }
-    case "gap": return { style: { gap: cssLength(value) } }
+    case "padding": return { style: { padding: layoutLength(value) } }
+    case "margin": return { style: { margin: layoutLength(value) } }
+    case "gap": return { style: { gap: layoutLength(value) } }
     case "font": return { style: { font: value } }
-    case "fontSize": return { style: { fontSize: cssLength(value) } }
+    case "fontSize": return { style: { fontSize: layoutLength(value) } }
     case "bold": return { style: { fontWeight: 600 } }
     case "foreground": return { style: { color: value } }
     case "background": return { style: { background: value } }
@@ -96,6 +93,29 @@ function mergeProps(current: Record<string, unknown> | null | undefined, extra: 
     ...(current ?? {}),
     ...extra,
     ...(extraStyle ? { style: { ...currentStyle, ...extraStyle } } : {}),
+  }
+}
+
+function nativeElementProps(props: Record<string, unknown>): Record<string, unknown> {
+  try {
+    const normalized: Record<string, unknown> = {}
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") continue
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      const value = descriptor.value
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (primitive
+        || (key === "style" && typeof value === "object" && value !== null)
+        || (key === "ref" && (typeof value === "object" || typeof value === "function"))
+        || (/^on[A-Za-z]/.test(key) && typeof value === "function")) {
+        Object.defineProperty(normalized, key, { ...descriptor, configurable: true })
+      }
+    }
+    return normalized
+  } catch {
+    return {}
   }
 }
 
@@ -146,8 +166,9 @@ const renderer: VuneRenderer<VNodeChild> = {
     if (modifier.name === "frame") {
       return h("div", modifierProps(modifier), [content])
     }
+    const extra = modifierProps(modifier)
     return content && typeof content === "object" && "type" in content
-      ? cloneVNode(content as VNode, modifierProps(modifier))
+      ? cloneVNode(content as VNode, typeof (content as VNode).type === "string" && !((content as VNode).type as string).includes("-") ? nativeElementProps(extra) : extra)
       : h(Fragment, modifierProps(modifier), [content])
   },
   view(node, _render, identity) {
@@ -302,6 +323,38 @@ export function createVueView<Props extends Record<string, unknown> = Record<str
   }) as VueComponentType<Props>
 }
 
+function isComponentPropsRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false
+  try {
+    return !Array.isArray(value)
+  } catch {
+    return false
+  }
+}
+
+function snapshotComponentProps(value: unknown): {
+  readonly props: Record<string, unknown>
+  readonly slots?: Record<string, VuneVueSlot>
+} {
+  if (!isComponentPropsRecord(value)) return { props: {} }
+  try {
+    const props: Record<PropertyKey, unknown> = {}
+    let slots: Record<string, VuneVueSlot> | undefined
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      if (key === "slots") {
+        if (isComponentPropsRecord(descriptor.value)) slots = descriptor.value as Record<string, VuneVueSlot>
+        continue
+      }
+      Object.defineProperty(props, key, { ...descriptor, configurable: true })
+    }
+    return { props: props as Record<string, unknown>, ...(slots ? { slots } : {}) }
+  } catch {
+    return { props: {} }
+  }
+}
+
 /** Place a Vue component or native HTML element in the same Vune graph. */
 export function Component<C extends VueComponentType>(type: C, ...args: VueComponentArguments<C>): ModifiableViewNode
 export function Component(type: string, props?: Record<string, unknown> | null, ...children: ViewValue[]): ModifiableViewNode
@@ -311,8 +364,8 @@ export function Component(
   ...children: ViewValue[]
 ): ModifiableViewNode {
   if (typeof type === "string") return viewElement(type, props, children)
-  const { slots, ...componentProps } = props ?? {}
-  return ForeignComponent(type, { props: componentProps, slots }, ...children)
+  const snapshot = snapshotComponentProps(props)
+  return ForeignComponent(type, snapshot, ...children)
 }
 
 /** Adapt a Vue component definition into a Vune-callable, preserving its Vue prop surface. */
@@ -321,7 +374,7 @@ export function vueComponent<C extends VueComponentType>(type: C): VueComponentV
   const View = defineView(name, {
     initializers: [initializer(
       "VueComponent(props?)",
-      args => args.length <= 1 && (args.length === 0 || (typeof args[0] === "object" && args[0] !== null && !Array.isArray(args[0]))),
+      args => args.length <= 1 && (args.length === 0 || isComponentPropsRecord(args[0])),
       args => ({ props: args[0] ?? null }),
     )],
     intrinsic: true,

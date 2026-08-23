@@ -106,9 +106,10 @@ The explicit runtime APIs remain available when macros are undesirable.
 
 Raw HTML is represented by graph `Element` nodes and retains ordinary HTML
 attributes. `Component()` in `@vune-ui/react` or `@vune-ui/vue` creates a renderer-
-owned component node; the Vue adapter also supports default/named slots and
-explicit `toVueRef`/`fromVueRef` bridges. Renderer-specific interop does not
-enter `@vune-ui/core`.
+owned component node; `reactComponent()` and `vueComponent()` provide typed
+callable adapters, while each renderer owns its explicit State/Binding bridge.
+The Vue adapter also supports default/named slots. Renderer-specific interop
+does not enter `@vune-ui/core`.
 
 ## Public surface
 

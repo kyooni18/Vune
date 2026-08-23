@@ -1254,16 +1254,51 @@ function lowerVueComponentImports(source: string): string {
   return `import { foreignComponent as __vuneForeignComponent } from "@vune-ui/vue"\n${result}`
 }
 
+function lowerReactComponentImports(source: string): string {
+  const file = ts.createSourceFile("vune-react-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const existingNames = new Set<string>()
+  const collectNames = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) existingNames.add(node.text)
+    ts.forEachChild(node, collectNames)
+  }
+  collectNames(file)
+  const replacements: Array<{ start: number; end: number; value: string }> = []
+  let index = 0
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    if (!/\.(?:tsx|jsx)$/i.test(statement.moduleSpecifier.text) || statement.importClause?.isTypeOnly) continue
+    const importedName = statement.importClause?.name?.text
+    if (!importedName) continue
+    let adapterName = `__vuneReactComponent${index++}`
+    while (existingNames.has(adapterName)) adapterName = `__vuneReactComponent${index++}`
+    existingNames.add(adapterName)
+    const quote = source[statement.moduleSpecifier.getStart(file)]
+    const module = statement.moduleSpecifier.text
+    const lineStart = source.lastIndexOf("\n", statement.getStart(file) - 1) + 1
+    const indent = source.slice(lineStart, statement.getStart(file)).match(/^[ \t]*/)?.[0] ?? ""
+    replacements.push({
+      start: statement.getStart(file),
+      end: statement.end,
+      value: `${indent}import ${adapterName} from ${quote}${module}${quote}\n${indent}const ${importedName} = __vuneReactComponent(${adapterName})`,
+    })
+  }
+  if (replacements.length === 0) return source
+  let result = source
+  for (const replacement of replacements.reverse()) result = result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end)
+  return `import { reactComponent as __vuneReactComponent } from "@vune-ui/react"\n${result}`
+}
+
 export function transformVuneSource(source: string, fileName = "vune-source.ts"): string {
   const withVueImports = lowerVueComponentImports(source)
-  const declarations = parseVuneStructs(withVueImports)
+  const withForeignImports = lowerReactComponentImports(withVueImports)
+  const declarations = parseVuneStructs(withForeignImports)
   const registry = initializerRegistryFor(declarations)
-  validateKnownCalls(parseVuneBuilder(withVueImports), registry)
-  validateKnownTypeScriptCalls(withVueImports, registry)
+  validateKnownCalls(parseVuneBuilder(withForeignImports), registry)
+  validateKnownTypeScriptCalls(withForeignImports, registry)
   for (const declaration of declarations) {
     validateKnownCalls(parseVuneBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
   }
-  const withStructs = lowerStructs(withVueImports, registry)
+  const withStructs = lowerStructs(withForeignImports, registry)
   const withNamedArguments = lowerNamedVuneCalls(withStructs, registry)
   const withBuilderSyntax = lowerRange(withNamedArguments, registry)
   // State ownership is resolved only after Vune-only syntax has become valid

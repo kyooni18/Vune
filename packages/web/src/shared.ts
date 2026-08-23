@@ -1,4 +1,4 @@
-import { classNameOf, frameStyle, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
+import { classNameOf, frameStyle, layoutLength, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
 
@@ -30,6 +30,14 @@ const booleanHtmlAttributes = new Set([
 
 const enumeratedBooleanAttributes = new Set(["contenteditable", "draggable", "spellcheck", "translate"])
 
+// DOM createElement/setAttribute validate names against the XML Name production.
+const htmlNamePattern = /^(?:[:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\u{10000}-\u{EFFFF}])(?:[:A-Z_a-z\-.0-9\u00B7\u0300-\u036F\u203F-\u2040\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]|[\u{10000}-\u{EFFFF}])*$/u
+
+export function assertHtmlName(value: string, kind: "tag" | "attribute"): string {
+  if (!htmlNamePattern.test(value)) throw new TypeError(`Invalid HTML ${kind} name: ${JSON.stringify(value)}`)
+  return value
+}
+
 export function htmlAttributeName(key: string): string {
   return htmlAttributeAliases[key] ?? key
 }
@@ -50,18 +58,14 @@ export function escape(value: unknown): string {
     .replaceAll('"', "&quot;")
 }
 
-export function length(value: unknown): string | undefined {
-  return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
-}
-
 export function styleOf(modifier: ViewModifierNode): Record<string, string> {
   const value = modifier.arguments[0]
   switch (modifier.name) {
-    case "padding": return { padding: length(value) ?? "0" }
-    case "margin": return { margin: length(value) ?? "0" }
-    case "gap": return { gap: length(value) ?? "0" }
+    case "padding": return { padding: layoutLength(value) ?? "" }
+    case "margin": return { margin: layoutLength(value) ?? "" }
+    case "gap": return { gap: layoutLength(value) ?? "" }
     case "font": return { font: String(value) }
-    case "fontSize": return { "font-size": length(value) ?? "inherit" }
+    case "fontSize": return { "font-size": layoutLength(value) ?? "" }
     case "bold": return { "font-weight": "600" }
     case "foreground": return { color: String(value) }
     case "background": return { background: String(value) }
@@ -70,7 +74,7 @@ export function styleOf(modifier: ViewModifierNode): Record<string, string> {
         .map(([key, item]) => [cssPropertyName(key), item ?? ""]))
     }
     case "style": return typeof value === "object" && value !== null
-      ? Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]))
+      ? normalizedStyle(value as Record<string, unknown>)
       : {}
     default: return {}
   }
@@ -93,14 +97,69 @@ export function cssPropertyName(value: string): string {
   return value.startsWith("--") ? value : value.replace(/[A-Z]/g, character => `-${character.toLowerCase()}`)
 }
 
+function normalizedStyle(value: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(value).flatMap(([key, item]) =>
+    item === undefined || item === null ? [] : [[cssPropertyName(key), String(item)]],
+  ))
+}
+
 export function styleAttribute(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null) return typeof value === "string" ? value : undefined
-  return styleText(Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [cssPropertyName(key), String(item)])))
+  return styleText(normalizedStyle(value as Record<string, unknown>))
+}
+
+export function nativeElementProps(props: Record<string, unknown>): Record<string, unknown> {
+  try {
+    const normalized: Record<string, unknown> = {}
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") continue
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) continue
+      const value = descriptor.value
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (primitive
+        || (key === "style" && typeof value === "object" && value !== null)
+        || (key === "ref" && (typeof value === "object" || typeof value === "function"))
+        || (/^on[A-Za-z]/.test(key) && typeof value === "function")) {
+        Object.defineProperty(normalized, key, { ...descriptor, configurable: true })
+      }
+    }
+    return normalized
+  } catch {
+    return {}
+  }
 }
 
 export function escapeAttribute(value: unknown): string {
   return escape(value).replaceAll("'", "&#39;")
 }
+
+export function normalizedTextAreaValue(value: unknown): string {
+  return String(value).replace(/\r\n?/g, "\n")
+}
+
+export const rawTextHtmlElements = new Set(["script", "style"])
+
+export function normalizedRawTextValue(tag: string, value: unknown): string {
+  const lowerTag = tag.toLowerCase()
+  const text = String(value).replace(/\r\n?/g, "\n").replaceAll("\0", "\uFFFD")
+  if (new RegExp(`</${lowerTag}`, "i").test(text)) {
+    throw new TypeError(`<${lowerTag}> text cannot contain its HTML closing-tag sequence`)
+  }
+  return text
+}
+
+export function domContentContainer(element: Element): Element | DocumentFragment {
+  const candidate = element as Element & { readonly content?: DocumentFragment }
+  return element.namespaceURI === "http://www.w3.org/1999/xhtml"
+    && element.localName.toLowerCase() === "template"
+    && candidate.content?.nodeType === 11
+    ? candidate.content
+    : element
+}
+
+export const validTableChildElements = new Set(["caption", "colgroup", "thead", "tbody", "tfoot", "script", "template"])
 
 export const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"])
 

@@ -13,7 +13,7 @@ import {
   type ModifiableViewNode,
   type VuneRenderer,
 } from '../src/index.js'
-import { Component, view } from '../packages/react/src/index.js'
+import { Component, foreignComponent, reactComponent, view } from '../packages/react/src/index.js'
 
 Text.viewType.name
 VStack.viewType.name
@@ -26,8 +26,14 @@ function Badge(props: { label: string }) {
 
 const count = State(0)
 const custom: ModifiableViewNode = Component(Badge, { label: 'React' }).padding(8)
+const AdaptedBadge = reactComponent(Badge)
+const GenericBadge = foreignComponent(Badge)
+AdaptedBadge({ label: 'React' })
+GenericBadge({ label: 'React' })
 // @ts-expect-error required React props must be supplied to Component()
 Component(Badge)
+// @ts-expect-error required React props must be supplied to an adapted component
+AdaptedBadge({})
 Text('Theme').style({ '--vune-accent': '#7c3aed' })
 Text('Conditional').className(['card', false && 'featured'])
 
