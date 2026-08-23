@@ -8,6 +8,7 @@ import test from 'node:test'
 const root = resolve(new URL('..', import.meta.url).pathname)
 const cli = resolve(root, 'bin/vune-ui.mjs')
 const initializer = resolve(root, 'packages/create-vune-ui/bin/create-vune-ui.mjs')
+const currentVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8' })
@@ -37,9 +38,9 @@ test('canonical vune-ui create scaffolds a project without legacy imports', () =
 
   const manifest = JSON.parse(readFileSync(resolve(project, 'package.json'), 'utf8'))
   assert.equal(manifest.name, 'hello-vune')
-  assert.equal(manifest.dependencies['vune-ui'], '^0.1.1')
-  assert.equal(manifest.dependencies['@vune-ui/react'], '^0.1.1')
-  assert.equal(manifest.devDependencies['@vune-ui/vite'], '^0.1.1')
+  assert.equal(manifest.dependencies['vune-ui'], `^${currentVersion}`)
+  assert.equal(manifest.dependencies['@vune-ui/react'], `^${currentVersion}`)
+  assert.equal(manifest.devDependencies['@vune-ui/vite'], `^${currentVersion}`)
   assert.match(readFileSync(resolve(project, 'vite.config.ts'), 'utf8'), /vunePlugin\(\),[\s\S]*react\(\)/u)
   assert.doesNotMatch(readFileSync(resolve(project, 'src/App.tsx'), 'utf8'), /vune-ui\/legacy/u)
 })

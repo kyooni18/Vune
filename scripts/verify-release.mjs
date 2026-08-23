@@ -27,6 +27,8 @@ function readJSON(path) {
   return JSON.parse(readFileSync(path, "utf8"))
 }
 
+const releaseVersion = readJSON(resolve(root, "package.json")).version
+
 function exportTargets(exportsValue, output = []) {
   if (typeof exportsValue === "string") output.push(exportsValue)
   else if (exportsValue && typeof exportsValue === "object") {
@@ -186,9 +188,9 @@ try {
   const scaffold = spawnSync(process.execPath, [initializer, generated, "--no-install"], { cwd: installDir, encoding: "utf8" })
   assert.equal(scaffold.status, 0, `packed create-vune-ui smoke test failed:\n${scaffold.stdout}\n${scaffold.stderr}`)
   const generatedManifest = readJSON(resolve(generated, "package.json"))
-  assert.equal(generatedManifest.dependencies["vune-ui"], "^0.1.1")
-  assert.equal(generatedManifest.dependencies["@vune-ui/react"], "^0.1.1")
-  assert.equal(generatedManifest.devDependencies["@vune-ui/vite"], "^0.1.1")
+  assert.equal(generatedManifest.dependencies["vune-ui"], `^${releaseVersion}`)
+  assert.equal(generatedManifest.dependencies["@vune-ui/react"], `^${releaseVersion}`)
+  assert.equal(generatedManifest.devDependencies["@vune-ui/vite"], `^${releaseVersion}`)
   console.log("Clean offline install and create-vune-ui smoke tests passed")
 } finally {
   rmSync(installDir, { recursive: true, force: true })

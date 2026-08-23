@@ -1,6 +1,6 @@
 {
   "name": "vune-ui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packageManager": "pnpm@11.22.0",
   "description": "Vune UI authoring package and React compatibility entry point.",
   "type": "module",
@@ -112,6 +112,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vune-ui/vite": "workspace:*",
+    "@vune-ui/vue": "workspace:*",
     "@vune-ui/web": "workspace:*",
     "@playwright/test": "^1.52.0",
     "@tailwindcss/vite": "^4.3.3",
