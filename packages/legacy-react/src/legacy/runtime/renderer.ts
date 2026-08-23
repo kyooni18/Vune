@@ -1,6 +1,6 @@
 import { Fragment, cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { isViewNode, markViewNode, viewGraphChild, type ViewGraphValue, type ViewHostNode, type ViewModifierNode, type ViewNode } from './view-graph.js'
-import { zeroGeometry } from '@muse/core'
+import { zeroGeometry } from '@vune-ui/core'
 
 export type RendererChild<Output> = Output | readonly RendererChild<Output>[]
 
@@ -9,7 +9,7 @@ export type RendererChild<Output> = Output | readonly RendererChild<Output>[]
  * initializer selection can stay renderer-agnostic; this adapter materializes
  * the graph for React today and leaves another renderer possible later.
  */
-export interface MuseRenderer<Output = ReactNode> {
+export interface VuneRenderer<Output = ReactNode> {
   element(type: unknown, props?: object | null, ...children: RendererChild<Output>[]): Output
   fragment(children: readonly RendererChild<Output>[]): Output
   /** Materialize a renderer-neutral leaf such as text, null, or a number. */
@@ -24,7 +24,7 @@ export interface MuseRenderer<Output = ReactNode> {
 /** Traverse a renderer-neutral View graph with the supplied materializer. */
 export function renderViewNode<Output>(
   value: ViewGraphValue,
-  renderer: MuseRenderer<Output>,
+  renderer: VuneRenderer<Output>,
 ): RendererChild<Output> {
   if (Array.isArray(value)) {
     return value.map(child => renderViewNode(child as ViewGraphValue, renderer)) as unknown as RendererChild<Output>
@@ -63,7 +63,7 @@ export function renderViewNode<Output>(
   )
 }
 
-export const reactRenderer: MuseRenderer<ReactNode> = {
+export const reactRenderer: VuneRenderer<ReactNode> = {
   element(type, props, ...children) {
     return createElement(type as any, props as any, ...children)
   },

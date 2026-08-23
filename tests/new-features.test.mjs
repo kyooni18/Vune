@@ -12,23 +12,23 @@ import {
   VStack,
 } from '../dist/index.js'
 import {
-  createMuseSwcVisitor,
-  createMuseVitePlugin,
-  transformMuseBuilderSyntax,
+  createVuneSwcVisitor,
+  createVuneVitePlugin,
+  transformVuneBuilderSyntax,
 } from '../dist/compiler/index.js'
 import {
-  applyMusePlugins,
+  applyVunePlugins,
   coordinateSpace,
   coordinateSpaceOf,
   createLayoutNode,
   emptyLayoutNode,
-  getMuseNodeMetadata,
+  getVuneNodeMetadata,
   globalCoordinates,
   layoutPass,
-  markMuseNode,
+  markVuneNode,
   observeLayout,
-  registerMusePlugin,
-  unregisterMusePlugin,
+  registerVunePlugin,
+  unregisterVunePlugin,
 } from '../dist/experimental.js'
 
 test('transforms nested builder blocks without touching source text', () => {
@@ -44,25 +44,25 @@ VStack({ spacing: 8 }) {
 }
 `
 
-  const output = transformMuseBuilderSyntax(source)
+  const output = transformVuneBuilderSyntax(source)
   assert.match(output, /VStack\(\{ spacing: 8 \}, \(\) => \[/)
   assert.match(output, /HStack\(\(\) => \[Text\('B'\), Text\('C'\)\]\)/)
   assert.match(output, /'VStack\(\) \{ not syntax \}'/)
   assert.match(output, /\/\/ VStack\(\) \{ also not syntax \}/)
 
   assert.equal(
-    transformMuseBuilderSyntax("VStack() { Text('A') // keep this\n Text('B') }"),
+    transformVuneBuilderSyntax("VStack() { Text('A') // keep this\n Text('B') }"),
     "VStack(() => [Text('A') /* keep this*/, Text('B')])",
   )
 })
 
 test('builder transformer resolves arbitrary View names and reports malformed blocks', () => {
   assert.equal(
-    transformMuseBuilderSyntax('Card() { Text(\'Card\') }'),
+    transformVuneBuilderSyntax('Card() { Text(\'Card\') }'),
     "Card(() => [Text('Card')])",
   )
   assert.throws(
-    () => transformMuseBuilderSyntax('VStack() { Text(\'missing\')'),
+    () => transformVuneBuilderSyntax('VStack() { Text(\'missing\')'),
     /Unclosed \{ block/,
   )
 })
@@ -77,7 +77,7 @@ test('builder runtime supports plain, optioned, nested, Group, and Grid builders
 
 test('Vite and SWC adapters use the same builder transform and support query IDs', () => {
   const source = "VStack() { Text('A') }"
-  const vite = createMuseVitePlugin()
+  const vite = createVuneVitePlugin()
   assert.deepEqual(vite.transform(source, '/src/App.tsx?direct'), {
     code: "VStack(() => [Text('A')])",
     map: {
@@ -91,18 +91,18 @@ test('Vite and SWC adapters use the same builder transform and support query IDs
   })
   assert.equal(vite.transform(source, '/src/App.css'), null)
 
-  const swc = createMuseSwcVisitor()
+  const swc = createVuneSwcVisitor()
   assert.equal(swc.transform(source), "VStack(() => [Text('A')])")
   assert.match(swc.transform('VStack(spacing: 8) { Text(\'A\') }'), /import \{ namedArguments \}/)
 })
 
-test('Muse JSX runtimes preserve native props and apply all style modifiers', () => {
+test('Vune JSX runtimes preserve native props and apply all style modifiers', () => {
   const production = jsxs('div', {
     id: 'root',
     padding: 4,
     minWidth: 10,
     fontWeight: 700,
-    children: ['Hello', jsx('span', { children: ' Muse' })],
+    children: ['Hello', jsx('span', { children: ' Vune' })],
   })
   const development = jsxDEV('div', {
     opacity: 0.5,
@@ -119,7 +119,7 @@ test('Muse JSX runtimes preserve native props and apply all style modifiers', ()
 })
 
 test('JSX nodes pass through registered plugins and retain metadata', () => {
-  registerMusePlugin({
+  registerVunePlugin({
     name: 'test-plugin',
     apply: element => styled(element).attr('data-plugin', 'yes'),
   })
@@ -128,10 +128,10 @@ test('JSX nodes pass through registered plugins and retain metadata', () => {
     const html = renderToStaticMarkup(element)
     assert.match(html, /data-plugin="yes"/)
     assert.match(renderToStaticMarkup(Text('DSL plugin')), /data-plugin="yes"/)
-    assert.deepEqual(getMuseNodeMetadata(element), { modifiers: ['padding'], layout: undefined })
-    assert.equal(applyMusePlugins(element).props['data-plugin'], 'yes')
+    assert.deepEqual(getVuneNodeMetadata(element), { modifiers: ['padding'], layout: undefined })
+    assert.equal(applyVunePlugins(element).props['data-plugin'], 'yes')
   } finally {
-    assert.equal(unregisterMusePlugin('test-plugin'), true)
+    assert.equal(unregisterVunePlugin('test-plugin'), true)
   }
 })
 
@@ -159,7 +159,7 @@ test('coordinate, layout, and node metadata APIs retain their contracts', () => 
 
   const element = jsx('div', { children: 'node' })
   const metadata = { modifiers: ['padding'], layout: { width: 10 } }
-  assert.equal(getMuseNodeMetadata(markMuseNode(element, metadata)), metadata)
+  assert.equal(getVuneNodeMetadata(markVuneNode(element, metadata)), metadata)
 })
 
 test('layout observation records named coordinate spaces', () => {

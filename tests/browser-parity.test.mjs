@@ -2,14 +2,14 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 const targets = [
-  ["react", process.env.MUSE_PARITY_REACT_URL],
-  ["vue", process.env.MUSE_PARITY_VUE_URL],
-  ["web", process.env.MUSE_PARITY_WEB_URL],
+  ["react", process.env.VUNE_PARITY_REACT_URL],
+  ["vue", process.env.VUNE_PARITY_VUE_URL],
+  ["web", process.env.VUNE_PARITY_WEB_URL],
 ]
 
-test("the same Muse graph preserves live parity in React, Vue, and Web", { skip: targets.some(([, url]) => !url) }, async () => {
+test("the same Vune graph preserves live parity in React, Vue, and Web", { skip: targets.some(([, url]) => !url) }, async () => {
   const { chromium } = await import("@playwright/test")
-  const browser = await chromium.launch({ headless: true, ...(process.env.MUSE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.MUSE_CHROMIUM_EXECUTABLE } : {}) })
+  const browser = await chromium.launch({ headless: true, ...(process.env.VUNE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.VUNE_CHROMIUM_EXECUTABLE } : {}) })
   try {
     for (const [renderer, url] of targets) {
       const page = await browser.newPage()
@@ -49,7 +49,7 @@ test("the same Muse graph preserves live parity in React, Vue, and Web", { skip:
       assert.deepEqual(await page.locator("[data-row]").evaluateAll(elements => elements.map(element => element.getAttribute("data-row"))), ["b", "a"], renderer)
       assert.equal(await page.locator('[data-row="a"]').textContent(), "a:1", renderer)
 
-      const custom = page.locator("x-muse-parity")
+      const custom = page.locator("x-vune-parity")
       assert.equal(await custom.getAttribute("data-testid"), "custom-element")
       const customBox = await custom.boundingBox()
       assert.ok(customBox && customBox.width > 0 && customBox.height > 0, renderer)

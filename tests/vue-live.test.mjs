@@ -13,7 +13,7 @@ test("Vue consumes core keyed View identity for reorder and remount State semant
   globalThis.Node = dom.window.Node
   try {
     const { createApp, nextTick } = await import("vue")
-    const { MuseView } = await import("../packages/vue/dist/index.js")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
     const items = State([{ id: "a" }, { id: "b" }])
     const Row = defineView("VueIdentityRow", {
       initializers: [initializer("Row(id)", args => args.length === 1, args => ({ id: args[0] }))],
@@ -24,7 +24,7 @@ test("Vue consumes core keyed View identity for reorder and remount State semant
       initializers: [initializer("App()", args => args.length === 0)],
       body: () => viewElement("section", null, [ForEach(items.value, item => item.id, item => Row(item.id))]),
     })
-    const app = createApp(MuseView, { render: () => App() })
+    const app = createApp(VuneView, { render: () => App() })
     app.mount(dom.window.document.getElementById("app"))
     dom.window.document.querySelector('[data-row="a"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
     await nextTick()
@@ -48,7 +48,7 @@ test("Vue consumes core keyed View identity for reorder and remount State semant
   }
 })
 
-test("Vue reevaluates a Muse body when an independently-owned State changes", async () => {
+test("Vue reevaluates a Vune body when an independently-owned State changes", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
   const previousWindow = globalThis.window
   const previousDocument = globalThis.document
@@ -64,9 +64,9 @@ test("Vue reevaluates a Muse body when an independently-owned State changes", as
   globalThis.Node = dom.window.Node
   try {
     const { createApp, nextTick } = await import("vue")
-    const { MuseView } = await import("../packages/vue/dist/index.js")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
     const state = State(0)
-    const app = createApp(MuseView, { render: () => Text(`Count: ${state.value}`) })
+    const app = createApp(VuneView, { render: () => Text(`Count: ${state.value}`) })
     app.mount(dom.window.document.getElementById("app"))
     assert.match(dom.window.document.body.textContent ?? "", /Count: 0/)
     state.value = 1
@@ -84,7 +84,7 @@ test("Vue reevaluates a Muse body when an independently-owned State changes", as
   }
 })
 
-test("Vue materialization preserves Muse events and refs at the live DOM boundary", async () => {
+test("Vue materialization preserves Vune events and refs at the live DOM boundary", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
   const previousWindow = globalThis.window
   const previousDocument = globalThis.document
@@ -98,10 +98,10 @@ test("Vue materialization preserves Muse events and refs at the live DOM boundar
   globalThis.Node = dom.window.Node
   try {
     const { createApp, nextTick, ref } = await import("vue")
-    const { MuseView } = await import("../packages/vue/dist/index.js")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
     const state = State(0)
     const buttonRef = ref(null)
-    const app = createApp(MuseView, {
+    const app = createApp(VuneView, {
       render: () => viewElement("button", { onclick: () => { state.value += 1 }, ref: buttonRef }, [`Count: ${state.value}`]),
     })
     app.mount(dom.window.document.getElementById("app"))
@@ -144,8 +144,8 @@ test("Vue GeometryReader measures CSS safe-area insets at the DOM boundary", asy
   }
   try {
     const { createApp, nextTick } = await import("vue")
-    const { MuseView } = await import("../packages/vue/dist/index.js")
-    const app = createApp(MuseView, { render: () => GeometryReader(geometry => Text(String(geometry.safeAreaInsets.top))) })
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const app = createApp(VuneView, { render: () => GeometryReader(geometry => Text(String(geometry.safeAreaInsets.top))) })
     app.mount(dom.window.document.getElementById("app"))
     await nextTick()
     await nextTick()
@@ -163,7 +163,7 @@ test("Vue GeometryReader measures CSS safe-area insets at the DOM boundary", asy
   }
 })
 
-test("Vue component lifecycle remains Vue-owned inside a Muse graph", async () => {
+test("Vue component lifecycle remains Vue-owned inside a Vune graph", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
   const previousWindow = globalThis.window
   const previousDocument = globalThis.document
@@ -177,7 +177,7 @@ test("Vue component lifecycle remains Vue-owned inside a Muse graph", async () =
   globalThis.Node = dom.window.Node
   try {
     const { createApp, defineComponent, h, nextTick, onBeforeUnmount, onMounted } = await import("vue")
-    const { Component, MuseView } = await import("../packages/vue/dist/index.js")
+    const { Component, VuneView } = await import("../packages/vue/dist/index.js")
     let mounted = 0
     let unmounted = 0
     const Child = defineComponent({
@@ -187,7 +187,7 @@ test("Vue component lifecycle remains Vue-owned inside a Muse graph", async () =
         return () => h("strong", null, "Vue child")
       },
     })
-    const app = createApp(MuseView, { value: Component(Child) })
+    const app = createApp(VuneView, { value: Component(Child) })
     app.mount(dom.window.document.getElementById("app"))
     await nextTick()
     assert.equal(mounted, 1)
@@ -203,7 +203,7 @@ test("Vue component lifecycle remains Vue-owned inside a Muse graph", async () =
   }
 })
 
-test("Vue Transition and Teleport remain native boundaries inside a Muse graph", async () => {
+test("Vue Transition and Teleport remain native boundaries inside a Vune graph", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div><div id=portal></div>")
   const previous = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, SVGElement: globalThis.SVGElement, Node: globalThis.Node }
   globalThis.window = dom.window
@@ -213,12 +213,12 @@ test("Vue Transition and Teleport remain native boundaries inside a Muse graph",
   globalThis.Node = dom.window.Node
   try {
     const { Teleport, Transition, createApp, nextTick } = await import("vue")
-    const { Component, MuseView } = await import("../packages/vue/dist/index.js")
+    const { Component, VuneView } = await import("../packages/vue/dist/index.js")
     const value = viewElement("main", null, [
       Component(Transition, { name: "fade" }, Component("span", { "data-transition": true }, "Transitioned")),
       Component(Teleport, { to: dom.window.document.getElementById("portal") }, Component("strong", { "data-teleport": true }, "Teleported")),
     ])
-    const app = createApp(MuseView, { value })
+    const app = createApp(VuneView, { value })
     app.mount(dom.window.document.getElementById("app"))
     await nextTick()
     assert.equal(dom.window.document.querySelector('[data-transition]')?.textContent, "Transitioned")
@@ -235,7 +235,7 @@ test("Vue Transition and Teleport remain native boundaries inside a Muse graph",
   }
 })
 
-test("Vue mount can hydrate SSR Muse markup and keep State updates live", async () => {
+test("Vue mount can hydrate SSR Vune markup and keep State updates live", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
   const previousWindow = globalThis.window
   const previousDocument = globalThis.document
@@ -252,7 +252,7 @@ test("Vue mount can hydrate SSR Muse markup and keep State updates live", async 
   try {
     const { createSSRApp, h, nextTick } = await import("vue")
     const { renderToString } = await import("@vue/server-renderer")
-    const { MuseView, mount } = await import("../packages/vue/dist/index.js")
+    const { VuneView, mount } = await import("../packages/vue/dist/index.js")
     const Counter = defineView("HydrateCounter", {
       initializers: [initializer("HydrateCounter()", args => args.length === 0)],
       state: () => ({ count: State(0) }),
@@ -262,7 +262,7 @@ test("Vue mount can hydrate SSR Muse markup and keep State updates live", async 
       }, [Text(`Hydrate ${count.value}`)]),
     })
     const value = Counter()
-    const markup = await renderToString(createSSRApp({ render: () => h(MuseView, { value }) }))
+    const markup = await renderToString(createSSRApp({ render: () => h(VuneView, { value }) }))
     const target = dom.window.document.getElementById("app")
     target.innerHTML = markup
     const serverButton = target.querySelector("button")

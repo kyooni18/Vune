@@ -1,5 +1,5 @@
 /**
- * Low-level transform for Muse's small struct/View surface.
+ * Low-level transform for Vune's small struct/View surface.
  *
  * It intentionally handles the declarative subset rather than pretending that
  * a JavaScript parser can understand Swift syntax. For example:
@@ -14,16 +14,16 @@
  * language for expressions inside the initializer and body.
  */
 
-import { transformMuseBuilderSyntax } from './builder-transform.js'
-import { parseMuseStructs, type MuseStructDeclaration } from './ast.js'
-import { museSyntaxError } from './errors.js'
+import { transformVuneBuilderSyntax } from './builder-transform.js'
+import { parseVuneStructs, type VuneStructDeclaration } from './ast.js'
+import { vuneSyntaxError } from './errors.js'
 
 function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
   for (let i = index + 1; i < source.length; i += 1) {
     if (source[i] === '\\') { i += 1; continue }
     if (source[i] === quote) return i + 1
   }
-  throw museSyntaxError(`Unclosed ${quote} string in Muse struct source`, index)
+  throw vuneSyntaxError(`Unclosed ${quote} string in Vune struct source`, index)
 }
 
 function skipTemplate(source: string, index: number): number {
@@ -31,7 +31,7 @@ function skipTemplate(source: string, index: number): number {
     if (source[i] === '\\') { i += 1; continue }
     if (source[i] === '`') return i + 1
   }
-  throw museSyntaxError('Unclosed template literal in Muse struct source', index)
+  throw vuneSyntaxError('Unclosed template literal in Vune struct source', index)
 }
 
 function splitArguments(source: string): string[] {
@@ -80,7 +80,7 @@ function parseParameter(source: string, offset = 0): InitParameter {
   const head = (colon < 0 ? declaration : declaration.slice(0, colon)).trim()
   const names = head.split(/\s+/).filter(Boolean)
   const name = names[names.length - 1]?.replace(/^_+/, '')
-  if (!name) throw museSyntaxError(`Invalid initializer parameter: ${source}`, offset)
+  if (!name) throw vuneSyntaxError(`Invalid initializer parameter: ${source}`, offset)
   const type = colon < 0 ? undefined : declaration.slice(colon + 1).trim()
   const defaultValue = defaultIndex < 0 ? undefined : withoutAnnotation.slice(defaultIndex + 1).trim()
   return { name, kind, label: names[0] === '_' ? undefined : names[0], type, required: defaultIndex < 0, defaultValue }
@@ -188,7 +188,7 @@ function lowerBindingShorthand(source: string): string {
   return output
 }
 
-function transformOne(declaration: MuseStructDeclaration): string {
+function transformOne(declaration: VuneStructDeclaration): string {
   const { name, bodyExpressionSource: bodyExpression } = declaration
   const fields = declaration.fields.map(field => field.name)
   const stateValues = new Map(declaration.fields
@@ -221,15 +221,15 @@ function transformOne(declaration: MuseStructDeclaration): string {
 }
 
 /** Transform `struct Name: View { ... }` declarations into defineView calls. */
-export function transformMuseStructSyntax(source: string): string {
-  const declarations = parseMuseStructs(source)
+export function transformVuneStructSyntax(source: string): string {
+  const declarations = parseVuneStructs(source)
   if (declarations.length === 0) return source
   let output = ''
   let cursor = 0
   for (const declaration of declarations) {
     const transformedBody = transformOne({
       ...declaration,
-      bodyExpressionSource: transformMuseBuilderSyntax(declaration.bodyExpressionSource),
+      bodyExpressionSource: transformVuneBuilderSyntax(declaration.bodyExpressionSource),
     })
     let prefix = source.slice(cursor, declaration.range.start)
     const exported = /export\s*$/.test(prefix)
@@ -257,12 +257,12 @@ function stateValuesInSource(source: string): boolean {
 
 function injectRuntimeImports(source: string, names: string): string {
   const required = names.split(',').map(name => name.trim()).filter(Boolean)
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(source)
-  if (!existing) return `import { ${required.join(', ')} } from 'vune-ui'\n${source}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\/legacy\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${required.join(', ')} } from 'vune-ui/legacy'\n${source}`
 
   const imported = existing[1].split(',').map(name => name.trim()).filter(Boolean)
   const merged = [...imported]
   for (const name of required) if (!merged.includes(name)) merged.push(name)
-  const replacement = `import { ${merged.join(', ')} } from 'vune-ui'`
+  const replacement = `import { ${merged.join(', ')} } from 'vune-ui/legacy'`
   return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }

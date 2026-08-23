@@ -1,5 +1,5 @@
 import { createElement, type ComponentType, type ReactNode } from "react"
-import { ForeignComponent, viewElement, type ViewValue } from "@muse/core"
+import { ForeignComponent, viewElement, type ViewValue } from "@vune-ui/core"
 
 export function Component(type: ComponentType<any> | string, props: Record<string, unknown> | null = null, ...children: ViewValue[]): ViewValue {
   return viewElement(type, props, children)

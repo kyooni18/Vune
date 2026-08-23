@@ -1,0 +1,21 @@
+{
+  "id": "b7898744d",
+  "name": "Release verification",
+  "command": "pnpm run test:release",
+  "description": "Validate all npm package manifests, tarballs, and clean-install smoke tests.",
+  "status": "failed",
+  "outputPath": ".pi/tasks/session-71322-71322/b7898744d.output",
+  "cwd": "/Users/kyooni18/Code/Web/React/Muse",
+  "startTime": 1787476690838,
+  "endTime": 1787476691145,
+  "exitCode": 1,
+  "signal": null,
+  "pid": 72308,
+  "bytesWritten": 665,
+  "isAgent": false,
+  "error": "Exited with code 1",
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

@@ -1,9 +1,9 @@
 import { keyedViewIdentity, viewTypeIdentity, type ViewIdentity } from "../identity.js"
 import { isForeignComponent, isViewNode } from "./nodes.js"
 import { zeroGeometry } from "./environment.js"
-import type { GeometryProxy, LazyViewRange, MuseRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
+import type { GeometryProxy, LazyViewRange, VuneRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
 
-export type { MuseRenderer }
+export type { VuneRenderer }
 
 /** Collect View host identities already present in a graph without evaluating View bodies. */
 export function collectLogicalViewIdentities(value: ViewGraphValue, identity: ViewIdentity = ["root"]): ViewIdentity[] {
@@ -37,18 +37,18 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
   }
 }
 
-export function renderViewNode<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>): Output {
+export function renderViewNode<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>): Output {
   return renderViewNodeAt(value, renderer, ["root"])
 }
 
-function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: MuseRenderer<Output>, identity: ViewIdentity): Output {
+function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
   if (Array.isArray(value)) return renderer.fragment(value.map((item, index) => renderViewNodeAt(item, renderer, [...identity, "array", index])))
   if (!isViewNode(value)) {
     if (value === null || value === undefined || typeof value === "boolean") {
       return renderer.value ? renderer.value(null) : null as Output
     }
     if (typeof value === "object") {
-      throw new TypeError("Muse View graph leaves must be renderable primitives or View nodes; wrap renderer-specific values in an explicit adapter.")
+      throw new TypeError("Vune View graph leaves must be renderable primitives or View nodes; wrap renderer-specific values in an explicit adapter.")
     }
     return renderer.value ? renderer.value(value) : value as Output
   }

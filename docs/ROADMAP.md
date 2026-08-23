@@ -1,22 +1,22 @@
 # Roadmap
 
-Muse's next releases prioritize dependable semantics over additional controls or
+Vune's next releases prioritize dependable semantics over additional controls or
 new syntax. The alpha already has enough surface area for experimentation; the
-focus now is reducing cases where valid Muse code behaves differently because of
+focus now is reducing cases where valid Vune code behaves differently because of
 syntax, nesting, or the API layer that created it.
 
 ## View-system foundation
 
 The first workspace architecture slice is now implemented:
 
-- `@muse/core` is React-free and owns graph nodes, initializer metadata,
+- `@vune-ui/core` is React-free and owns graph nodes, initializer metadata,
   `ViewBuilder`, immutable modifiers, `State`, `Binding`, and closure roles.
-- `@muse/compiler` and `@muse/vite` handle `.muse.ts` builder/struct lowering.
-- `@muse/react`, `@muse/vue`, and `@muse/web` consume the same graph through
+- `@vune-ui/compiler` and `@vune-ui/vite` handle `.vune.ts` builder/struct lowering.
+- `@vune-ui/react`, `@vune-ui/vue`, and `@vune-ui/web` consume the same graph through
   renderer interfaces, with layout primitives and native controls migrated first.
 - Core-owned `Text`, stacks, layout, collection, presentation, native control,
   `Element`, and custom View definitions are available without React.
-  `.muse.ts` raw HTML lowers to those graph `Element` nodes, including
+  `.vune.ts` raw HTML lowers to those graph `Element` nodes, including
   typed standard attributes/events and extensible `aria-*`, `data-*`, and
   custom-element attributes.
 - The core graph concentration point is split behind stable internal modules
@@ -30,7 +30,7 @@ The first workspace architecture slice is now implemented:
   DOM props, hydration, and live DOM reconciliation modules; its public barrel
   remains unchanged and the existing lazy, GeometryReader, hydration, and
   identity tests cover the split.
-- `editors/vscode` provides `.muse.ts` Muse/HTML highlighting, diagnostics,
+- `editors/vscode` provides `.vune.ts` Vune/HTML highlighting, diagnostics,
   formatting, completion, hover, definition, rename, and optional `.vue`
   provider coverage.
 
@@ -43,7 +43,7 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   composition;
 - `State` and `Binding` remain reactive while modifier chains retain value
   semantics and an inspectable graph;
-- `@muse/vue` bridges graph values to Vue VNodes, Vue components and slots, with
+- `@vune-ui/vue` bridges graph values to Vue VNodes, Vue components and slots, with
   explicit `toVueRef`/`fromVueRef` reactivity conversion;
 - the builder compiler has a source-ranged builder/struct AST, labeled
   arguments, struct lowering, diagnostics, formatter hooks, source-map output,
@@ -51,9 +51,9 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   registry.
 
 Collection, presentation, and native control implementations are owned by
-`@muse/core`; `@muse/react` keeps reference-identical compatibility re-exports.
-The old root entry points are implemented by the separate `@muse/legacy-react`
-package and preserved as `@muse/react/legacy` compatibility proxy exports; new
+`@vune-ui/core`; `@vune-ui/react` keeps reference-identical compatibility re-exports.
+The old root entry points are implemented by the separate `@vune-ui/legacy-react`
+package and preserved as `@vune-ui/react/legacy` compatibility proxy exports; new
 work should target the canonical graph and renderer APIs instead of extending
 that legacy surface.
 
@@ -62,7 +62,7 @@ that legacy surface.
 The first correctness pass covers the parts most likely to change program
 behavior silently:
 
-- The canonical `@muse/compiler` lowers builder/struct syntax with original-source
+- The canonical `@vune-ui/compiler` lowers builder/struct syntax with original-source
   diagnostics and token-anchored source maps. The compatibility React Vite macro
   remains a TypeScript AST transform: only top-level `State(...)` declarations
   are made instance-local; generic calls, nested lexical scopes, comments,
@@ -78,7 +78,7 @@ behavior silently:
   notification ownership. A mutation notifies every owning subscriber, including
   owners reached through nested state values.
 - `Component(...)` preserves required React props in TypeScript. Required props
-  remain required when the wrapped component is used from Muse.
+  remain required when the wrapped component is used from Vune.
 - Shared State ownership is reconciled against the current raw object graph;
   root replacement, nested deletion, unsubscribe, re-subscription, arrays,
   shared objects, and circular graphs have regression coverage.
@@ -100,7 +100,7 @@ instance-specific IDs and hydration-safe portals; and `Menu` provides first
 item focus, Home/End, disabled skipping, typeahead, Tab close, and
 `menuitem` semantics.
 
-Lazy containers now expose a renderer-neutral range boundary. `@muse/web`
+Lazy containers now expose a renderer-neutral range boundary. `@vune-ui/web`
 uses estimated-size spacers and scroll/resize range updates to window direct
 DOM mounts; SSR, React, and Vue retain a full-graph fallback with
 `content-visibility` hints.
@@ -119,7 +119,7 @@ than documentation-only goals:
 - Web DOM behavior covers commit-phase refs, event-name normalization, HTML/ARIA
   boolean attributes, SVG/`foreignObject` namespaces, client-authoritative
   hydration, and logically-present lazy State;
-- the medium `examples/Showcase.muse.ts` application exercises bindings, async
+- the medium `examples/Showcase.vune.ts` application exercises bindings, async
   actions, custom Views, keyed reordering, lazy collections, Grid, modifier
   chains, and raw HTML in one production build;
 - CI builds all standard, parity, and Showcase demos and runs Playwright parity
@@ -157,12 +157,12 @@ is settled:
   suite also measures compiler transforms, State propagation, keyed DOM updates,
   React/Vue rerenders, SSR, hydration, and retained heap. CI runs the 100/1,000
   matrix with depth-aware and absolute regression guards; large lists and deeply
-  modified trees still establish a measurable need before Muse changes its
+  modified trees still establish a measurable need before Vune changes its
   materialization strategy.
 
 ## Semantic contract
 
-Muse is a SwiftUI-inspired, CSS-native API with web-native semantics. Stacks, `Spacer`,
+Vune is a SwiftUI-inspired, CSS-native API with web-native semantics. Stacks, `Spacer`,
 `frame`, and infinity sizing express familiar relationships through CSS; they
 do not promise SwiftUI's proposal-based layout algorithm or pixel-for-pixel
 behavior. That distinction is part of the public contract and will remain

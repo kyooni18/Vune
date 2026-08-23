@@ -1,4 +1,4 @@
-import { museForeignComponent } from "./symbols.js"
+import { vuneForeignComponent } from "./symbols.js"
 import { decorate, modifiedContent } from "./modifiers.js"
 import type {
   ForeignComponentDescriptor,
@@ -24,7 +24,7 @@ export function ForeignComponent(
   ...children: ViewGraphChild[]
 ): ModifiableViewNode {
   const descriptor: ForeignComponentDescriptor = Object.freeze({
-    [museForeignComponent]: true,
+    [vuneForeignComponent]: true,
     component,
     props: Object.freeze({ ...(options.props ?? {}) }),
     events: Object.freeze({ ...(options.events ?? {}) }),
@@ -43,7 +43,7 @@ export function ForeignComponent(
 }
 
 export function isForeignComponent(value: unknown): value is ForeignComponentDescriptor {
-  return typeof value === "object" && value !== null && (value as Partial<ForeignComponentDescriptor>)[museForeignComponent] === true
+  return typeof value === "object" && value !== null && (value as Partial<ForeignComponentDescriptor>)[vuneForeignComponent] === true
 }
 
 export function viewFragment(children: readonly ViewGraphChild[] = []): ModifiableViewNode {

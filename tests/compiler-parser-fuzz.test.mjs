@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { diagnoseMuseSource, parseMuseBuilder, transformMuseSource } from "../packages/compiler/dist/index.js"
+import { diagnoseVuneSource, parseVuneBuilder, transformVuneSource } from "../packages/compiler/dist/index.js"
 
 const parserCorpus = [
   `VStack(/* options */ spacing: 12) /* trailing builder */ {
@@ -33,11 +33,11 @@ const parserCorpus = [
 
 test("parser corpus preserves nested closures, literals, comments, and conditionals", () => {
   for (const [index, source] of parserCorpus.entries()) {
-    const program = parseMuseBuilder(source, 17)
+    const program = parseVuneBuilder(source, 17)
     assert.ok(program.statements.length > 0, `corpus case ${index} should produce nodes`)
     assert.equal(program.range.start, 17)
     assert.equal(program.range.end, 17 + source.length)
-    const output = transformMuseSource(source, `ParserCorpus${index}.muse.ts`)
+    const output = transformVuneSource(source, `ParserCorpus${index}.vune.ts`)
     assert.ok(output.length > 0)
   }
 })
@@ -46,7 +46,7 @@ test("parser corpus survives deterministic nesting and source-range checks", () 
   let source = `Text(` + "`seed ${value}`" + `)`
   for (let depth = 0; depth < 24; depth += 1) {
     source = `VStack(/* depth ${depth} */) { ${source}; Text(/\\[${depth}\\]/.test(value) ? "yes" : "no") }`
-    const program = parseMuseBuilder(source, 100)
+    const program = parseVuneBuilder(source, 100)
     assert.equal(program.range.end, 100 + source.length)
     const visit = node => {
       assert.ok(node.range.start >= 100)
@@ -65,7 +65,7 @@ test("parser corpus survives deterministic nesting and source-range checks", () 
       }
     }
     for (const node of program.statements) visit(node)
-    assert.doesNotThrow(() => transformMuseSource(source, `NestedParser${depth}.muse.ts`))
+    assert.doesNotThrow(() => transformVuneSource(source, `NestedParser${depth}.vune.ts`))
   }
 })
 
@@ -78,9 +78,9 @@ test("malformed parser inputs produce shared syntax diagnostics with source offs
     `if (ready) { VStack() { Text("missing branches") }`,
   ]
   for (const source of malformed) {
-    const diagnostics = diagnoseMuseSource(source)
+    const diagnostics = diagnoseVuneSource(source)
     assert.equal(diagnostics.length, 1)
-    assert.equal(diagnostics[0].code, "MUSE_SYNTAX")
+    assert.equal(diagnostics[0].code, "VUNE_SYNTAX")
     assert.ok(diagnostics[0].line >= 1)
     assert.ok(diagnostics[0].column >= 1)
   }

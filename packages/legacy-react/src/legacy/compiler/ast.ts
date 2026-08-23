@@ -1,55 +1,55 @@
-import { museSyntaxError } from './errors.js'
+import { vuneSyntaxError } from './errors.js'
 
-/** A half-open source range in the original Muse document. */
-export interface MuseSourceRange {
+/** A half-open source range in the original Vune document. */
+export interface VuneSourceRange {
   readonly start: number
   readonly end: number
 }
 
-export interface MuseRawExpression {
+export interface VuneRawExpression {
   readonly kind: 'raw'
   readonly source: string
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseClosureExpression {
+export interface VuneClosureExpression {
   readonly kind: 'closure'
   readonly parameter?: string
   /** The source between the closure braces, retained for action lowering. */
   readonly bodySource: string
-  readonly body: MuseBuilderProgram
-  readonly range: MuseSourceRange
+  readonly body: VuneBuilderProgram
+  readonly range: VuneSourceRange
 }
 
-export interface MuseArgument {
+export interface VuneArgument {
   readonly label?: string
-  readonly value: MuseRawExpression | MuseClosureExpression
-  readonly range: MuseSourceRange
+  readonly value: VuneRawExpression | VuneClosureExpression
+  readonly range: VuneSourceRange
 }
 
-export interface MuseCallExpression {
+export interface VuneCallExpression {
   readonly kind: 'call'
   readonly callee: string
-  readonly arguments: readonly MuseArgument[]
-  readonly trailing?: MuseClosureExpression
-  readonly range: MuseSourceRange
+  readonly arguments: readonly VuneArgument[]
+  readonly trailing?: VuneClosureExpression
+  readonly range: VuneSourceRange
 }
 
-export interface MuseConditionalExpression {
+export interface VuneConditionalExpression {
   readonly kind: 'conditional'
-  readonly condition: MuseRawExpression
-  readonly then: MuseBuilderProgram
-  readonly otherwise?: MuseBuilderProgram | MuseConditionalExpression
-  readonly range: MuseSourceRange
+  readonly condition: VuneRawExpression
+  readonly then: VuneBuilderProgram
+  readonly otherwise?: VuneBuilderProgram | VuneConditionalExpression
+  readonly range: VuneSourceRange
 }
 
-export type MuseBuilderNode = MuseRawExpression | MuseCallExpression | MuseConditionalExpression
+export type VuneBuilderNode = VuneRawExpression | VuneCallExpression | VuneConditionalExpression
 
-export interface MuseBuilderProgram {
+export interface VuneBuilderProgram {
   readonly kind: 'program'
   readonly source: string
-  readonly range: MuseSourceRange
-  readonly statements: readonly MuseBuilderNode[]
+  readonly range: VuneSourceRange
+  readonly statements: readonly VuneBuilderNode[]
 }
 
 type Delimiter = '(' | '{' | '['
@@ -73,7 +73,7 @@ function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
     if (source[i] === '\\') { i += 1; continue }
     if (source[i] === quote) return i + 1
   }
-  throw museSyntaxError(`Unclosed ${quote} string in Muse AST`, index)
+  throw vuneSyntaxError(`Unclosed ${quote} string in Vune AST`, index)
 }
 
 function skipTemplate(source: string, index: number): number {
@@ -84,7 +84,7 @@ function skipTemplate(source: string, index: number): number {
       i = findMatching(source, i + 1, '{')
     }
   }
-  throw museSyntaxError('Unclosed template literal in Muse AST', index)
+  throw vuneSyntaxError('Unclosed template literal in Vune AST', index)
 }
 
 function previousSignificant(source: string, index: number): string | undefined {
@@ -143,7 +143,7 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
     }
     if (char === '/' && next === '*') {
       const end = source.indexOf('*/', i + 2)
-      if (end < 0) throw museSyntaxError('Unclosed block comment in Muse AST', i)
+      if (end < 0) throw vuneSyntaxError('Unclosed block comment in Vune AST', i)
       i = end + 1
       continue
     }
@@ -151,7 +151,7 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
     if (char === open) depth += 1
     if (char === close && --depth === 0) return i
   }
-  throw museSyntaxError(`Unclosed ${open} block in Muse AST`, openIndex)
+  throw vuneSyntaxError(`Unclosed ${open} block in Vune AST`, openIndex)
 }
 
 function nextWord(source: string, index: number): string | undefined {
@@ -195,7 +195,7 @@ function splitTopLevel(source: string, separators: string, baseOffset: number): 
     }
     if (char === '/' && next === '*') {
       const end = source.indexOf('*/', i + 2)
-      if (end < 0) throw museSyntaxError('Unclosed block comment in Muse AST', i)
+      if (end < 0) throw vuneSyntaxError('Unclosed block comment in Vune AST', i)
       i = end + 1
       continue
     }
@@ -231,12 +231,12 @@ function trimSlice(slice: Slice): Slice {
   }
 }
 
-function raw(slice: Slice): MuseRawExpression {
+function raw(slice: Slice): VuneRawExpression {
   const value = trimSlice(slice)
   return { kind: 'raw', source: value.source, range: { start: value.start, end: value.end } }
 }
 
-function parseClosure(slice: Slice): MuseClosureExpression | undefined {
+function parseClosure(slice: Slice): VuneClosureExpression | undefined {
   const value = trimSlice(slice)
   if (value.source[0] !== '{') return undefined
   const close = findMatching(value.source, 0, '{')
@@ -250,7 +250,7 @@ function parseClosure(slice: Slice): MuseClosureExpression | undefined {
     kind: 'closure',
     parameter: parameterMatch?.[1],
     bodySource,
-    body: parseMuseBuilder(bodySource, bodyOffset),
+    body: parseVuneBuilder(bodySource, bodyOffset),
     range: { start: value.start, end: value.end },
   }
 }
@@ -277,7 +277,7 @@ function topLevelColon(source: string): number {
   return -1
 }
 
-function parseArgument(slice: Slice): MuseArgument {
+function parseArgument(slice: Slice): VuneArgument {
   const value = trimSlice(slice)
   const colon = topLevelColon(value.source)
   const label = colon < 0 ? undefined : value.source.slice(0, colon).trim()
@@ -292,7 +292,7 @@ function parseArgument(slice: Slice): MuseArgument {
   }
 }
 
-function parseCall(slice: Slice): MuseCallExpression | undefined {
+function parseCall(slice: Slice): VuneCallExpression | undefined {
   const value = trimSlice(slice)
   const identifier = /^([A-Za-z_$][A-Za-z0-9_$]*)/.exec(value.source)
   if (!identifier) return undefined
@@ -300,7 +300,7 @@ function parseCall(slice: Slice): MuseCallExpression | undefined {
   if (value.source[open] !== '(') return undefined
   const close = findMatching(value.source, open, '(')
   const afterClose = skipTrivia(value.source, close + 1)
-  let trailing: MuseClosureExpression | undefined
+  let trailing: VuneClosureExpression | undefined
   let end = close + 1
   if (value.source[afterClose] === '{') {
     const blockClose = findMatching(value.source, afterClose, '{')
@@ -320,7 +320,7 @@ function parseCall(slice: Slice): MuseCallExpression | undefined {
   }
 }
 
-function parseConditional(slice: Slice): MuseConditionalExpression | undefined {
+function parseConditional(slice: Slice): VuneConditionalExpression | undefined {
   const value = trimSlice(slice)
   if (!/^if\b/.test(value.source)) return undefined
   const open = value.source.indexOf('(')
@@ -333,7 +333,7 @@ function parseConditional(slice: Slice): MuseConditionalExpression | undefined {
   const conditionSlice: Slice = { source: value.source.slice(open + 1, close), start: value.start + open + 1, end: value.start + close }
   const thenSource = value.source.slice(thenOpen + 1, thenClose)
   const thenOffset = value.start + thenOpen + 1
-  let otherwise: MuseBuilderProgram | MuseConditionalExpression | undefined
+  let otherwise: VuneBuilderProgram | VuneConditionalExpression | undefined
   let end = thenClose + 1
   if (value.source.slice(afterThen, afterThen + 4) === 'else') {
     const elseStart = skipTrivia(value.source, afterThen + 4)
@@ -342,7 +342,7 @@ function parseConditional(slice: Slice): MuseConditionalExpression | undefined {
     if (!otherwise && rest.source[0] === '{') {
       const elseClose = findMatching(rest.source, 0, '{')
       if (skipTrivia(rest.source, elseClose + 1) !== rest.source.length) return undefined
-      otherwise = parseMuseBuilder(rest.source.slice(1, elseClose), rest.start + 1)
+      otherwise = parseVuneBuilder(rest.source.slice(1, elseClose), rest.start + 1)
       end = elseStart + elseClose + 1
     } else if (otherwise) {
       end = otherwise.range.end - value.start
@@ -352,13 +352,13 @@ function parseConditional(slice: Slice): MuseConditionalExpression | undefined {
   return {
     kind: 'conditional',
     condition: raw(conditionSlice),
-    then: parseMuseBuilder(thenSource, thenOffset),
+    then: parseVuneBuilder(thenSource, thenOffset),
     otherwise,
     range: { start: value.start, end: value.end },
   }
 }
 
-function parseNode(slice: Slice): MuseBuilderNode {
+function parseNode(slice: Slice): VuneBuilderNode {
   return parseConditional(slice) ?? parseCall(slice) ?? raw(slice)
 }
 
@@ -378,7 +378,7 @@ function protectLineComment(source: string): string {
     }
     if (char === '/' && next === '*') {
       const end = source.indexOf('*/', i + 2)
-      if (end < 0) throw museSyntaxError('Unclosed block comment in Muse AST', i)
+      if (end < 0) throw vuneSyntaxError('Unclosed block comment in Vune AST', i)
       i = end + 1
       continue
     }
@@ -393,8 +393,8 @@ function protectLineComment(source: string): string {
   return source
 }
 
-/** Parse the Muse builder subset while retaining opaque TypeScript expressions verbatim. */
-export function parseMuseBuilder(source: string, baseOffset = 0): MuseBuilderProgram {
+/** Parse the Vune builder subset while retaining opaque TypeScript expressions verbatim. */
+export function parseVuneBuilder(source: string, baseOffset = 0): VuneBuilderProgram {
   return {
     kind: 'program',
     source,
@@ -403,34 +403,34 @@ export function parseMuseBuilder(source: string, baseOffset = 0): MuseBuilderPro
   }
 }
 
-export interface MuseStructDeclaration {
+export interface VuneStructDeclaration {
   readonly kind: 'struct'
   readonly name: string
   readonly genericParameters?: string
   readonly source: string
   readonly bodySource: string
   readonly bodyExpressionSource: string
-  readonly range: MuseSourceRange
-  readonly bodyRange: MuseSourceRange
-  readonly bodyExpressionRange: MuseSourceRange
-  readonly fields: readonly MuseStructField[]
-  readonly initializers: readonly MuseStructInitializer[]
+  readonly range: VuneSourceRange
+  readonly bodyRange: VuneSourceRange
+  readonly bodyExpressionRange: VuneSourceRange
+  readonly fields: readonly VuneStructField[]
+  readonly initializers: readonly VuneStructInitializer[]
 }
 
-export interface MuseStructField {
+export interface VuneStructField {
   readonly name: string
   readonly kind: 'stored' | 'state' | 'binding'
   readonly type?: string
   readonly initializer?: string
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseStructInitializer {
+export interface VuneStructInitializer {
   readonly parametersSource: string
   readonly bodySource: string
-  readonly range: MuseSourceRange
-  readonly parametersRange: MuseSourceRange
-  readonly bodyRange: MuseSourceRange
+  readonly range: VuneSourceRange
+  readonly parametersRange: VuneSourceRange
+  readonly bodyRange: VuneSourceRange
 }
 
 function findStructKeyword(source: string, start: number): number {
@@ -445,7 +445,7 @@ function findStructKeyword(source: string, start: number): number {
     }
     if (char === '/' && source[index + 1] === '*') {
       const end = source.indexOf('*/', index + 2)
-      if (end < 0) throw museSyntaxError('Unclosed block comment in Muse AST', index)
+      if (end < 0) throw vuneSyntaxError('Unclosed block comment in Vune AST', index)
       index = end + 1
       continue
     }
@@ -472,7 +472,7 @@ function findGenericEnd(source: string, openIndex: number): number {
     if (char === '<') depth += 1
     if (char === '>' && --depth === 0) return i
   }
-  throw museSyntaxError('Unclosed generic parameter list in Muse AST', openIndex)
+  throw vuneSyntaxError('Unclosed generic parameter list in Vune AST', openIndex)
 }
 
 function findMemberEnd(source: string, start: number): number {
@@ -492,7 +492,7 @@ function findMemberEnd(source: string, start: number): number {
     }
     if (char === '/' && next === '*') {
       const end = source.indexOf('*/', i + 2)
-      if (end < 0) throw museSyntaxError('Unclosed block comment in Muse AST', i)
+      if (end < 0) throw vuneSyntaxError('Unclosed block comment in Vune AST', i)
       i = end + 1
       continue
     }
@@ -511,11 +511,11 @@ function findMemberEnd(source: string, start: number): number {
 }
 
 function parseStructMembers(source: string, baseOffset: number): {
-  fields: MuseStructField[]
-  initializers: MuseStructInitializer[]
+  fields: VuneStructField[]
+  initializers: VuneStructInitializer[]
 } {
-  const fields: MuseStructField[] = []
-  const initializers: MuseStructInitializer[] = []
+  const fields: VuneStructField[] = []
+  const initializers: VuneStructInitializer[] = []
   let index = 0
   while (index < source.length) {
     index = skipTrivia(source, index)
@@ -573,8 +573,8 @@ function parseStructMembers(source: string, baseOffset: number): {
 }
 
 /** Parse struct View declarations without interpreting TypeScript expressions inside them. */
-export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseStructDeclaration[] {
-  const declarations: MuseStructDeclaration[] = []
+export function parseVuneStructs(source: string, baseOffset = 0): readonly VuneStructDeclaration[] {
+  const declarations: VuneStructDeclaration[] = []
   let cursor = 0
   while (cursor < source.length) {
     const index = findStructKeyword(source, cursor)
@@ -593,11 +593,11 @@ export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseS
       headerEnd = skipTrivia(source, genericEnd + 1)
     }
     const brace = source.indexOf('{', headerEnd)
-    if (brace < 0) throw museSyntaxError(`Missing body for struct ${identifier.name}`, headerEnd + baseOffset)
+    if (brace < 0) throw vuneSyntaxError(`Missing body for struct ${identifier.name}`, headerEnd + baseOffset)
     const close = findMatching(source, brace, '{')
     const bodySource = source.slice(brace + 1, close)
     const bodyMatch = /\bvar\s+body\s*:[^{]+\{/.exec(bodySource)
-    if (!bodyMatch) throw museSyntaxError(`struct ${identifier.name} must declare var body`, index + baseOffset)
+    if (!bodyMatch) throw vuneSyntaxError(`struct ${identifier.name} must declare var body`, index + baseOffset)
     const bodyOpen = bodySource.indexOf('{', bodyMatch.index! + bodyMatch[0].length - 1)
     const bodyClose = findMatching(bodySource, bodyOpen, '{')
     const bodyExpressionSource = bodySource.slice(bodyOpen + 1, bodyClose)
@@ -623,25 +623,25 @@ export function parseMuseStructs(source: string, baseOffset = 0): readonly MuseS
   return declarations
 }
 
-export interface MuseAstLowering {
-  /** Lower an expression that is not itself a Muse builder node. */
+export interface VuneAstLowering {
+  /** Lower an expression that is not itself a Vune builder node. */
   readonly transformRaw: (source: string) => string
   /** Lower a closure after its declaration kind has been inferred by the runtime. */
   readonly closure: (bodySource: string, parameter?: string) => string
 }
 
-function lowerClosure(value: MuseClosureExpression, lowering: MuseAstLowering): string {
+function lowerClosure(value: VuneClosureExpression, lowering: VuneAstLowering): string {
   return lowering.closure(value.bodySource, value.parameter)
 }
 
-function lowerArgument(argument: MuseArgument, lowering: MuseAstLowering): string {
+function lowerArgument(argument: VuneArgument, lowering: VuneAstLowering): string {
   const value = argument.value.kind === 'closure'
     ? lowerClosure(argument.value, lowering)
     : lowering.transformRaw(argument.value.source)
   return argument.label ? `${argument.label}: ${value}` : value
 }
 
-function lowerCall(node: MuseCallExpression, lowering: MuseAstLowering): string {
+function lowerCall(node: VuneCallExpression, lowering: VuneAstLowering): string {
   const values = node.arguments.map(argument => lowerArgument(argument, lowering))
   const labeled = node.arguments.some(argument => argument.label)
   let argumentsSource = values.join(', ')
@@ -658,7 +658,7 @@ function lowerCall(node: MuseCallExpression, lowering: MuseAstLowering): string 
   return `${node.callee}(${argumentsSource})`
 }
 
-function lowerProgram(program: MuseBuilderProgram, lowering: MuseAstLowering): string[] {
+function lowerProgram(program: VuneBuilderProgram, lowering: VuneAstLowering): string[] {
   return program.statements.map(node => {
     if (node.kind === 'raw') return lowering.transformRaw(protectLineComment(node.source))
     if (node.kind === 'call') return lowerCall(node, lowering)
@@ -673,7 +673,7 @@ function lowerProgram(program: MuseBuilderProgram, lowering: MuseAstLowering): s
   })
 }
 
-function lowerConditional(node: MuseConditionalExpression, lowering: MuseAstLowering): string {
+function lowerConditional(node: VuneConditionalExpression, lowering: VuneAstLowering): string {
   const thenBranch = lowerProgram(node.then, lowering).join(', ')
   let elseBranch = '[]'
   if (node.otherwise) {
@@ -685,6 +685,6 @@ function lowerConditional(node: MuseConditionalExpression, lowering: MuseAstLowe
 }
 
 /** Lower a parsed builder program to normalized child expressions. */
-export function lowerMuseBuilderAst(program: MuseBuilderProgram, lowering: MuseAstLowering): string[] {
+export function lowerVuneBuilderAst(program: VuneBuilderProgram, lowering: VuneAstLowering): string[] {
   return lowerProgram(program, lowering)
 }

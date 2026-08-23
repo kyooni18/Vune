@@ -2,7 +2,7 @@
  * Renderer-neutral semantic symbols shared by the compiler, IDE, and runtime.
  *
  * This module deliberately contains no renderer or TypeScript AST dependency.
- * The compiler adapts Muse/TypeScript syntax to these symbols, while ViewType
+ * The compiler adapts Vune/TypeScript syntax to these symbols, while ViewType
  * exposes the same symbols for runtime resolution and tooling.
  */
 
@@ -306,16 +306,16 @@ export interface SemanticInitializerResolution {
 export type SemanticClosureRole = SemanticInitializerParameterKind
 
 export interface SemanticResolutionDiagnostic {
-  readonly code: "MUSE_INITIALIZER" | "MUSE_INITIALIZER_AMBIGUITY"
+  readonly code: "VUNE_INITIALIZER" | "VUNE_INITIALIZER_AMBIGUITY"
   readonly message: string
 }
 
 /**
- * The one semantic answer for a Muse call.
+ * The one semantic answer for a Vune call.
  *
  * Compiler, editor, and runtime adapters may have different inputs (source
  * types versus runtime values), but they consume this same result shape. An
- * absent view type means that the call is not statically known to Muse and is
+ * absent view type means that the call is not statically known to Vune and is
  * therefore left to the host language's dynamic interop rules.
  */
 export interface SemanticCallResolution {
@@ -644,7 +644,7 @@ function parameterIndexForSourceArgument(
   return next < 0 ? undefined : next
 }
 
-/** Resolve a statically known or runtime Muse call through the shared engine. */
+/** Resolve a statically known or runtime Vune call through the shared engine. */
 export function resolveSemanticCall(
   viewType: SemanticViewTypeSymbol | undefined,
   arguments_: readonly SemanticArgument[],
@@ -667,7 +667,7 @@ export function resolveSemanticCall(
     return {
       ...unresolved,
       diagnostics: [{
-        code: result.failure.kind === "ambiguous" ? "MUSE_INITIALIZER_AMBIGUITY" : "MUSE_INITIALIZER",
+        code: result.failure.kind === "ambiguous" ? "VUNE_INITIALIZER_AMBIGUITY" : "VUNE_INITIALIZER",
         message: `${prefix} for ${viewType.name}.${candidates ? ` Available initializers: ${candidates}.` : ""}`,
       }],
     }

@@ -16,7 +16,7 @@ import {
   viewElement,
   viewFragment,
 } from "./graph.js"
-import type { MuseCustomElementAttributes, MuseHtmlAttributes, MuseHtmlTagName } from "./html.js"
+import type { VuneCustomElementAttributes, VuneHtmlAttributes, VuneHtmlTagName } from "./html.js"
 import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
 
@@ -112,7 +112,7 @@ export const VStack = defineBuiltinView<VStackProps>(
   "VStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
   ({ options = {}, content }) => viewElement("div", {
-    "data-muse": "VStack",
+    "data-vune": "VStack",
     style: {
       display: "flex",
       flexDirection: "column",
@@ -130,7 +130,7 @@ export const HStack = defineBuiltinView<HStackProps>(
   "HStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing"], "object")),
   ({ options = {}, content }) => viewElement("div", {
-    "data-muse": "HStack",
+    "data-vune": "HStack",
     style: {
       display: "flex",
       flexDirection: "row",
@@ -169,7 +169,7 @@ export const ZStack = defineBuiltinView<ZStackProps>(
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
   ({ options = {}, content }) => viewElement("div", {
-    "data-muse": "ZStack",
+    "data-vune": "ZStack",
     style: {
       display: "grid",
       width: "100%",
@@ -214,7 +214,7 @@ export const ScrollView = defineBuiltinView<ScrollViewProps>(
     ),
   ],
   ({ axis = "vertical", content }) => viewElement("div", {
-    "data-muse": "ScrollView",
+    "data-vune": "ScrollView",
     style: {
       overflowX: axis === "horizontal" || axis === "both" ? "auto" : "hidden",
       overflowY: axis === "vertical" || axis === "both" ? "auto" : "hidden",
@@ -253,7 +253,7 @@ export const SafeArea = defineBuiltinView<SafeAreaProps>(
     ),
   ],
   ({ edges = "all", content }) => viewElement("div", {
-    "data-muse": "SafeArea",
+    "data-vune": "SafeArea",
     style: {
       paddingTop: hasSafeAreaEdge(edges, "top") ? "env(safe-area-inset-top)" : undefined,
       paddingRight: hasSafeAreaEdge(edges, "right") ? "env(safe-area-inset-right)" : undefined,
@@ -282,10 +282,10 @@ export interface SpacerCall { (minLength?: number | string): ReturnType<typeof v
 export const Spacer = defineBuiltinView<SpacerProps>(
   "Spacer",
   [initializer("Spacer(minLength?)", args => args.length <= 1 && typeof args[0] !== "function", args => ({ minLength: args[0] as number | string | undefined }), [initializerKinds.value(false, "minLength")])],
-  ({ minLength }) => viewElement("div", { "data-muse": "Spacer", style: { flexGrow: 1, flexShrink: 0, flexBasis: typeof minLength === "number" ? `${minLength}px` : minLength } }),
+  ({ minLength }) => viewElement("div", { "data-vune": "Spacer", style: { flexGrow: 1, flexShrink: 0, flexBasis: typeof minLength === "number" ? `${minLength}px` : minLength } }),
 ) as TypedViewConstructor<SpacerProps, SpacerCall>
 
-export const Divider = defineBuiltinView("Divider", [initializer("Divider()", args => args.length === 0)], () => viewElement("hr", { "data-muse": "Divider" }))
+export const Divider = defineBuiltinView("Divider", [initializer("Divider()", args => args.length === 0)], () => viewElement("hr", { "data-vune": "Divider" }))
 
 export const Group = defineBuiltinView<{ content: ViewValue[] }>(
   "Group",
@@ -297,8 +297,8 @@ export const Group = defineBuiltinView<{ content: ViewValue[] }>(
 )
 
 /** Construct typed raw HTML without involving a renderer or a component allow-list. */
-export function Element<Tag extends MuseHtmlTagName>(tag: Tag, props?: MuseHtmlAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
-export function Element<Tag extends `${string}-${string}`>(tag: Tag, props?: MuseCustomElementAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
+export function Element<Tag extends VuneHtmlTagName>(tag: Tag, props?: VuneHtmlAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
+export function Element<Tag extends `${string}-${string}`>(tag: Tag, props?: VuneCustomElementAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
 export function Element(tag: string, props: object | null = null, ...children: ViewValue[]): ReturnType<typeof viewElement> {
   return viewElement(tag, props as Record<string, unknown> | null, children)
 }
@@ -355,7 +355,7 @@ function warnForEachIdentity(message: string): void {
   if (warnedForEachIdentity.has(message)) return
   warnedForEachIdentity.add(message)
   const runtime = globalThis as unknown as { readonly console?: { readonly warn?: (message: string) => void } }
-  runtime.console?.warn?.(`[Muse] ${message}`)
+  runtime.console?.warn?.(`[Vune] ${message}`)
 }
 
 function deterministicIdentityPart(value: unknown, seen = new Set<object>(), depth = 0): string | undefined {
@@ -485,7 +485,7 @@ export const Section = defineBuiltinView<{ title?: string; content: ViewValue[] 
     initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [stackContent]),
     initializer("title, @ViewBuilder content", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ title: args[0] as string, content: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "title", undefined, "string"), stackContent]),
   ],
-  ({ title, content }) => viewElement("section", { "data-muse": "Section" }, [
+  ({ title, content }) => viewElement("section", { "data-vune": "Section" }, [
     ...(title === undefined ? [] : [Text(title)]),
     ...content,
   ]),
@@ -497,7 +497,7 @@ export const List = defineBuiltinView<{ content: ViewValue[] }>(
     initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [stackContent]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
-  ({ content }) => viewElement("ul", { "data-muse": "List", style: { listStyle: "none", padding: 0, margin: 0 } }, content),
+  ({ content }) => viewElement("ul", { "data-vune": "List", style: { listStyle: "none", padding: 0, margin: 0 } }, content),
 )
 
 function lazyStyle(options: LazyOptions): Record<string, string | undefined> {
@@ -507,9 +507,9 @@ function lazyStyle(options: LazyOptions): Record<string, string | undefined> {
 
 function lazyData(options: LazyOptions, axis: "vertical" | "horizontal"): Record<string, unknown> {
   return {
-    "data-muse-lazy": axis,
-    "data-muse-lazy-estimate": options.estimatedItemSize,
-    "data-muse-lazy-overscan": options.overscan,
+    "data-vune-lazy": axis,
+    "data-vune-lazy-estimate": options.estimatedItemSize,
+    "data-vune-lazy-overscan": options.overscan,
     style: lazyStyle(options),
   }
 }
@@ -521,7 +521,7 @@ export const LazyVStack = defineBuiltinView<LazyVStackProps>(
   "LazyVStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
   ({ options = {}, content }) => lazyView("LazyVStack", "vertical", {
-    "data-muse": "LazyVStack",
+    "data-vune": "LazyVStack",
     ...lazyData(options, "vertical"),
     style: {
       display: "flex",
@@ -540,7 +540,7 @@ export const LazyHStack = defineBuiltinView<LazyHStackProps>(
   "LazyHStack",
   stackInitializers(initializerKinds.value(false, "options", ["alignment", "spacing", "estimatedItemSize", "overscan"], "object")),
   ({ options = {}, content }) => lazyView("LazyHStack", "horizontal", {
-    "data-muse": "LazyHStack",
+    "data-vune": "LazyHStack",
     ...lazyData(options, "horizontal"),
     style: {
       display: "flex",

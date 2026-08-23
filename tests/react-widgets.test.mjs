@@ -76,7 +76,7 @@ test('renders navigation links inside a React context stack', () => {
     ),
   )
 
-  assert.match(html, /data-muse-navigation-stack/)
+  assert.match(html, /data-vune-navigation-stack/)
   assert.match(html, /href="\/settings"/)
   assert.match(html, />Settings</)
 })

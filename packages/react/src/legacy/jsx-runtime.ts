@@ -1,1 +1,1 @@
-export * from "@muse/legacy-react/jsx-runtime"
+export * from "@vune-ui/legacy-react/jsx-runtime"

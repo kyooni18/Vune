@@ -1,25 +1,25 @@
-export type MuseClosureKind = "value" | "viewBuilder" | "action"
+export type VuneClosureKind = "value" | "viewBuilder" | "action"
 
-export const museClosureKind = Symbol.for("muse.closure.kind")
-export const museClosureVariants = Symbol.for("muse.closure.variants")
+export const vuneClosureKind = Symbol.for("vune.closure.kind")
+export const vuneClosureVariants = Symbol.for("vune.closure.variants")
 
-export interface MuseClosureVariants {
+export interface VuneClosureVariants {
   readonly value?: (...args: any[]) => any
   readonly viewBuilder?: (...args: any[]) => any
   readonly action?: (...args: any[]) => any
 }
 
-export type MuseClosure<T extends (...args: any[]) => any> = T & {
-  readonly [museClosureKind]?: MuseClosureKind
-  readonly [museClosureVariants]?: MuseClosureVariants
+export type VuneClosure<T extends (...args: any[]) => any> = T & {
+  readonly [vuneClosureKind]?: VuneClosureKind
+  readonly [vuneClosureVariants]?: VuneClosureVariants
 }
 
 export function overloadClosure<Args extends any[] = any[], Result = any>(
   viewBuilder: (...args: Args) => Result,
   action: (...args: Args) => unknown,
-): MuseClosure<(...args: Args) => Result> {
-  const closure = ((...args: Args) => viewBuilder(...args)) as MuseClosure<(...args: Args) => Result>
-  Object.defineProperty(closure, museClosureVariants, {
+): VuneClosure<(...args: Args) => Result> {
+  const closure = ((...args: Args) => viewBuilder(...args)) as VuneClosure<(...args: Args) => Result>
+  Object.defineProperty(closure, vuneClosureVariants, {
     configurable: false,
     enumerable: false,
     value: { viewBuilder, action },
@@ -27,40 +27,40 @@ export function overloadClosure<Args extends any[] = any[], Result = any>(
   return closure
 }
 
-export function closureVariantsOf(value: unknown): MuseClosureVariants | undefined {
+export function closureVariantsOf(value: unknown): VuneClosureVariants | undefined {
   return typeof value === "function"
-    ? (value as MuseClosure<(...args: any[]) => any>)[museClosureVariants]
+    ? (value as VuneClosure<(...args: any[]) => any>)[vuneClosureVariants]
     : undefined
 }
 
-export function closureForKind<T extends (...args: any[]) => any>(value: T, kind: MuseClosureKind): T {
+export function closureForKind<T extends (...args: any[]) => any>(value: T, kind: VuneClosureKind): T {
   return (closureVariantsOf(value)?.[kind] ?? value) as T
 }
 
-export function markMuseClosure<T extends (...args: any[]) => any>(closure: T, kind: MuseClosureKind): MuseClosure<T> {
-  const current = (closure as MuseClosure<T>)[museClosureKind]
-  if (current === kind) return closure as MuseClosure<T>
+export function markVuneClosure<T extends (...args: any[]) => any>(closure: T, kind: VuneClosureKind): VuneClosure<T> {
+  const current = (closure as VuneClosure<T>)[vuneClosureKind]
+  if (current === kind) return closure as VuneClosure<T>
   if (current !== undefined) {
-    const wrapped = ((...args: any[]) => closure(...args)) as MuseClosure<T>
-    Object.defineProperty(wrapped, museClosureKind, { configurable: false, enumerable: false, value: kind })
+    const wrapped = ((...args: any[]) => closure(...args)) as VuneClosure<T>
+    Object.defineProperty(wrapped, vuneClosureKind, { configurable: false, enumerable: false, value: kind })
     return wrapped
   }
   try {
-    Object.defineProperty(closure, museClosureKind, { configurable: false, enumerable: false, value: kind })
-    return closure as MuseClosure<T>
+    Object.defineProperty(closure, vuneClosureKind, { configurable: false, enumerable: false, value: kind })
+    return closure as VuneClosure<T>
   } catch {
-    const wrapped = ((...args: any[]) => closure(...args)) as MuseClosure<T>
-    Object.defineProperty(wrapped, museClosureKind, { configurable: false, enumerable: false, value: kind })
+    const wrapped = ((...args: any[]) => closure(...args)) as VuneClosure<T>
+    Object.defineProperty(wrapped, vuneClosureKind, { configurable: false, enumerable: false, value: kind })
     return wrapped
   }
 }
 
-export function closureKindOf(value: unknown): MuseClosureKind | undefined {
+export function closureKindOf(value: unknown): VuneClosureKind | undefined {
   return typeof value === "function"
-    ? (value as MuseClosure<(...args: any[]) => any>)[museClosureKind]
+    ? (value as VuneClosure<(...args: any[]) => any>)[vuneClosureKind]
     : undefined
 }
 
-export const viewBuilderClosure = <T extends (...args: any[]) => any>(closure: T) => markMuseClosure(closure, "viewBuilder")
-export const actionClosure = <T extends (...args: any[]) => any>(closure: T) => markMuseClosure(closure, "action")
-export const valueClosure = <T extends (...args: any[]) => any>(closure: T) => markMuseClosure(closure, "value")
+export const viewBuilderClosure = <T extends (...args: any[]) => any>(closure: T) => markVuneClosure(closure, "viewBuilder")
+export const actionClosure = <T extends (...args: any[]) => any>(closure: T) => markVuneClosure(closure, "action")
+export const valueClosure = <T extends (...args: any[]) => any>(closure: T) => markVuneClosure(closure, "value")

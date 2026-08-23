@@ -1,1 +1,1 @@
-export * from "@muse/core"
+export * from "@vune-ui/core"

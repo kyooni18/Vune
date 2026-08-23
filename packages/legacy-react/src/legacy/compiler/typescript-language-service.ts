@@ -1,25 +1,25 @@
 import * as ts from 'typescript'
-import { formatMuseSource } from './language-tools.js'
+import { formatVuneSource } from './language-tools.js'
 import {
-  createMuseSourceMap,
+  createVuneSourceMap,
   mapGeneratedPosition,
   mapOriginalPosition,
-  type MuseSourceMap,
+  type VuneSourceMap,
 } from './source-map.js'
 
-export interface MuseTypeScriptLanguageServiceOptions {
+export interface VuneTypeScriptLanguageServiceOptions {
   /** Restrict preprocessing to files that match this predicate. */
-  readonly isMuseFile?: (fileName: string) => boolean
+  readonly isVuneFile?: (fileName: string) => boolean
 }
 
-function defaultIsMuseFile(fileName: string): boolean {
+function defaultIsVuneFile(fileName: string): boolean {
   return /\.[cm]?[jt]sx?$/.test(fileName.split('?', 1)[0])
 }
 
-interface MuseDocument {
+interface VuneDocument {
   readonly source: string
   readonly generated: string
-  readonly map: MuseSourceMap
+  readonly map: VuneSourceMap
   readonly version: string
 }
 
@@ -42,20 +42,20 @@ function offsetAt(source: string, position: { line: number; column: number }): n
 function documentFor(
   snapshot: ts.IScriptSnapshot | undefined,
   fileName: string,
-  isMuseFile: (fileName: string) => boolean,
+  isVuneFile: (fileName: string) => boolean,
   version: string,
-): MuseDocument | undefined {
-  if (!snapshot || !isMuseFile(fileName)) return undefined
+): VuneDocument | undefined {
+  if (!snapshot || !isVuneFile(fileName)) return undefined
   const source = snapshot.getText(0, snapshot.getLength())
   try {
-    const generated = formatMuseSource(source)
-    return { source, generated, version, map: createMuseSourceMap(source, generated, fileName) }
+    const generated = formatVuneSource(source)
+    return { source, generated, version, map: createVuneSourceMap(source, generated, fileName) }
   } catch {
-    return { source, generated: source, version, map: createMuseSourceMap(source, source, fileName) }
+    return { source, generated: source, version, map: createVuneSourceMap(source, source, fileName) }
   }
 }
 
-function mapOffset(document: MuseDocument, offset: number, reverse: boolean): number {
+function mapOffset(document: VuneDocument, offset: number, reverse: boolean): number {
   const position = linePosition(reverse ? document.source : document.generated, offset)
   const mapped = reverse
     ? mapOriginalPosition(document.map, position)
@@ -63,14 +63,14 @@ function mapOffset(document: MuseDocument, offset: number, reverse: boolean): nu
   return offsetAt(reverse ? document.generated : document.source, mapped)
 }
 
-function mapTextSpan(span: ts.TextSpan | undefined, document: MuseDocument | undefined): ts.TextSpan | undefined {
+function mapTextSpan(span: ts.TextSpan | undefined, document: VuneDocument | undefined): ts.TextSpan | undefined {
   if (!span || !document) return span
   const start = mapOffset(document, span.start, false)
   const end = mapOffset(document, span.start + span.length, false)
   return { start, length: Math.max(0, end - start) }
 }
 
-function mapDiagnostic(diagnostic: ts.Diagnostic, documents: Map<string, MuseDocument>): ts.Diagnostic {
+function mapDiagnostic(diagnostic: ts.Diagnostic, documents: Map<string, VuneDocument>): ts.Diagnostic {
   const fileName = diagnostic.file?.fileName
   const document = fileName ? documents.get(fileName) : undefined
   const relatedInformation = diagnostic.relatedInformation?.map(info => mapDiagnostic(info, documents))
@@ -85,7 +85,7 @@ function mapDiagnostic(diagnostic: ts.Diagnostic, documents: Map<string, MuseDoc
   }
 }
 
-function mapFileSpan<T extends { fileName: string; textSpan: ts.TextSpan }>(value: T, documents: Map<string, MuseDocument>): T {
+function mapFileSpan<T extends { fileName: string; textSpan: ts.TextSpan }>(value: T, documents: Map<string, VuneDocument>): T {
   const document = documents.get(value.fileName)
   if (!document) return value
   return { ...value, textSpan: mapTextSpan(value.textSpan, document) ?? value.textSpan }
@@ -94,7 +94,7 @@ function mapFileSpan<T extends { fileName: string; textSpan: ts.TextSpan }>(valu
 function mapLanguageServiceResult(
   method: string,
   result: any,
-  documents: Map<string, MuseDocument>,
+  documents: Map<string, VuneDocument>,
   inputFileName?: string,
 ): any {
   if (result === undefined || result === null) return result
@@ -154,18 +154,18 @@ const positionMethods = new Set([
  * the standalone compiler and Vite plugin. The wrapper keeps script versions
  * and all filesystem behavior owned by the caller.
  */
-export function createMuseTypeScriptLanguageService(
+export function createVuneTypeScriptLanguageService(
   host: ts.LanguageServiceHost,
-  options: MuseTypeScriptLanguageServiceOptions = {},
+  options: VuneTypeScriptLanguageServiceOptions = {},
   documentRegistry?: ts.DocumentRegistry,
 ): ts.LanguageService {
-  const isMuseFile = options.isMuseFile ?? defaultIsMuseFile
-  const documents = new Map<string, MuseDocument>()
-  const museHost: ts.LanguageServiceHost = {
+  const isVuneFile = options.isVuneFile ?? defaultIsVuneFile
+  const documents = new Map<string, VuneDocument>()
+  const vuneHost: ts.LanguageServiceHost = {
     ...host,
     getScriptSnapshot(fileName) {
       const snapshot = host.getScriptSnapshot(fileName)
-      if (!isMuseFile(fileName)) return snapshot
+      if (!isVuneFile(fileName)) return snapshot
       const version = host.getScriptVersion?.(fileName) ?? ''
       const cached = documents.get(fileName)
       if (cached?.version === version) {
@@ -173,23 +173,23 @@ export function createMuseTypeScriptLanguageService(
           ? ts.ScriptSnapshot.fromString(cached.generated)
           : snapshot
       }
-      const document = documentFor(snapshot, fileName, isMuseFile, version)
+      const document = documentFor(snapshot, fileName, isVuneFile, version)
       if (document) documents.set(fileName, document)
       return document && document.generated !== document.source
         ? ts.ScriptSnapshot.fromString(document.generated)
         : snapshot
     },
   }
-  const ensureDocument = (fileName: string): MuseDocument | undefined => {
-    if (!isMuseFile(fileName)) return undefined
+  const ensureDocument = (fileName: string): VuneDocument | undefined => {
+    if (!isVuneFile(fileName)) return undefined
     const version = host.getScriptVersion?.(fileName) ?? ''
     const cached = documents.get(fileName)
     if (cached?.version === version) return cached
-    const document = documentFor(host.getScriptSnapshot(fileName), fileName, isMuseFile, version)
+    const document = documentFor(host.getScriptSnapshot(fileName), fileName, isVuneFile, version)
     if (document) documents.set(fileName, document)
     return document
   }
-  const service = ts.createLanguageService(museHost, documentRegistry)
+  const service = ts.createLanguageService(vuneHost, documentRegistry)
   return new Proxy(service, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver)

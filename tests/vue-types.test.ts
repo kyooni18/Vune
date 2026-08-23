@@ -11,15 +11,15 @@ const RequiredBadge = defineComponent({
   setup: () => () => null,
 })
 
-Component(RequiredBadge, { label: 'Muse', onSave: value => value.toUpperCase() })
-Component(RequiredBadge, { label: 'Muse', slots: { default: () => Text('Body'), row: ({ label }) => Text(String(label)) } })
+Component(RequiredBadge, { label: 'Vune', onSave: value => value.toUpperCase() })
+Component(RequiredBadge, { label: 'Vune', slots: { default: () => Text('Body'), row: ({ label }) => Text(String(label)) } })
 const Badge = vueComponent(RequiredBadge)
-Badge({ label: 'Muse', onSave: value => value.toUpperCase() })
+Badge({ label: 'Vune', onSave: value => value.toUpperCase() })
 // @ts-expect-error required Vue component prop is missing
 Component(RequiredBadge, {})
 // @ts-expect-error Vue component prop type must match
 Component(RequiredBadge, { label: 42 })
 // @ts-expect-error declared Vue emit payload is a string
-Component(RequiredBadge, { label: 'Muse', onSave: (value: number) => value })
+Component(RequiredBadge, { label: 'Vune', onSave: (value: number) => value })
 // @ts-expect-error adapted Vue components retain required props
 Badge({})

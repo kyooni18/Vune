@@ -1,6 +1,6 @@
-# Muse styling
+# Vune styling
 
-Muse provides two styling levels:
+Vune provides two styling levels:
 
 - **Simple styling** uses readable modifiers for common layout and visual rules.
 - **Advanced styling** uses inline CSS values and external CSS classes when the design needs full CSS control.
@@ -13,7 +13,7 @@ be chained without mutating the original View.
 Use modifiers for styles that describe the intent of a view:
 
 ```ts
-import { Text, VStack } from 'muse'
+import { Text, VStack } from 'vune-ui'
 
 VStack(
   { spacing: 12, alignment: 'leading' },
@@ -66,8 +66,8 @@ CSS custom properties are supported as well:
 ```ts
 Text('Themed')
   .style({
-    '--muse-accent': '#7c3aed',
-    color: 'var(--muse-accent)',
+    '--vune-accent': '#7c3aed',
+    color: 'var(--vune-accent)',
   })
 ```
 
@@ -92,7 +92,7 @@ Use `.className()` for selectors, responsive rules, pseudo-classes, keyframes, a
 
 ```ts
 import './styles.css'
-import { Text } from 'muse'
+import { Text } from 'vune-ui'
 
 Text('Interactive card')
   .className('card')
@@ -103,7 +103,7 @@ Text('Interactive card')
 .card {
   display: block;
   padding: 1rem;
-  border: 1px solid var(--muse-border, #cbd5e1);
+  border: 1px solid var(--vune-border, #cbd5e1);
   transition: transform 160ms ease, box-shadow 160ms ease;
 }
 
@@ -131,20 +131,20 @@ This produces `card card--featured u-shadow` when `isFeatured` is true, and `car
 
 ## Vite stylesheet interoperability
 
-The Muse compiler leaves stylesheet imports untouched, so Vite's normal CSS
+The Vune compiler leaves stylesheet imports untouched, so Vite's normal CSS
 pipeline remains authoritative. CSS Modules, Sass, PostCSS, and Tailwind can be
-used without a Muse-specific transform:
+used without a Vune-specific transform:
 
 ```ts
 import styles from './Card.module.css'
 import './tokens.scss'
-import { Text } from 'muse'
+import { Text } from 'vune-ui'
 
 Text('Card').className([styles.card, 'text-slate-900'])
 ```
 
 Install and configure the relevant Vite/PostCSS/Tailwind plugins in the host
-application. `@muse/vite` lowers `.muse.ts` syntax and Muse code inside Vue
+application. `@vune-ui/vite` lowers `.vune.ts` syntax and Vune code inside Vue
 `<script>` blocks, while deliberately skipping `.css`, `.module.css`, `.scss`,
 and other stylesheet modules.
 
@@ -166,7 +166,7 @@ attributes on intrinsic elements:
   frame={{ maxWidth: 'infinity', alignment: 'center' }}
   background="Canvas"
 >
-  <span fontSize={18} bold>Muse</span>
+  <span fontSize={18} bold>Vune</span>
 </div>
 ```
 
@@ -177,11 +177,11 @@ function DSL and `className`/`style` modifiers above.
 
 ## Styling React components
 
-Muse applies layout and class modifiers to a neutral layout host when the child is a normal React component. The component's own props and internal DOM remain React-owned:
+Vune applies layout and class modifiers to a neutral layout host when the child is a normal React component. The component's own props and internal DOM remain React-owned:
 
 ```ts
 HStack(
-  Component(ProfileCard, { name: 'Muse' })
+  Component(ProfileCard, { name: 'Vune' })
     .className('profile-card')
     .padding(12),
 )
@@ -196,8 +196,8 @@ The external stylesheet should target the host class:
 }
 ```
 
-Use `Component()` from `@muse/react` when styling an existing React component or
-element. `Raw()` is available from `@muse/react` as an explicit compatibility
+Use `Component()` from `@vune-ui/react` when styling an existing React component or
+element. `Raw()` is available from `@vune-ui/react` as an explicit compatibility
 escape hatch for an already-created React node.
 
 ## Choosing a style level

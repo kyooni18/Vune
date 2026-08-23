@@ -1,27 +1,27 @@
-import { transformMuseBuilderSyntax } from './builder-transform.js'
-import { transformMuseStructSyntax } from './struct-transform.js'
+import { transformVuneBuilderSyntax } from './builder-transform.js'
+import { transformVuneStructSyntax } from './struct-transform.js'
 
-export interface MuseDiagnostic {
+export interface VuneDiagnostic {
   severity: 'error'
-  code: 'MUSE_SYNTAX'
+  code: 'VUNE_SYNTAX'
   message: string
   line: number
   column: number
 }
 
 function ensureRuntimeImport(source: string, name: string): string {
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(source)
-  if (!existing) return `import { ${name} } from 'vune-ui'\n${source}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\/legacy\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${name} } from 'vune-ui/legacy'\n${source}`
   const imported = existing[1].split(',').map(value => value.trim()).filter(Boolean)
   if (imported.includes(name)) return source
   imported.push(name)
-  const replacement = `import { ${imported.join(', ')} } from 'vune-ui'`
+  const replacement = `import { ${imported.join(', ')} } from 'vune-ui/legacy'`
   return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }
 
 /** The canonical formatter/compiler entry used by editor integrations. */
-export function formatMuseSource(source: string): string {
-  const transformed = transformMuseBuilderSyntax(transformMuseStructSyntax(source))
+export function formatVuneSource(source: string): string {
+  const transformed = transformVuneBuilderSyntax(transformVuneStructSyntax(source))
   return [
     ...(transformed.includes('namedArguments(') ? ['namedArguments'] : []),
     ...(transformed.includes('overloadClosure(') ? ['overloadClosure'] : []),
@@ -29,9 +29,9 @@ export function formatMuseSource(source: string): string {
 }
 
 /** Return structured diagnostics without making an editor parse exceptions. */
-export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
+export function diagnoseVuneSource(source: string): readonly VuneDiagnostic[] {
   try {
-    formatMuseSource(source)
+    formatVuneSource(source)
     return []
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -41,11 +41,11 @@ export function diagnoseMuseSource(source: string): readonly MuseDiagnostic[] {
     if (offset === undefined) {
       const lineMatch = /line\s+(\d+)/i.exec(message)
       const line = lineMatch ? Number(lineMatch[1]) : 1
-      return [{ severity: 'error', code: 'MUSE_SYNTAX', message, line, column: 1 }]
+      return [{ severity: 'error', code: 'VUNE_SYNTAX', message, line, column: 1 }]
     }
     const before = source.slice(0, offset)
     const line = before.split('\n').length
     const lineStart = before.lastIndexOf('\n') + 1
-    return [{ severity: 'error', code: 'MUSE_SYNTAX', message, line, column: offset - lineStart + 1 }]
+    return [{ severity: 'error', code: 'VUNE_SYNTAX', message, line, column: offset - lineStart + 1 }]
   }
 }

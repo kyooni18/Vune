@@ -1,10 +1,10 @@
-import { transformMuseBuilderSyntax } from './builder-transform.js'
-import { transformMuseStructSyntax } from './struct-transform.js'
-import { createLegacyMuseSourceMap } from './source-map.js'
+import { transformVuneBuilderSyntax } from './builder-transform.js'
+import { transformVuneStructSyntax } from './struct-transform.js'
+import { createLegacyVuneSourceMap } from './source-map.js'
 
-export interface MuseViteBuilderOptions {}
+export interface VuneViteBuilderOptions {}
 
-function containsMuseSyntax(source: string): boolean {
+function containsVuneSyntax(source: string): boolean {
   return /\bstruct\s+[A-Z][A-Za-z0-9_$]*(?:\s*<[^>{}]*>)?\s*:\s*View\b/.test(source)
     || /\b[A-Z][A-Za-z0-9_$]*\s*\([^\n]*\)\s*\{/.test(source)
     || /\b[A-Za-z_$][A-Za-z0-9_$]*\s*:\s*(?:\.|\$|\{)/.test(source)
@@ -12,29 +12,29 @@ function containsMuseSyntax(source: string): boolean {
 }
 
 function ensureRuntimeImport(source: string, name: string): string {
-  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\2[\t ]*;?/.exec(source)
-  if (!existing) return `import { ${name} } from 'vune-ui'\n${source}`
+  const existing = /import\s*\{([\s\S]*?)\}\s*from\s*(['"])vune-ui\/legacy\2[\t ]*;?/.exec(source)
+  if (!existing) return `import { ${name} } from 'vune-ui/legacy'\n${source}`
   const imported = existing[1].split(',').map(value => value.trim()).filter(Boolean)
   if (imported.includes(name)) return source
   imported.push(name)
-  const replacement = `import { ${imported.join(', ')} } from 'vune-ui'`
+  const replacement = `import { ${imported.join(', ')} } from 'vune-ui/legacy'`
   return source.slice(0, existing.index) + replacement + source.slice(existing.index + existing[0].length)
 }
 
-export function createMuseVitePlugin(_options: MuseViteBuilderOptions = {}) {
+export function createVuneVitePlugin(_options: VuneViteBuilderOptions = {}) {
   return {
-    name: 'muse-builder-transform',
+    name: 'vune-builder-transform',
     enforce: 'pre' as const,
     transform(code: string, id: string) {
       if (!/\.[cm]?[jt]sx?$/.test(id.split('?', 1)[0])) return null
-      if (!containsMuseSyntax(code)) return null
-      const structCode = transformMuseStructSyntax(code)
-      const lowered = transformMuseBuilderSyntax(structCode)
+      if (!containsVuneSyntax(code)) return null
+      const structCode = transformVuneStructSyntax(code)
+      const lowered = transformVuneBuilderSyntax(structCode)
       const result = [
         ...(lowered.includes('namedArguments(') ? ['namedArguments'] : []),
         ...(lowered.includes('overloadClosure(') ? ['overloadClosure'] : []),
       ].reduce((value, name) => ensureRuntimeImport(value, name), lowered)
-      return result === code ? null : { code: result, map: createLegacyMuseSourceMap(code, result, id.split('?', 1)[0]) }
+      return result === code ? null : { code: result, map: createLegacyVuneSourceMap(code, result, id.split('?', 1)[0]) }
     }
   }
 }

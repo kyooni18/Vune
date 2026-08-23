@@ -43,7 +43,7 @@ const Text = defineBuiltinView(
   ({ value }) => viewElement("span", null, [value]),
 )
 
-test("@muse/core builds a renderer-independent graph with immutable modifiers", () => {
+test("@vune-ui/core builds a renderer-independent graph with immutable modifiers", () => {
   const original = Text("Hello")
   const modified = original.font("title").padding(12)
   assert.notEqual(original, modified)
@@ -67,7 +67,7 @@ test("@muse/core builds a renderer-independent graph with immutable modifiers", 
   assert.deepEqual(modifierGraphOf(batched).map(item => item.name), ["font", "padding"])
 })
 
-test("@muse/core state and Binding stay independent from a renderer", () => {
+test("@vune-ui/core state and Binding stay independent from a renderer", () => {
   const state = State(1)
   const binding = Binding(state)
   let notifications = 0
@@ -103,7 +103,7 @@ test("State and Binding preserve derived, nested, and writable-lens semantics", 
   assert.equal(base.value, 5)
 })
 
-test("@muse/core keeps View identity storage renderer-independent", () => {
+test("@vune-ui/core keeps View identity storage renderer-independent", () => {
   const store = createViewIdentityStore()
   const identity = {}
   let creations = 0
@@ -113,7 +113,7 @@ test("@muse/core keeps View identity storage renderer-independent", () => {
   assert.equal(store.getOrCreate(identity, () => ++creations), 2)
 })
 
-test("@muse/core makes View type changes explicit remount boundaries", () => {
+test("@vune-ui/core makes View type changes explicit remount boundaries", () => {
   const First = defineView("FirstBranch", { initializers: [initializer("FirstBranch()", args => args.length === 0)], body: () => CoreText("first") })
   const Second = defineView("SecondBranch", { initializers: [initializer("SecondBranch()", args => args.length === 0)], body: () => CoreText("second") })
   const identities = []
@@ -140,7 +140,7 @@ test("@muse/core makes View type changes explicit remount boundaries", () => {
   assert.notDeepEqual(identities.at(-2), identities.at(-1))
 })
 
-test("@muse/core owns built-in and custom View graphs without a renderer", () => {
+test("@vune-ui/core owns built-in and custom View graphs without a renderer", () => {
   const card = defineView("Card", {
     initializers: [initializer(
       "Card(@ViewBuilder content)",
@@ -167,11 +167,11 @@ test("@muse/core owns built-in and custom View graphs without a renderer", () =>
   assert.equal(graph.children[0].props.class, "card")
 })
 
-test("@muse/core represents foreign components as explicit graph descriptors", () => {
+test("@vune-ui/core represents foreign components as explicit graph descriptors", () => {
   const reference = { current: null }
   const component = function ProfileCard() { return null }
   const value = ForeignComponent(component, {
-    props: { label: "Muse" },
+    props: { label: "Vune" },
     events: { onSave: () => undefined },
     slots: { header: () => CoreText("Header") },
     ref: reference,
@@ -182,7 +182,7 @@ test("@muse/core represents foreign components as explicit graph descriptors", (
   assert.equal(value.kind, "element")
   assert.equal(isForeignComponent(value.type), true)
   assert.equal(value.type.component, component)
-  assert.deepEqual(value.type.props, { label: "Muse" })
+  assert.deepEqual(value.type.props, { label: "Vune" })
   assert.deepEqual(Object.keys(value.type.events), ["onSave"])
   assert.equal(value.type.key, "profile")
   assert.equal(value.type.adapter, "vue")
@@ -190,7 +190,7 @@ test("@muse/core represents foreign components as explicit graph descriptors", (
   assert.equal(value.props.ref, reference)
 })
 
-test("@muse/core normalizes boolean leaves and rejects arbitrary object leaves before renderers", () => {
+test("@vune-ui/core normalizes boolean leaves and rejects arbitrary object leaves before renderers", () => {
   const values = []
   const renderer = {
     element(type, props, ...children) { return { type, props, children } },
@@ -207,7 +207,7 @@ test("@muse/core normalizes boolean leaves and rejects arbitrary object leaves b
   )
 })
 
-test("@muse/core gives ForEach children stable identity keys", () => {
+test("@vune-ui/core gives ForEach children stable identity keys", () => {
   const value = ForEach([{ id: "a", label: "A" }, { id: "b", label: "B" }], item => CoreText(item.label))
   assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["string:1:a|occurrence:0|child:0"]])
   assert.deepEqual(modifierGraphOf(value.children[1]).map(item => item.arguments), [["string:1:b|occurrence:0|child:0"]])
@@ -269,15 +269,15 @@ test("lazy containers are distinct graph constructors with browser lazy metadata
     modifier(content) { return content },
   }
   const rendered = renderViewNode(LazyVStack({ estimatedItemSize: 56, overscan: 3 }, CoreText("A")), renderer)
-  assert.equal(rendered.props["data-muse-lazy"], "vertical")
-  assert.equal(rendered.props["data-muse-lazy-overscan"], 3)
+  assert.equal(rendered.props["data-vune-lazy"], "vertical")
+  assert.equal(rendered.props["data-vune-lazy-overscan"], 3)
 })
 
-test("@muse/core exposes renderer-independent scroll and safe-area semantics", () => {
+test("@vune-ui/core exposes renderer-independent scroll and safe-area semantics", () => {
   const scroll = ScrollView("both", () => [CoreText("Scrollable")])
   const safe = SafeArea(["top", "bottom"], () => [scroll])
   assert.equal(safe.kind, "element")
-  assert.equal(safe.props["data-muse"], "SafeArea")
+  assert.equal(safe.props["data-vune"], "SafeArea")
   assert.deepEqual(safe.props.style, {
     paddingTop: "env(safe-area-inset-top)",
     paddingRight: undefined,
@@ -285,10 +285,10 @@ test("@muse/core exposes renderer-independent scroll and safe-area semantics", (
     paddingLeft: undefined,
     boxSizing: "border-box",
   })
-  assert.equal(safe.children[0].props["data-muse"], "ScrollView")
+  assert.equal(safe.children[0].props["data-vune"], "ScrollView")
 })
 
-test("@muse/core falls back to a deterministic zero GeometryProxy without a renderer", () => {
+test("@vune-ui/core falls back to a deterministic zero GeometryProxy without a renderer", () => {
   const value = GeometryReader(geometry => CoreText(`${geometry.size.width}x${geometry.size.height}`))
   const rendered = renderViewNode(value, {
     element(type, props, ...children) { return { type, props, children } },
@@ -300,7 +300,7 @@ test("@muse/core falls back to a deterministic zero GeometryProxy without a rend
   assert.equal(rendered.children[0], "0x0")
 })
 
-test("@muse/core normalizes measured CSS safe-area values", () => {
+test("@vune-ui/core normalizes measured CSS safe-area values", () => {
   assert.deepEqual(edgeInsetsFromCss({ top: "12px", right: "8.5px", bottom: "env(safe-area-inset-bottom)", left: 4 }), {
     top: 12,
     right: 8.5,
@@ -309,7 +309,7 @@ test("@muse/core normalizes measured CSS safe-area values", () => {
   })
 })
 
-test("@muse/core applies declared generic View constraints during initializer resolution", () => {
+test("@vune-ui/core applies declared generic View constraints during initializer resolution", () => {
   const GenericCard = defineView("GenericCard", {
     genericParameters: "Content: View",
     initializers: [initializer(
@@ -324,12 +324,12 @@ test("@muse/core applies declared generic View constraints during initializer re
   assert.throws(() => GenericCard("not a View"), /No matching initializer for GenericCard/)
 })
 
-test("@muse/core resolves declared union value types without overload-order bias", () => {
+test("@vune-ui/core resolves declared union value types without overload-order bias", () => {
   assert.doesNotThrow(() => CoreText(42))
   assert.doesNotThrow(() => CoreButton(42, () => undefined))
 })
 
-test("@muse/core routes a trailing closure past omitted optional parameters", () => {
+test("@vune-ui/core routes a trailing closure past omitted optional parameters", () => {
   const result = resolveSemanticInitializer([
     {
       kind: "initializer",
@@ -345,12 +345,12 @@ test("@muse/core routes a trailing closure past omitted optional parameters", ()
   assert.equal(result.ok && result.resolution.arguments[1]?.trailing, true)
 })
 
-test("@muse/core applies Content: View constraints to built-in stack builders", () => {
+test("@vune-ui/core applies Content: View constraints to built-in stack builders", () => {
   assert.doesNotThrow(() => CoreVStack(() => [CoreText("valid")]))
   assert.throws(() => CoreVStack(() => ["not a View"]), /No matching initializer for VStack/)
 })
 
-test("@muse/core exposes the same View symbol consumed by compiler adapters", () => {
+test("@vune-ui/core exposes the same View symbol consumed by compiler adapters", () => {
   assert.equal(CoreText.viewType.semanticSymbol.kind, "view")
   assert.equal(CoreText.viewType.semanticSymbol.name, "Text")
   assert.equal(CoreText.viewType.semanticSymbol.initializers[0].parameters[0].type, "string | number")

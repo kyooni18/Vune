@@ -1,31 +1,31 @@
-# Build a Muse screen
+# Build a Vune screen
 
 This tutorial uses the canonical renderer-independent graph, the React renderer,
-and the Muse Vite compiler. It intentionally uses `.muse.ts` syntax rather than
+and the Vune Vite compiler. It intentionally uses `.vune.ts` syntax rather than
 the legacy macro/JSX compatibility layer.
 
 ## 1. Install and configure
 
 ```bash
-pnpm add muse @muse/react react react-dom
-pnpm add -D @muse/vite @vitejs/plugin-react vite typescript
+pnpm add vune-ui @vune-ui/react react react-dom
+pnpm add -D @vune-ui/vite @vitejs/plugin-react vite typescript
 ```
 
 ```ts
 // vite.config.ts
 import react from "@vitejs/plugin-react"
-import { musePlugin } from "@muse/vite"
+import { vunePlugin } from "@vune-ui/vite"
 import { defineConfig } from "vite"
 
-export default defineConfig({ plugins: [musePlugin(), react()] })
+export default defineConfig({ plugins: [vunePlugin(), react()] })
 ```
 
 ## 2. Create an instance-owned screen
 
 ```ts
-// src/App.muse.ts
-import { Binding, Button, ForEach, State, Text, TextField, VStack } from "muse"
-import { view } from "@muse/react"
+// src/App.vune.ts
+import { Binding, Button, ForEach, State, Text, TextField, VStack } from "vune-ui"
+import { view } from "@vune-ui/react"
 
 const query = State("")
 const items = State([
@@ -39,7 +39,7 @@ export default view(() => VStack(spacing: 12) {
     ? items.value.filter(item => item.title.toLowerCase().includes(normalized))
     : items.value
 
-  Text("Muse modules").fontSize(28).bold()
+  Text("Vune modules").fontSize(28).bold()
   TextField(Binding(query), "Filter")
 
   ForEach(filtered, key: item => item.id) { item in
@@ -57,7 +57,7 @@ Local declarations and normal TypeScript control flow can live inside a
 change how child Views are collected. Give dynamic collections an explicit,
 stable key whenever one exists.
 
-The two top-level State declarations above are referenced only by this one Muse
+The two top-level State declarations above are referenced only by this one Vune
 View, so the compiler can make them per-mounted-instance. Shared/exported State
 stays at module scope and receives a warning instead of being silently moved.
 
@@ -67,22 +67,22 @@ stays at module scope and receives a warning instead of being silently moved.
 // src/main.ts
 import { createElement } from "react"
 import { createRoot } from "react-dom/client"
-import App from "./App.muse.js"
+import App from "./App.vune.js"
 
 createRoot(document.getElementById("app")!).render(createElement(App))
 ```
 
-The same graph model can instead be materialized through `@muse/vue` or
-`@muse/web`; renderer-owned APIs do not leak through `muse`.
+The same graph model can instead be materialized through `@vune-ui/vue` or
+`@vune-ui/web`; renderer-owned APIs do not leak through `vune-ui`.
 
 ## 4. Use raw HTML when native markup is clearer
 
-Raw HTML and Muse Views can be mixed in one builder:
+Raw HTML and Vune Views can be mixed in one builder:
 
 ```ts
 VStack() {
   <header class="hero" aria-hidden="false">
-    <span>Muse</span>
+    <span>Vune</span>
   </header>
   Text("Graph content")
 }
@@ -94,7 +94,7 @@ namespaces, and commits refs only after a live node exists.
 
 ## 5. Check the real integration fixture
 
-`examples/Showcase.muse.ts` is the repository's medium application fixture. It
+`examples/Showcase.vune.ts` is the repository's medium application fixture. It
 adds a custom `struct ...: View`, dynamic Button labels, async updates, `Grid`,
 `LazyVStack`, filtering, keyed reorder, bindings, raw HTML, and multiline
 modifier chains.

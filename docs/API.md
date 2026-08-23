@@ -1,19 +1,19 @@
-# Muse public API
+# Vune public API
 
-This page describes the public contract for the current Muse release. New code
-should import graph values from `muse` and choose `@muse/react`, `@muse/vue`, or
-`@muse/web` as the renderer; `vune-ui` remains a facade for the legacy
-React-compatible API.
+This page describes the public contract for the current Vune release. New code
+should import graph values from `vune-ui` and choose `@vune-ui/react`, `@vune-ui/vue`, or
+`@vune-ui/web` as the renderer. Legacy React compatibility is available explicitly
+from `vune-ui/legacy`.
 
 The candidate 1.0 runtime export surface is pinned by
 `tests/api-surface.test.mjs`. Canonical export changes, renderer-only additions,
-or renderer API leakage through `muse` therefore require an explicit snapshot
+or renderer API leakage through `vune-ui` therefore require an explicit snapshot
 review. Type-level contracts are pinned separately by the TypeScript
 conformance suite.
 
 ## Stable entry points
 
-The canonical `muse` entry point is the renderer-independent graph surface:
+The canonical `vune-ui` entry point is the renderer-independent graph surface:
 
 - Core Views and state: `Text`, `VStack`, `HStack`, `ZStack`, `ScrollView`,
   `SafeArea`, `GeometryReader`, `Button`, `Element`, `ForEach`, `defineView`, `View`,
@@ -24,18 +24,17 @@ The canonical `muse` entry point is the renderer-independent graph surface:
 
 Renderer-specific entry points add only materialization and runtime bridges:
 
-- `@muse/react` — React materialization and optional React compatibility APIs.
-- `@muse/vue` — Vue VNodes, `MuseView`, `createVueView`, `Component`, generic
+- `@vune-ui/react` — React materialization and optional React compatibility APIs.
+- `@vune-ui/vue` — Vue VNodes, `VuneView`, `createVueView`, `Component`, generic
   foreign-component slots, and
   explicit `toVueRef`/`fromVueRef` bridges. `mount(value, target, { hydrate: true })`
   hydrates Vue SSR markup.
-- `@muse/web` — HTML serialization and DOM mounting. `mount(value, target,
+- `@vune-ui/web` — HTML serialization and DOM mounting. `mount(value, target,
   { hydrate: true })` reuses matching SSR markup, attaches DOM events/refs, and
   keeps subsequent State invalidations live.
 
-The root `vune-ui` entry point remains the legacy compatibility surface,
-implemented by the separate `@muse/legacy-react` package and exposed through
-the preserved `@muse/react/legacy` proxy paths:
+The explicit `vune-ui/legacy` entry point provides the legacy React compatibility
+surface, implemented by `@vune-ui/legacy-react`:
 
 - Core views and state: `view`, `defineView`, `View`, `ViewBuilder`, `State`,
   `Binding`, and `Action`.
@@ -48,10 +47,10 @@ the preserved `@muse/react/legacy` proxy paths:
 
 `Component()` requires the props required by the underlying React component.
 Props are optional only when the component's prop type has no required keys.
-Muse owns the component's external layout slot; React owns the component's
+Vune owns the component's external layout slot; React owns the component's
 props, hooks, refs, context, children, and internal rendering.
 
-`Group()` and React fragments are transparent to Muse container layout. Muse
+`Group()` and React fragments are transparent to Vune container layout. Vune
 recursively normalizes them before deciding which children need a neutral
 layout host.
 
@@ -77,16 +76,16 @@ for this model.
 
 `ViewBuilder.buildBlock`, `buildOptional`, `buildEither`, and `buildArray` are
 the runtime intermediate representation for builder composition. The compiler
-entry point `@muse/compiler` transforms trailing blocks, labeled arguments,
+entry point `@vune-ui/compiler` transforms trailing blocks, labeled arguments,
 conditionals, `ForEach` item closures, and the supported `struct ...: View`
-syntax. `parseMuseBuilder()` and `parseMuseStructs()` expose the source-ranged
+syntax. `parseVuneBuilder()` and `parseVuneStructs()` expose the source-ranged
 AST used by the lowering pass; it does not classify calls by a `VStack`-style
 allow-list. Labeled syntax is lowered through the internal `namedArguments()`
 carrier, while ordinary JavaScript object calls remain a compatibility form.
-`formatMuseSource()` and `diagnoseMuseSource()` are available for one-off
-editor operations. `createMuseLanguageService()` combines formatting,
+`formatVuneSource()` and `diagnoseVuneSource()` are available for one-off
+editor operations. `createVuneLanguageService()` combines formatting,
 diagnostics, source-map output, and original-source position conversion for an
-editor integration. `createMuseLanguageService()` exposes the canonical lowered snapshot plus
+editor integration. `createVuneLanguageService()` exposes the canonical lowered snapshot plus
 original/generated position conversion. `mapGeneratedPosition()` and
 `mapOriginalPosition()` expose the token-level anchors used by editor adapters.
 The older TypeScript-host wrapper remains in the explicit legacy compiler
@@ -94,8 +93,8 @@ compatibility package. Vite transforms use the standard
 source-map shape.
 
 The normative cross-layer contracts for these APIs are in
-[`docs/SEMANTICS.md`](./SEMANTICS.md). `createMuseSemanticModel()` exposes the
-shared Muse AST plus lowered TypeScript AST used by compiler and IDE clients.
+[`docs/SEMANTICS.md`](./SEMANTICS.md). `createVuneSemanticModel()` exposes the
+shared Vune AST plus lowered TypeScript AST used by compiler and IDE clients.
 
 Modifier chains are immutable. They return cloned compatibility values and retain an
 inspectable `modifierGraphOf()` record, analogous to a `ModifiedContent<View,
@@ -104,7 +103,7 @@ node and can be traversed with `renderViewNode(value, renderer)`. React is the
 default materializer; other renderers can implement `value()` for primitive
 leaves and `view()`/`modifier()` for host-specific behavior. `Binding()` provides
 a writable lens over State or a custom getter/setter and remains compatible with
-controlled Muse controls.
+controlled Vune controls.
 
 `createViewIdentityStore()` exposes the same renderer-independent identity
 primitive used by the React host for per-mounted-View storage; the host-specific
@@ -112,18 +111,18 @@ hook only supplies mount lifetime.
 
 ## Supported integration entry points
 
-- `@muse/vite` — the canonical Muse compiler adapter for builder blocks,
+- `@vune-ui/vite` — the canonical Vune compiler adapter for builder blocks,
   labeled initializers, shorthand modifiers, raw HTML, and `struct ...: View`.
-  Put `musePlugin()` before `@vitejs/plugin-react`; transformed modules include
+  Put `vunePlugin()` before `@vitejs/plugin-react`; transformed modules include
   token-anchored source maps.
-- `@muse/compiler` — the renderer-independent compiler and language-service
+- `@vune-ui/compiler` — the renderer-independent compiler and language-service
   primitives used by the Vite and editor adapters.
 - `vune-ui/vite` — the TypeScript AST macro for `State`, `Action`, `view`,
   builder blocks, labeled arguments, shorthand modifiers, and `struct ...: View`.
-  This is the compatibility React workflow; put `museMacro()` before
+  This is the compatibility React workflow; put `vuneMacro()` before
   `@vitejs/plugin-react` when that state-hoisting behavior is required.
 - `vune-ui/jsx-runtime` and `vune-ui/jsx-dev-runtime` — the automatic JSX runtimes.
-  With `jsxImportSource: "vune-ui"`, Muse modifier attributes on intrinsic elements
+  With `jsxImportSource: "vune-ui"`, Vune modifier attributes on intrinsic elements
   are type-checked as well as applied at runtime.
 
 ## Experimental entry points
@@ -137,7 +136,7 @@ Import exploratory infrastructure explicitly from `vune-ui/experimental`:
 - coordinate runtime helpers;
 - builder collection helpers and the block-builder transform.
 
-The builder/compiler adapters are also available from `@muse/compiler` for
+The builder/compiler adapters are also available from `@vune-ui/compiler` for
 experimentation. They are not part of the stable root API and may change as
 the layout and JSX integration contracts are consolidated.
 
@@ -150,11 +149,11 @@ application-level contract. Frozen values, class instances, `Map`, `Set`, and
 React elements should be replaced at the State root when they change.
 
 `Lazy*` stores a renderer-neutral range boundary with estimated item size and
-overscan metadata. `@muse/web` mounts a windowed range, maintains spacers while
+overscan metadata. `@vune-ui/web` mounts a windowed range, maintains spacers while
 the viewport scrolls, and preserves keyed identity; React and Vue retain a
 full-graph fallback while exposing the same lazy metadata and SSR shape.
 
-Muse layout is SwiftUI-inspired and web-native. `frame`, `Spacer`, stacks, and
+Vune layout is SwiftUI-inspired and web-native. `frame`, `Spacer`, stacks, and
 infinity sizing express relationships through CSS; they do not promise
 pixel-equivalent behavior to SwiftUI's proposal-based layout algorithm.
 `ScrollView` maps its axis to native overflow behavior, while `SafeArea` maps
@@ -173,6 +172,6 @@ disabled-item skipping, typeahead, Escape, and Tab-close behavior. Closing by
 keyboard or item action restores the trigger focus; Tab is allowed to continue
 normal document navigation.
 
-Experimental plugins run for both function-DSL-created and JSX-created Muse
+Experimental plugins run for both function-DSL-created and JSX-created Vune
 elements. JSX additionally records its modifier metadata because JSX receives
 the modifier attributes as a single creation-time pass.

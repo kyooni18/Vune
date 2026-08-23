@@ -1,5 +1,5 @@
 import type { FrameOptions } from "../layout.js"
-import type { MuseStyleProperties } from "../html.js"
+import type { VuneStyleProperties } from "../html.js"
 import type { ClassValue, Length, ModifiableViewNode, Modifiers, ViewModifierNode, ViewNode } from "./types.js"
 
 const decoratedNodes = new WeakMap<object, ModifiableViewNode>()
@@ -18,7 +18,7 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
   bold(this: ViewNode) { return applyModifier(this, "bold", []) },
   foreground(this: ViewNode, value: string) { return applyModifier(this, "foreground", [value]) },
   background(this: ViewNode, value: string) { return applyModifier(this, "background", [value]) },
-  style(this: ViewNode, value: MuseStyleProperties) { return applyModifier(this, "style", [value]) },
+  style(this: ViewNode, value: VuneStyleProperties) { return applyModifier(this, "style", [value]) },
   className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },
   withProps(this: ViewNode, value: Record<string, unknown>) { return applyModifier(this, "withProps", [value]) },
   keyed(this: ViewNode, value: string | number) { return applyModifier(this, "keyed", [value]) },

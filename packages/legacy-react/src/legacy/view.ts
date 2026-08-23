@@ -43,10 +43,10 @@ export function view<
   input: ViewContent<Props> | ViewDefinition<State, Props>,
 ): ComponentType<Props> & Pick<ViewConstructor<RuntimeViewProps<State, Props>>, 'viewType'> {
   const definition = isViewDefinition(input) ? input : null
-  const View = defineView<RuntimeViewProps<State, Props>>('MuseView', {
-    name: 'MuseView',
+  const View = defineView<RuntimeViewProps<State, Props>>('VuneView', {
+    name: 'VuneView',
     initializers: [initializer(
-      'MuseView(props?)',
+      'VuneView(props?)',
       args => args.length <= 1 && (args.length === 0 || args[0] === null || typeof args[0] === 'object'),
       args => ({ inputProps: (args[0] ?? {}) as Props }),
     )],

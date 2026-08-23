@@ -1,0 +1,91 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: vune-ui pnpm pack failed:
+Scope: 8 of 10 workspace projects
+packages/core build$ tsc -p tsconfig.json
+packages/core build: Done
+packages/vue build$ tsc -p tsconfig.json
+packages/vune build$ tsc -p tsconfig.json
+packages/compiler build$ tsc -p tsconfig.json
+packages/legacy-react build$ rm -rf dist && tsc -p tsconfig.json
+packages/vune build: Done
+packages/web build$ tsc -p tsconfig.json
+packages/compiler build: Done
+packages/vue build: Done
+packages/web build: Done
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,74): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,75): error TS1134: Variable declaration expected.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,77): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,78): error TS1434: Unexpected keyword or identifier.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,80): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,81): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,82): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,83): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/language-tools.ts(13,84): error TS1161: Unterminated regular expression literal.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,74): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,75): error TS1134: Variable declaration expected.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,77): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,78): error TS1434: Unexpected keyword or identifier.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,80): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,81): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,82): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,83): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/struct-transform.ts(260,84): error TS1161: Unterminated regular expression literal.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,74): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,75): error TS1134: Variable declaration expected.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,77): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,78): error TS1434: Unexpected keyword or identifier.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,80): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,81): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,82): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,83): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/swc-transform.ts(28,84): error TS1161: Unterminated regular expression literal.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,74): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,75): error TS1134: Variable declaration expected.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,77): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,78): error TS1434: Unexpected keyword or identifier.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,80): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,81): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,82): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,83): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/compiler/vite-builder.ts(15,84): error TS1161: Unterminated regular expression literal.
+packages/legacy-react build: src/legacy/vite.ts(514,74): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/vite.ts(514,75): error TS1134: Variable declaration expected.
+packages/legacy-react build: src/legacy/vite.ts(514,77): error TS1127: Invalid character.
+packages/legacy-react build: src/legacy/vite.ts(514,78): error TS1434: Unexpected keyword or identifier.
+packages/legacy-react build: src/legacy/vite.ts(514,80): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/vite.ts(514,81): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/vite.ts(514,82): error TS1109: Expression expected.
+packages/legacy-react build: src/legacy/vite.ts(514,83): error TS1128: Declaration or statement expected.
+packages/legacy-react build: src/legacy/vite.ts(514,84): error TS1161: Unterminated regular expression literal.
+packages/legacy-react build: Failed
+/Users/kyooni18/Code/Web/React/Muse/packages/legacy-react:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] @vune-ui/legacy-react@0.1.0 build: `rm -rf dist && tsc -p tsconfig.json`
+Exit status 2
+[ELIFECYCLE] Command failed with exit code 2.
+[ELIFECYCLE] Command failed with exit code 2.
+[ELIFECYCLE] Command failed with exit code 2.
+
+$ pnpm run build
+$ pnpm run clean && pnpm run build:workspace && tsc -p tsconfig.build.json
+$ rm -rf ./dist
+$ pnpm -r --filter './packages/*' run build
+
+
+2 !== 0
+
+    at file:///Users/kyooni18/Code/Web/React/Muse/scripts/verify-release.mjs:90:10
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 2,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v26.7.0

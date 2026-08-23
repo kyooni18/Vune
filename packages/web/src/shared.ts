@@ -1,4 +1,4 @@
-import { classNameOf, frameStyle, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@muse/core"
+import { classNameOf, frameStyle, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
 

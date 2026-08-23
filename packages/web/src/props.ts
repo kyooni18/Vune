@@ -1,4 +1,4 @@
-import { classNameOf } from "@muse/core"
+import { classNameOf } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, type DomRenderContext } from "./shared.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"

@@ -33,13 +33,13 @@ export const Box = defineBuiltinView<BoxProps>(
     initializer("Box(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
     initializer("Box(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
-  ({ children }) => viewElement("div", { "data-muse": "Box" }, children),
+  ({ children }) => viewElement("div", { "data-vune": "Box" }, children),
 ) as TypedViewConstructor<BoxProps, BoxCall>
 
 const emptyView = (name: string, style?: Record<string, unknown>) => defineBuiltinView(
   name,
   [initializer(`${name}()`, args => args.length === 0)],
-  () => viewElement("div", { "data-muse": name, style }),
+  () => viewElement("div", { "data-vune": name, style }),
 )
 
 export const Rectangle = emptyView("Rectangle") as TypedViewConstructor<Record<string, never>, { (): ModifiableViewNode }>
@@ -51,7 +51,7 @@ interface RoundedRectangleCall { (radius?: number | string): ModifiableViewNode 
 export const RoundedRectangle = defineBuiltinView<RoundedRectangleProps>(
   "RoundedRectangle",
   [initializer("RoundedRectangle(radius?)", args => args.length <= 1 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "string"), args => ({ radius: args[0] as number | string | undefined }), [initializerKinds.value(false, "radius", undefined, "number | string")])],
-  ({ radius = 8 }) => viewElement("div", { "data-muse": "RoundedRectangle", style: { borderRadius: typeof radius === "number" ? `${radius}px` : radius } }),
+  ({ radius = 8 }) => viewElement("div", { "data-vune": "RoundedRectangle", style: { borderRadius: typeof radius === "number" ? `${radius}px` : radius } }),
 ) as TypedViewConstructor<RoundedRectangleProps, RoundedRectangleCall>
 
 export interface GridOptions { readonly columns?: number | string; readonly rows?: number | string; readonly autoFlow?: string }
@@ -73,7 +73,7 @@ export const Grid = defineBuiltinView<GridProps>(
     initializer("Grid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
   ({ options = {}, children }) => viewElement("div", {
-    "data-muse": "Grid",
+    "data-vune": "Grid",
     style: {
       display: "grid",
       gridTemplateColumns: options.columns === undefined ? undefined : typeof options.columns === "number" ? `repeat(${options.columns}, minmax(0, 1fr))` : options.columns,
@@ -88,7 +88,7 @@ interface TextAreaCall { (value: BindingRef<string>, placeholder?: string): Modi
 export const TextArea = defineBuiltinView<TextAreaProps>(
   "TextArea",
   [initializer("TextArea(value, placeholder?)", args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || typeof args[1] === "string"), args => ({ value: args[0] as BindingRef<string>, placeholder: args[1] as string | undefined }), [initializerKinds.binding(true, "value", "string"), initializerKinds.value(false, "placeholder", undefined, "string")])],
-  ({ value, placeholder }) => viewElement("textarea", { "data-muse": "TextArea", value: value.value, placeholder, onInput(event: { target?: { value?: string } }) { value.value = String(event.target && event.target.value !== undefined ? event.target.value : "") } }),
+  ({ value, placeholder }) => viewElement("textarea", { "data-vune": "TextArea", value: value.value, placeholder, onInput(event: { target?: { value?: string } }) { value.value = String(event.target && event.target.value !== undefined ? event.target.value : "") } }),
 ) as TypedViewConstructor<TextAreaProps, TextAreaCall>
 
 export interface PickerOption<T extends string | number> { readonly label: string; readonly value: T; readonly disabled?: boolean }
@@ -97,7 +97,7 @@ interface PickerCall { <T extends string | number>(value: BindingRef<T>, options
 export const Picker = defineBuiltinView<PickerProps>(
   "Picker",
   [initializer("Picker(value, options)", args => args.length === 2 && isBinding(args[0]) && Array.isArray(args[1]), args => ({ value: args[0] as BindingRef<string | number>, options: args[1] as readonly PickerOption<string | number>[] }), [initializerKinds.binding(true, "value", "string | number"), initializerKinds.value(true, "options", undefined, "array")])],
-  ({ value, options }) => viewElement("select", { "data-muse": "Picker", value: value.value, onChange(event: { target?: { value?: string } }) { const selectedValue = event.target ? event.target.value : undefined; const option = options.find(item => String(item.value) === selectedValue); if (option) value.value = option.value } }, options.map(option => viewElement("option", { value: option.value, disabled: option.disabled }, [option.label]))),
+  ({ value, options }) => viewElement("select", { "data-vune": "Picker", value: value.value, onChange(event: { target?: { value?: string } }) { const selectedValue = event.target ? event.target.value : undefined; const option = options.find(item => String(item.value) === selectedValue); if (option) value.value = option.value } }, options.map(option => viewElement("option", { value: option.value, disabled: option.disabled }, [option.label]))),
 ) as TypedViewConstructor<PickerProps, PickerCall>
 
 export interface ProgressViewOptions { readonly label?: string; readonly max?: number }
@@ -106,7 +106,7 @@ interface ProgressViewCall { (value?: Value<number>, options?: ProgressViewOptio
 export const ProgressView = defineBuiltinView<ProgressViewProps>(
   "ProgressView",
   [initializer("ProgressView(value?, options?)", args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "function" || isBinding(args[0]) || isStateRef(args[0])) && (args[1] === undefined || isObject(args[1])), args => ({ value: args[0] === undefined ? undefined : Number(resolveValue(args[0] as Value<number>)), ...(isObject(args[1]) ? args[1] : {}) }), [initializerKinds.value(false, "value", undefined, "Value<number>"), initializerKinds.value(false, "options", ["label", "max"], "object")])],
-  ({ value, label, max = 1 }) => viewElement("div", { "data-muse": "ProgressView" }, [viewElement("progress", { max, ...(value === undefined ? {} : { value }) }), ...(label === undefined ? [] : [Text(label)])]),
+  ({ value, label, max = 1 }) => viewElement("div", { "data-vune": "ProgressView" }, [viewElement("progress", { max, ...(value === undefined ? {} : { value }) }), ...(label === undefined ? [] : [Text(label)])]),
 ) as TypedViewConstructor<ProgressViewProps, ProgressViewCall>
 
 export interface LabelProps { readonly title: string; readonly icon: ModifiableViewNode }
@@ -122,7 +122,7 @@ interface StepperCall { (value: BindingRef<number>, step?: number): ModifiableVi
 export const Stepper = defineBuiltinView<StepperProps>(
   "Stepper",
   [initializer("Stepper(value, step?)", args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || typeof args[1] === "number"), args => ({ value: args[0] as BindingRef<number>, step: args[1] as number | undefined }), [initializerKinds.binding(true, "value", "number"), initializerKinds.value(false, "step", undefined, "number")])],
-  ({ value, step = 1 }) => HStack(Text(String(value.value)), viewElement("button", { type: "button", onClick() { value.value += step } }, ["+"])).withProps({ "data-muse": "Stepper" }),
+  ({ value, step = 1 }) => HStack(Text(String(value.value)), viewElement("button", { type: "button", onClick() { value.value += step } }, ["+"])).withProps({ "data-vune": "Stepper" }),
 ) as TypedViewConstructor<StepperProps, StepperCall>
 
 export interface LazyGridOptions extends GridOptions {
@@ -149,10 +149,10 @@ export const LazyGrid = defineBuiltinView<LazyGridProps>(
   ({ options = {}, children }) => {
     const estimated = options.estimatedItemSize === undefined ? "44px" : typeof options.estimatedItemSize === "number" ? `${options.estimatedItemSize}px` : options.estimatedItemSize
     return lazyView("LazyGrid", "grid", {
-      "data-muse": "LazyGrid",
-      "data-muse-lazy": "grid",
-      "data-muse-lazy-estimate": options.estimatedItemSize,
-      "data-muse-lazy-overscan": options.overscan,
+      "data-vune": "LazyGrid",
+      "data-vune-lazy": "grid",
+      "data-vune-lazy-estimate": options.estimatedItemSize,
+      "data-vune-lazy-overscan": options.overscan,
       style: {
         display: "grid",
         gridTemplateColumns: options.columns === undefined ? undefined : typeof options.columns === "number" ? `repeat(${options.columns}, minmax(0, 1fr))` : options.columns,

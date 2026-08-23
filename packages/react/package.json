@@ -1,7 +1,7 @@
 {
-  "name": "@muse/react",
-  "version": "0.1.0",
-  "description": "React renderer for the renderer-independent Muse core.",
+  "name": "@vune-ui/react",
+  "version": "0.1.1",
+  "description": "React renderer for the renderer-independent Vune core.",
   "type": "module",
   "files": [
     "dist"
@@ -55,8 +55,8 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/core": "workspace:*",
-    "@muse/legacy-react": "workspace:*"
+    "@vune-ui/core": "^0.1.1",
+    "@vune-ui/legacy-react": "^0.1.1"
   },
   "peerDependencies": {
     "react": ">=18 <20",
@@ -65,5 +65,8 @@
   "devDependencies": {
     "typescript": "^5.8.3"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

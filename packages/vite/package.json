@@ -1,7 +1,7 @@
 {
-  "name": "@muse/vite",
-  "version": "0.1.0",
-  "description": "Vite integration for the Muse compiler.",
+  "name": "@vune-ui/vite",
+  "version": "0.1.1",
+  "description": "Vite integration for the Vune compiler.",
   "type": "module",
   "files": [
     "dist"
@@ -19,7 +19,10 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/compiler": "workspace:*"
+    "@vune-ui/compiler": "^0.1.1"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

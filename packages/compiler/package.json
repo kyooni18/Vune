@@ -1,7 +1,7 @@
 {
-  "name": "@muse/compiler",
-  "version": "0.1.0",
-  "description": "TypeScript-hosted compiler for Muse builder and .muse.ts syntax.",
+  "name": "@vune-ui/compiler",
+  "version": "0.1.1",
+  "description": "TypeScript-hosted compiler for Vune builder and .vune.ts syntax.",
   "type": "module",
   "files": [
     "dist"
@@ -19,8 +19,11 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/core": "workspace:*",
+    "@vune-ui/core": "^0.1.1",
     "typescript": "^5.8.3"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

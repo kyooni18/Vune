@@ -1,6 +1,6 @@
-# Muse semantic contract
+# Vune semantic contract
 
-This document is the normative contract for the renderer-independent Muse
+This document is the normative contract for the renderer-independent Vune
 graph. A compiler may lower syntax into this contract, and a renderer may
 materialize it, but neither layer may redefine it for a particular component.
 
@@ -51,7 +51,7 @@ Resolution is ordered as follows:
 6. Rank conversion cost. An exact declared match outranks an unknown or
    compatibility conversion.
 7. Require one unique best candidate. No candidate is selected by registration
-   order; a tie throws `MuseInitializerAmbiguityError` with the candidate
+   order; a tie throws `VuneInitializerAmbiguityError` with the candidate
    signatures.
 
 The compiler emits the same metadata boundary for `Button`, `VStack`, custom
@@ -76,7 +76,7 @@ statement-bearing builder does not switch to a weaker child-discovery mode: loca
 `const`/`let` declarations, conditional/logical expressions, `switch`, `for`,
 `for...of`, `for...in`, `while`, `do...while`, and `try/catch/finally` retain View
 children recursively. Nested function and class declarations remain ordinary
-TypeScript lexical scopes and are not interpreted as Muse trailing closures.
+TypeScript lexical scopes and are not interpreted as Vune trailing closures.
 
 ## 4. Identity
 
@@ -116,7 +116,7 @@ renderer-specific store.
 
 For compiled top-level `const x = State(...)`, the compiler may move the
 declaration into a View instance only when its references (including dependent
-State initializers) belong unambiguously to exactly one canonical Muse `view`.
+State initializers) belong unambiguously to exactly one canonical Vune `view`.
 Exported, mutable, destructured, shared, or externally referenced State stays at
 module scope and produces a scope warning when instance-local ownership was not
 possible. Formatting, type arguments, import aliases, namespace imports, or an
@@ -144,7 +144,7 @@ unmount. Event aliases map to native names (for example `onDoubleClick` to
 `dblclick`).
 
 The core semantic layer also publishes the tag/attribute schema used by
-`@muse/compiler` and the VS Code extension. Standard elements validate known
+`@vune-ui/compiler` and the VS Code extension. Standard elements validate known
 attributes and literal value types; `aria-*`, `data-*`, spreads, and hyphenated
 custom elements remain extensible. Each lowered element has an
 `SemanticHtmlElementSymbol` with per-attribute category and inferred value type,

@@ -7,7 +7,7 @@ import { build } from "vite"
 
 const packageBudgets = {
   "packages/core/dist/index.js": 512,
-  "packages/muse/dist/index.js": 512,
+  "dist/index.js": 512,
   "packages/react/dist/index.js": 1024,
   "packages/vue/dist/index.js": 16 * 1024,
   "packages/web/dist/index.js": 512,
@@ -22,18 +22,18 @@ test("public package entry points stay within their size budgets", async () => {
 })
 
 test("Web SSR imports tree-shake DOM and hydration internals", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "muse-tree-shake-"))
+  const directory = await mkdtemp(join(tmpdir(), "vune-tree-shake-"))
   try {
     const entry = join(directory, "entry.ts")
-    await writeFile(entry, `import { Text } from "@muse/core"\nimport { renderToHTML } from "@muse/web"\nconsole.log(renderToHTML(Text("tree-shake")))\n`)
+    await writeFile(entry, `import { Text } from "@vune-ui/core"\nimport { renderToHTML } from "@vune-ui/web"\nconsole.log(renderToHTML(Text("tree-shake")))\n`)
     const built = await build({
       root: directory,
       configFile: false,
       logLevel: "error",
       resolve: {
         alias: {
-          "@muse/core": resolve("packages/core/dist/index.js"),
-          "@muse/web": resolve("packages/web/dist/index.js"),
+          "@vune-ui/core": resolve("packages/core/dist/index.js"),
+          "@vune-ui/web": resolve("packages/web/dist/index.js"),
         },
       },
       build: {

@@ -1,0 +1,21 @@
+{
+  "id": "b03c20414",
+  "name": "Verify npm packages",
+  "command": "node scripts/verify-release.mjs",
+  "description": "Pack every release target and run the clean offline install smoke test.",
+  "status": "failed",
+  "outputPath": ".pi/tasks/session-71322-71322/b03c20414.output",
+  "cwd": "/Users/kyooni18/Code/Web/React/Muse",
+  "startTime": 1787476979926,
+  "endTime": 1787476982604,
+  "exitCode": 1,
+  "signal": null,
+  "pid": 78665,
+  "bytesWritten": 6648,
+  "isAgent": false,
+  "error": "Exited with code 1",
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-const baseURL = process.env.MUSE_WEB_BROWSER_URL
+const baseURL = process.env.VUNE_WEB_BROWSER_URL
 
-test("Muse Web adapter example is interactive in a real browser", { skip: !baseURL }, async () => {
+test("Vune Web adapter example is interactive in a real browser", { skip: !baseURL }, async () => {
   const { chromium } = await import("@playwright/test")
-  const browser = await chromium.launch({ headless: true, ...(process.env.MUSE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.MUSE_CHROMIUM_EXECUTABLE } : {}) })
+  const browser = await chromium.launch({ headless: true, ...(process.env.VUNE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.VUNE_CHROMIUM_EXECUTABLE } : {}) })
   try {
     const page = await browser.newPage()
     const errors = []

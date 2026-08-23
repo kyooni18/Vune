@@ -5,18 +5,18 @@ import { resolve, relative, sep } from "node:path"
 import { spawnSync } from "node:child_process"
 
 const root = resolve(new URL("..", import.meta.url).pathname)
-const canonicalPackages = ["core", "compiler", "react", "vue", "web", "vite", "muse"]
+const canonicalPackages = ["core", "compiler", "react", "vue", "web", "vite"]
 const compatibilityPackages = ["legacy-react"]
 const releaseTargets = [
   { dir: root, canonical: false },
   ...canonicalPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: true })),
   ...compatibilityPackages.map(packageName => ({ dir: resolve(root, "packages", packageName), canonical: false })),
 ]
-const packDir = mkdtempSync(resolve(tmpdir(), "muse-release-pack-"))
+const packDir = mkdtempSync(resolve(tmpdir(), "vune-release-pack-"))
 const packedTarballs = new Map()
 
 function pnpmCommand(args, cwd) {
-  const cli = process.env.MUSE_PNPM_CLI || process.env.npm_execpath
+  const cli = process.env.VUNE_PNPM_CLI || process.env.npm_execpath
   const command = cli ? process.execPath : "pnpm"
   const commandArgs = cli ? [cli, ...args] : args
   return spawnSync(command, commandArgs, { cwd, encoding: "utf8", env: process.env })
@@ -102,7 +102,7 @@ for (const target of releaseTargets) {
   console.log(`${manifest.name}@${manifest.version}: ${files.size} files, ${(report.unpackedSize / 1024).toFixed(1)} KiB unpacked`)
 }
 
-const installDir = mkdtempSync(resolve(tmpdir(), "muse-clean-install-"))
+const installDir = mkdtempSync(resolve(tmpdir(), "vune-clean-install-"))
 try {
   const dependency = name => `file:${packedTarballs.get(name)}`
   const installManifest = {
@@ -110,14 +110,13 @@ try {
     type: "module",
     dependencies: {
       "vune-ui": dependency("vune-ui"),
-      "@muse/core": dependency("@muse/core"),
-      "@muse/compiler": dependency("@muse/compiler"),
-      "@muse/legacy-react": dependency("@muse/legacy-react"),
-      "@muse/react": dependency("@muse/react"),
-      "@muse/vue": dependency("@muse/vue"),
-      "@muse/web": dependency("@muse/web"),
-      "@muse/vite": dependency("@muse/vite"),
-      muse: dependency("muse"),
+      "@vune-ui/core": dependency("@vune-ui/core"),
+      "@vune-ui/compiler": dependency("@vune-ui/compiler"),
+      "@vune-ui/legacy-react": dependency("@vune-ui/legacy-react"),
+      "@vune-ui/react": dependency("@vune-ui/react"),
+      "@vune-ui/vue": dependency("@vune-ui/vue"),
+      "@vune-ui/web": dependency("@vune-ui/web"),
+      "@vune-ui/vite": dependency("@vune-ui/vite"),
       react: `file:${resolve(root, "node_modules/react")}`,
       "react-dom": `file:${resolve(root, "node_modules/react-dom")}`,
       vue: `file:${resolve(root, "node_modules/vue")}`,
@@ -128,24 +127,24 @@ try {
   const install = spawnSync("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: installDir, encoding: "utf8" })
   assert.equal(install.status, 0, `clean packed install failed:\n${install.stdout}\n${install.stderr}`)
   const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
-    import * as compatibility from "vune-ui";
-    import { Text } from "muse";
+    import * as canonical from "vune-ui";
+    import { Text } from "vune-ui";
     import { renderToStaticMarkup } from "react-dom/server";
-    import { render as renderReact } from "@muse/react";
-    import { render as renderVue } from "@muse/vue";
-    import { renderToHTML } from "@muse/web";
-    import { compileMuseFile } from "@muse/compiler";
-    import { musePlugin } from "@muse/vite";
-    if (typeof compatibility.Text !== "function") throw new Error("packed compatibility entry failed");
+    import { render as renderReact } from "@vune-ui/react";
+    import { render as renderVue } from "@vune-ui/vue";
+    import { renderToHTML } from "@vune-ui/web";
+    import { compileVuneFile } from "@vune-ui/compiler";
+    import { vunePlugin } from "@vune-ui/vite";
+    if (typeof canonical.Text !== "function") throw new Error("packed canonical entry failed");
     if (renderToStaticMarkup(renderReact(Text("react"))) !== "<span>react</span>") throw new Error("packed React render failed");
     if (!renderVue(Text("vue"))) throw new Error("packed Vue render failed");
     if (renderToHTML(Text("packed")) !== "<span>packed</span>") throw new Error("packed Web render failed");
-    const compiled = compileMuseFile('import { Text } from "muse"\\nexport const value = Text("ok")', "packed.muse.ts");
+    const compiled = compileVuneFile('import { Text } from "vune-ui"\\nexport const value = Text("ok")', "packed.vune.ts");
     if (!compiled.code.includes('export const value')) throw new Error("packed compiler failed");
-    if (musePlugin().name !== "muse-compiler") throw new Error("packed Vite plugin failed");
+    if (vunePlugin().name !== "vune-compiler") throw new Error("packed Vite plugin failed");
   `], { cwd: installDir, encoding: "utf8" })
   assert.equal(smoke.status, 0, `clean packed smoke test failed:\n${smoke.stdout}\n${smoke.stderr}`)
-  console.log("Clean offline install smoke test passed (root/core/compiler/legacy/react/vue/web/vite/muse)")
+  console.log("Clean offline install smoke test passed (root/core/compiler/legacy/react/vue/web/vite/vune)")
 } finally {
   rmSync(installDir, { recursive: true, force: true })
   rmSync(packDir, { recursive: true, force: true })

@@ -24,7 +24,7 @@ export const Toggle = defineBuiltinView<ToggleProps>(
     args => ({ title: args[0] as string, isOn: args[1] as BindingRef<boolean> }),
     [initializerKinds.value(true, "title", undefined, "string"), initializerKinds.binding(true, "isOn", "boolean")],
   )],
-  ({ title, isOn }) => viewElement("label", { "data-muse": "Toggle" }, [
+  ({ title, isOn }) => viewElement("label", { "data-vune": "Toggle" }, [
     viewElement("input", {
       type: "checkbox",
       checked: Boolean(isOn.value),
@@ -46,7 +46,7 @@ export const TextField = defineBuiltinView<TextFieldProps>(
     [initializerKinds.binding(true, "value", "string"), initializerKinds.value(false, "placeholder", undefined, "string")],
   )],
   ({ value, placeholder }) => viewElement("input", {
-    "data-muse": "TextField",
+    "data-vune": "TextField",
     type: "text",
     value: value.value,
     placeholder,
@@ -67,7 +67,7 @@ export const Slider = defineBuiltinView<SliderProps>(
     [initializerKinds.binding(true, "value", "number"), initializerKinds.value(false, "range", ["min", "max", "step"], "object")],
   )],
   ({ value, min = 0, max = 1, step }) => viewElement("input", {
-    "data-muse": "Slider",
+    "data-vune": "Slider",
     type: "range",
     value: value.value,
     min,

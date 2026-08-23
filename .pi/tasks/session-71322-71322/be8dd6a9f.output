@@ -1,0 +1,28 @@
+Scope: all 10 workspace projects
+✓ Lockfile passes supply-chain policies (verified 3m ago)
+Progress: resolved 1, reused 0, downloaded 0, added 0
+[WARN] 1 deprecated subdependencies found: whatwg-encoding@3.1.1
+Already up to date
+Progress: resolved 175, reused 120, downloaded 0, added 0, done
+
+Done in 782ms using pnpm v11.22.0
+$ pnpm run clean && pnpm run build:workspace && tsc -p tsconfig.build.json
+$ rm -rf ./dist
+$ pnpm -r --filter './packages/*' run build
+Scope: 8 of 10 workspace projects
+packages/core build$ tsc -p tsconfig.json
+packages/core build: Done
+packages/compiler build$ tsc -p tsconfig.json
+packages/vue build$ tsc -p tsconfig.json
+packages/legacy-react build$ rm -rf dist && tsc -p tsconfig.json
+packages/vune build$ tsc -p tsconfig.json
+packages/vune build: Done
+packages/web build$ tsc -p tsconfig.json
+packages/vue build: Done
+packages/compiler build: Done
+packages/web build: Done
+packages/legacy-react build: Done
+packages/vite build$ tsc -p tsconfig.json
+packages/react build$ rm -rf dist && tsc -p tsconfig.json
+packages/vite build: Done
+packages/react build: Done

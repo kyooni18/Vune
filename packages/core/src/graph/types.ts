@@ -1,8 +1,8 @@
 import type { FrameOptions } from "../layout.js"
-import type { MuseStyleProperties } from "../html.js"
+import type { VuneStyleProperties } from "../html.js"
 import type { ViewIdentity } from "../identity.js"
 import type { ViewType } from "./initializers.js"
-import type { museForeignComponent, museInitializers, museView } from "./symbols.js"
+import type { vuneForeignComponent, vuneInitializers, vuneView } from "./symbols.js"
 
 export type ViewGraphLeaf = string | number | bigint | boolean | null | undefined | object
 export type ViewGraphChild = ViewGraphLeaf | ViewNode
@@ -70,7 +70,7 @@ export interface ForeignComponentOptions {
 }
 
 export interface ForeignComponentDescriptor {
-  readonly [museForeignComponent]: true
+  readonly [vuneForeignComponent]: true
   readonly component: unknown
   readonly props: Record<string, unknown>
   readonly events: Record<string, unknown>
@@ -140,7 +140,7 @@ export interface Modifiers {
   bold(): ModifiableViewNode
   foreground(value: string): ModifiableViewNode
   background(value: string): ModifiableViewNode
-  style(value: MuseStyleProperties): ModifiableViewNode
+  style(value: VuneStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode
   withProps(value: Record<string, unknown>): ModifiableViewNode
   keyed(value: string | number): ModifiableViewNode
@@ -149,7 +149,7 @@ export interface Modifiers {
 
 export type ModifiableViewNode = ViewNode & Modifiers
 
-export interface MuseRenderer<Output = unknown> {
+export interface VuneRenderer<Output = unknown> {
   element(type: unknown, props: Record<string, unknown> | null, ...children: Output[]): Output
   fragment(children: Output[]): Output
   value?(value: unknown): Output

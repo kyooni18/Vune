@@ -12,7 +12,7 @@ import {
 import { initializersOf, namedArguments } from "../packages/core/dist/index.js"
 import {
   Component,
-  MuseView,
+  VuneView,
   createVueView,
   foreignComponent,
   fromVueRef,
@@ -21,17 +21,17 @@ import {
   vueComponent,
 } from "../packages/vue/dist/index.js"
 
-test("@muse/vue renders the renderer-independent graph as Vue VNodes", async () => {
+test("@vune-ui/vue renders the renderer-independent graph as Vue VNodes", async () => {
   const value = VStack(() => [Text("Hello Vue"), Button("Save", () => undefined)])
-  const html = await renderToString(createSSRApp({ render: () => h(MuseView, { value }) }))
+  const html = await renderToString(createSSRApp({ render: () => h(VuneView, { value }) }))
   assert.match(html, /Hello Vue/)
   assert.match(html, /<button[^>]*><span>Save<\/span><\/button>/)
-  assert.match(html, /data-muse="VStack"/)
+  assert.match(html, /data-vune="VStack"/)
   const styled = await renderToString(createSSRApp({ render: () => render(Text("Styled").className(["card", false, "active"])) }))
   assert.match(styled, /class="card active"/)
 })
 
-test("Vue components enter Muse before Vue materialization and Muse Views enter Vue SFCs", async () => {
+test("Vue components enter Vune before Vue materialization and Vune Views enter Vue SFCs", async () => {
   const Badge = defineComponent({
     props: { label: { type: String, required: true } },
     setup(props) { return () => h("strong", null, props.label) },
@@ -39,14 +39,14 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   const value = VStack(Component(Badge, { label: "Vue component" }))
   const html = await renderToString(createSSRApp({ render: () => render(value) }))
   assert.match(html, /<strong>Vue component<\/strong>/)
-  const MuseBadge = foreignComponent(Badge)
-  assert.equal(MuseBadge({ label: "Graph Vue" }).kind, "element")
-  const adaptedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge({ label: "Adapted Vue" })) }))
+  const VuneBadge = foreignComponent(Badge)
+  assert.equal(VuneBadge({ label: "Graph Vue" }).kind, "element")
+  const adaptedHtml = await renderToString(createSSRApp({ render: () => render(VuneBadge({ label: "Adapted Vue" })) }))
   assert.match(adaptedHtml, /<strong>Adapted Vue<\/strong>/)
-  assert.equal(initializersOf(MuseBadge).length, 1)
-  const LegacyMuseBadge = vueComponent(Badge)
-  assert.equal(initializersOf(LegacyMuseBadge).length, 1)
-  const namedHtml = await renderToString(createSSRApp({ render: () => render(MuseBadge(namedArguments({ label: "Named Vue" }))) }))
+  assert.equal(initializersOf(VuneBadge).length, 1)
+  const LegacyVuneBadge = vueComponent(Badge)
+  assert.equal(initializersOf(LegacyVuneBadge).length, 1)
+  const namedHtml = await renderToString(createSSRApp({ render: () => render(VuneBadge(namedArguments({ label: "Named Vue" }))) }))
   assert.match(namedHtml, /<strong>Named Vue<\/strong>/)
 
   const Panel = defineComponent({
@@ -60,12 +60,12 @@ test("Vue components enter Muse before Vue materialization and Muse Views enter 
   assert.match(panelHtml, /<span>Body<\/span>/)
 
   const Greeting = createVueView(props => Text(`Hello ${props.name}`))
-  const greetingHtml = await renderToString(createSSRApp({ render: () => h(Greeting, { name: "Muse" }) }))
-  assert.match(greetingHtml, /Hello Muse/)
+  const greetingHtml = await renderToString(createSSRApp({ render: () => h(Greeting, { name: "Vune" }) }))
+  assert.match(greetingHtml, /Hello Vune/)
 })
 
-test("Vue scoped slots and provide/inject cross the Muse graph without losing Vue ownership", async () => {
-  const key = Symbol("muse-context")
+test("Vue scoped slots and provide/inject cross the Vune graph without losing Vue ownership", async () => {
+  const key = Symbol("vune-context")
   const Provider = defineComponent({
     setup(_props, { slots }) {
       provide(key, "provided")
@@ -85,7 +85,7 @@ test("Vue scoped slots and provide/inject cross the Muse graph without losing Vu
   assert.match(html, /Scoped slot/)
 })
 
-test("Vue async components and Suspense retain native slot semantics inside Muse", async () => {
+test("Vue async components and Suspense retain native slot semantics inside Vune", async () => {
   const AsyncBadge = defineAsyncComponent(async () => defineComponent({
     setup: () => () => h("strong", null, "Async Vue"),
   }))
@@ -97,7 +97,7 @@ test("Vue async components and Suspense retain native slot semantics inside Muse
   assert.match(html, /<strong>Async Vue<\/strong>/)
 })
 
-test("@muse/vue preserves component events, refs, and graph keys", () => {
+test("@vune-ui/vue preserves component events, refs, and graph keys", () => {
   const save = () => undefined
   const reference = ref(null)
   const vnode = render(Component("button", { onclick: save, ref: reference }, Text("Save")).keyed("save"))
@@ -106,7 +106,7 @@ test("@muse/vue preserves component events, refs, and graph keys", () => {
   assert.equal(vnode.props?.ref, reference)
 })
 
-test("Vue and Muse reactivity cross only through explicit ref bridges", () => {
+test("Vue and Vune reactivity cross only through explicit ref bridges", () => {
   const state = State(1)
   const vueState = toVueRef(state)
   vueState.value = 2
@@ -118,9 +118,9 @@ test("Vue and Muse reactivity cross only through explicit ref bridges", () => {
   assert.equal(vueValue.value, "after")
 })
 
-test("@muse/vue materializes GeometryReader through a measured host boundary", async () => {
+test("@vune-ui/vue materializes GeometryReader through a measured host boundary", async () => {
   const value = GeometryReader(geometry => Text(`${geometry.size.width}x${geometry.size.height}`))
   const html = await renderToString(createSSRApp({ render: () => render(value) }))
-  assert.match(html, /data-muse="GeometryReader"/)
+  assert.match(html, /data-vune="GeometryReader"/)
   assert.match(html, /0x0/)
 })

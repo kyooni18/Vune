@@ -1,6 +1,6 @@
 import { createApp } from "vue"
-import { MuseView } from "@muse/vue"
-import graph from "./ParityGraph.muse"
+import { VuneView } from "@vune-ui/vue"
+import graph from "./ParityGraph.vune"
 import "./parity.css"
 
-createApp(MuseView, { render: () => graph() }).mount("#app")
+createApp(VuneView, { render: () => graph() }).mount("#app")

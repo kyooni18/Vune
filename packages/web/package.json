@@ -1,7 +1,7 @@
 {
-  "name": "@muse/web",
-  "version": "0.1.0",
-  "description": "DOM and HTML renderers for the renderer-independent Muse core.",
+  "name": "@vune-ui/web",
+  "version": "0.1.1",
+  "description": "DOM and HTML renderers for the renderer-independent Vune core.",
   "type": "module",
   "files": [
     "dist"
@@ -19,7 +19,10 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/core": "workspace:*"
+    "@vune-ui/core": "^0.1.1"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

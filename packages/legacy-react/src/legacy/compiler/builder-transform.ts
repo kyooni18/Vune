@@ -1,8 +1,8 @@
-import { museSyntaxError } from './errors.js'
-import { lowerMuseBuilderAst, parseMuseBuilder } from './ast.js'
+import { vuneSyntaxError } from './errors.js'
+import { lowerVuneBuilderAst, parseVuneBuilder } from './ast.js'
 
 /**
- * Transforms Muse's optional block-builder syntax into ordinary JavaScript.
+ * Transforms Vune's optional block-builder syntax into ordinary JavaScript.
  *
  *     VStack() {
  *       Text('A')
@@ -47,7 +47,7 @@ function skipQuoted(source: string, index: number, quote: "'" | '"'): number {
     if (source[i] === quote) return i + 1
     i += 1
   }
-  throw museSyntaxError(`Unclosed ${quote} string in Muse builder source`, index)
+  throw vuneSyntaxError(`Unclosed ${quote} string in Vune builder source`, index)
 }
 
 function skipLineComment(source: string, index: number): number {
@@ -57,7 +57,7 @@ function skipLineComment(source: string, index: number): number {
 
 function skipBlockComment(source: string, index: number): number {
   const close = source.indexOf('*/', index + 2)
-  if (close === -1) throw museSyntaxError('Unclosed block comment in Muse builder source', index)
+  if (close === -1) throw vuneSyntaxError('Unclosed block comment in Vune builder source', index)
   return close + 2
 }
 
@@ -75,7 +75,7 @@ function skipTemplate(source: string, index: number): number {
     }
     i += 1
   }
-  throw museSyntaxError('Unclosed template literal in Muse builder source', index)
+  throw vuneSyntaxError('Unclosed template literal in Vune builder source', index)
 }
 
 function skipRegex(source: string, index: number): number {
@@ -158,7 +158,7 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
     }
   }
 
-  throw museSyntaxError(`Unclosed ${open} block in Muse builder source`, openIndex)
+  throw vuneSyntaxError(`Unclosed ${open} block in Vune builder source`, openIndex)
 }
 
 const controlKeywords = new Set([
@@ -171,7 +171,7 @@ function isDeclarationLikeCall(source: string, start: number, body: string): boo
   if (/\bfunction\s*\*?\s*$/.test(prefix)) return true
   // JavaScript class/object methods have no `function` token. A return/yield
   // at the start of their block is a reliable boundary for this lexical
-  // transform, while ordinary Muse builder blocks contain child expressions.
+  // transform, while ordinary Vune builder blocks contain child expressions.
   return /^(?:return|yield)\b/.test(body.trim())
 }
 
@@ -228,7 +228,7 @@ function splitTopLevelArguments(source: string): string[] {
   return parts
 }
 
-function lowerMuseShorthand(value: string): string {
+function lowerVuneShorthand(value: string): string {
   // Swift-style enum cases are unqualified in argument position. Keep this
   // deliberately lexical: a normal member expression such as `item.value`
   // must remain untouched.
@@ -237,9 +237,9 @@ function lowerMuseShorthand(value: string): string {
 
 function namedClosure(value: string): string {
   const trimmed = value.trim()
-  if (trimmed[0] !== '{') return lowerMuseShorthand(value)
+  if (trimmed[0] !== '{') return lowerVuneShorthand(value)
   const close = findMatching(trimmed, 0, '{')
-  if (close !== trimmed.length - 1) return lowerMuseShorthand(value)
+  if (close !== trimmed.length - 1) return lowerVuneShorthand(value)
   const body = trimmed.slice(1, close)
   return closureSource(body)
 }
@@ -249,7 +249,7 @@ function actionOnlyClosureBody(source: string): boolean {
 }
 
 function builderClosureBody(source: string): string {
-  const program = parseMuseBuilder(source)
+  const program = parseVuneBuilder(source)
   const containsStatement = program.statements.some(node => node.kind === 'raw'
     && /^(?:const|let|var|return|throw|function|class|for|while|switch|try|do|break|continue|debugger)\b/.test(node.source.trim()))
   return containsStatement ? '[]' : `[${transformBuilderBody(source).join(', ')}]`
@@ -271,22 +271,22 @@ function namedCallArguments(source: string): string {
     const match = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*([\s\S]*)$/.exec(part)
     return match ? { label: match[1], value: match[2] } : null
   })
-  if (!labeled.some(Boolean)) return lowerMuseShorthand(source.trim())
+  if (!labeled.some(Boolean)) return lowerVuneShorthand(source.trim())
 
   const named = labeled.flatMap((part, index) => {
     if (!part) return []
     return [`${part.label}: ${namedClosure(part.value)}`]
   })
-  const positional = labeled.flatMap((part, index) => part ? [] : [lowerMuseShorthand(parts[index])])
+  const positional = labeled.flatMap((part, index) => part ? [] : [lowerVuneShorthand(parts[index])])
   const object = `namedArguments({ ${named.join(', ')} })`
-  // Muse's labeled arguments are lowered to one compatibility object. Keeping
+  // Vune's labeled arguments are lowered to one compatibility object. Keeping
   // positional arguments in front lets APIs such as Toggle("Wi-Fi", isOn: ...)
   // use the same resolver as fully labeled calls.
   return positional.length > 0 ? `${positional.join(', ')}, ${object}` : object
 }
 
 function transformBuilderBody(source: string): string[] {
-  return lowerMuseBuilderAst(parseMuseBuilder(source), {
+  return lowerVuneBuilderAst(parseVuneBuilder(source), {
     transformRaw: transformRange,
     closure: closureSource,
   })
@@ -448,7 +448,7 @@ function lowerBindingShorthand(source: string): string {
   return output
 }
 
-export function transformMuseBuilderSyntax(
+export function transformVuneBuilderSyntax(
   source: string,
 ): string {
   return lowerBindingShorthand(transformRange(source))

@@ -1,0 +1,20 @@
+$ node scripts/verify-release.mjs
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: vune-ui export target is missing: ./dist/vune.d.ts
+    at file:///Users/kyooni18/Code/Web/React/Muse/scripts/verify-release.mjs:68:12
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v26.7.0
+[ELIFECYCLE] Command failed with exit code 1.

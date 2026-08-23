@@ -1,7 +1,7 @@
 {
-  "name": "@muse/legacy-react",
-  "version": "0.1.0",
-  "description": "Legacy React and compiler compatibility layer for Muse.",
+  "name": "@vune-ui/legacy-react",
+  "version": "0.1.1",
+  "description": "Legacy React and compiler compatibility layer for Vune.",
   "type": "module",
   "files": ["dist"],
   "main": "./dist/legacy/index.js",
@@ -49,11 +49,15 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/core": "workspace:*",
+    "@vune-ui/core": "^0.1.1",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "react": ">=18 <20",
     "react-dom": ">=18 <20"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   }
 }

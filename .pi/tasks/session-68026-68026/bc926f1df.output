@@ -1,0 +1,22 @@
+Scope: all 10 workspace projects
+✓ Lockfile passes supply-chain policies (verified 1m ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+dependencies:
+- @muse/core 0.1.0
+- @muse/react 0.1.0
+- @muse/vue 0.1.0
++ @vune-ui/core 0.1.0 <- packages/core
++ @vune-ui/react 0.1.0 <- packages/react
++ @vune-ui/vue 0.1.0 <- packages/vue
+- muse
++ vune 0.1.0 <- packages/vune
+
+devDependencies:
+- @muse/vite 0.1.0
+- @muse/web 0.1.0
++ @vune-ui/vite 0.1.0 <- packages/vite
++ @vune-ui/web 0.1.0 <- packages/web
+
+Done in 283ms using pnpm v11.22.0

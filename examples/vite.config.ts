@@ -2,13 +2,13 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { musePlugin } from '@muse/vite'
+import { vunePlugin } from '@vune-ui/vite'
 
 export default defineConfig({
-  cacheDir: '../node_modules/.vite-muse-react',
+  cacheDir: '../node_modules/.vite-vune-react',
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [
-    musePlugin(),
+    vunePlugin(),
     tailwindcss(),
     react(),
   ],

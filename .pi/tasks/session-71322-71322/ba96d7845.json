@@ -1,0 +1,20 @@
+{
+  "id": "ba96d7845",
+  "name": "Build release artifacts",
+  "command": "pnpm run build",
+  "description": "Build the root package and all workspace packages for publishing.",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-71322-71322/ba96d7845.output",
+  "cwd": "/Users/kyooni18/Code/Web/React/Muse",
+  "startTime": 1787476824990,
+  "endTime": 1787476830233,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 75171,
+  "bytesWritten": 1103,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

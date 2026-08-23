@@ -36,28 +36,28 @@ import {
   type GeometryProxy,
   type BindingRef,
   type ModifiableViewNode,
-  type MuseRenderer,
+  type VuneRenderer,
   type StateRef,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
   type ViewValue,
   viewElement,
-} from "@muse/core"
+} from "@vune-ui/core"
 
-const museVueSlots = Symbol.for("muse.vue.slots")
+const vuneVueSlots = Symbol.for("vune.vue.slots")
 
-export type MuseVueSlot = ViewValue | ((...args: any[]) => ViewValue)
+export type VuneVueSlot = ViewValue | ((...args: any[]) => ViewValue)
 export type VueComponentProps<C> = C extends abstract new (...args: any[]) => { $props: infer Props }
   ? Props
   : C extends (props: infer Props, ...args: any[]) => any ? Props : Record<string, unknown>
 type RequiredVuePropKeys<Props> = {
   [Key in keyof Props]-?: object extends Pick<Props, Key> ? never : Key
 }[keyof Props]
-type MuseVueComponentProps<C> = VueComponentProps<C> & { readonly slots?: Record<string, MuseVueSlot> }
+type VuneVueComponentProps<C> = VueComponentProps<C> & { readonly slots?: Record<string, VuneVueSlot> }
 type VueComponentArguments<C> = [RequiredVuePropKeys<VueComponentProps<C>>] extends [never]
-  ? [props?: MuseVueComponentProps<C> | null, ...children: ViewValue[]]
-  : [props: MuseVueComponentProps<C>, ...children: ViewValue[]]
+  ? [props?: VuneVueComponentProps<C> | null, ...children: ViewValue[]]
+  : [props: VuneVueComponentProps<C>, ...children: ViewValue[]]
 export type VueComponentView<C extends VueComponentType> = ((...args: VueComponentArguments<C>) => ModifiableViewNode) & {
   readonly component: C
 }
@@ -100,9 +100,9 @@ function mergeProps(current: Record<string, unknown> | null | undefined, extra: 
 }
 
 function renderVueElement(type: unknown, props: Record<string, unknown> | null, children: VNodeChild[]): VNode {
-  const rawSlots = (props as Record<PropertyKey, unknown> | null)?.[museVueSlots] as Record<string, MuseVueSlot> | undefined
+  const rawSlots = (props as Record<PropertyKey, unknown> | null)?.[vuneVueSlots] as Record<string, VuneVueSlot> | undefined
   let normalizedProps = props ? { ...props } : null
-  if (normalizedProps) delete (normalizedProps as Record<PropertyKey, unknown>)[museVueSlots]
+  if (normalizedProps) delete (normalizedProps as Record<PropertyKey, unknown>)[vuneVueSlots]
   if (normalizedProps) {
     for (const [key, value] of Object.entries(normalizedProps)) {
       if (typeof value === "function" && /^on[a-z]/.test(key)) {
@@ -132,7 +132,7 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
   return h((foreign?.component ?? type) as VueComponentType, normalizedProps, slots)
 }
 
-const renderer: MuseRenderer<VNodeChild> = {
+const renderer: VuneRenderer<VNodeChild> = {
   element(type, props, ...children) {
     return renderVueElement(type, props, children)
   },
@@ -151,10 +151,10 @@ const renderer: MuseRenderer<VNodeChild> = {
       : h(Fragment, modifierProps(modifier), [content])
   },
   view(node, _render, identity) {
-    return h(MuseViewHost, { key: viewIdentityKey(identity), node })
+    return h(VuneViewHost, { key: viewIdentityKey(identity), node })
   },
   geometry(_node, render) {
-    return h(GeometryMuseValue, { render })
+    return h(GeometryVuneValue, { render })
   },
 }
 
@@ -162,8 +162,8 @@ function RenderValue({ value }: { value: ViewGraphValue }): VNodeChild {
   return renderViewNode(value, renderer)
 }
 
-const ReactiveMuseValue = defineComponent({
-  name: "ReactiveMuseValue",
+const ReactiveVuneValue = defineComponent({
+  name: "ReactiveVuneValue",
   props: {
     factory: { type: Function as PropType<() => ViewGraphValue>, required: true },
   },
@@ -218,8 +218,8 @@ function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
     && left.safeAreaInsets.left === right.safeAreaInsets.left
 }
 
-const GeometryMuseValue = defineComponent({
-  name: "MuseGeometryReader",
+const GeometryVuneValue = defineComponent({
+  name: "VuneGeometryReader",
   props: {
     render: { type: Function as PropType<(geometry: GeometryProxy) => VNodeChild>, required: true },
   },
@@ -253,40 +253,40 @@ const GeometryMuseValue = defineComponent({
       }
     })
     onBeforeUnmount(() => disconnect())
-    return () => h("div", { ref: host, "data-muse": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value.value === null ? undefined : [value.value])
+    return () => h("div", { ref: host, "data-vune": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value.value === null ? undefined : [value.value])
   },
 })
 
-const MuseViewHost = defineComponent({
-  name: "MuseViewHost",
+const VuneViewHost = defineComponent({
+  name: "VuneViewHost",
   props: {
     node: { type: Object as PropType<ViewHostNode>, required: true },
   },
   setup(props) {
     const state = props.node.state?.(props.node.props) ?? {}
-    return () => h(ReactiveMuseValue, { factory: () => props.node.render({ ...props.node.props, ...state }) })
+    return () => h(ReactiveVuneValue, { factory: () => props.node.render({ ...props.node.props, ...state }) })
   },
 })
 
-/** Render any renderer-independent Muse ViewGraph value as Vue VNodes. */
+/** Render any renderer-independent Vune ViewGraph value as Vue VNodes. */
 export function render(value: ViewGraphValue): VNodeChild {
   return renderViewNode(value, renderer)
 }
 
-export interface MuseViewProps {
+export interface VuneViewProps {
   readonly value?: ViewGraphValue
   readonly render?: () => ViewGraphValue
 }
 
 /** Component for direct use from a Vue SFC template. */
-export const MuseView = defineComponent({
-  name: "MuseView",
+export const VuneView = defineComponent({
+  name: "VuneView",
   props: {
     value: { type: null as unknown as PropType<ViewGraphValue>, required: false },
     render: { type: Function as PropType<() => ViewGraphValue>, required: false },
   },
   setup(props) {
-    return () => h(ReactiveMuseValue, { factory: () => props.render ? props.render() : props.value ?? null })
+    return () => h(ReactiveVuneValue, { factory: () => props.render ? props.render() : props.value ?? null })
   },
 })
 
@@ -295,19 +295,19 @@ export function createVueView<Props extends Record<string, unknown> = Record<str
   body: (props: Props) => ViewGraphValue,
 ): VueComponentType<Props> {
   return defineComponent({
-    name: "MuseViewAdapter",
+    name: "VuneViewAdapter",
     setup(_props, { attrs }) {
-      return () => h(ReactiveMuseValue, { factory: () => body(attrs as Props) })
+      return () => h(ReactiveVuneValue, { factory: () => body(attrs as Props) })
     },
   }) as VueComponentType<Props>
 }
 
-/** Place a Vue component or native HTML element in the same Muse graph. */
+/** Place a Vue component or native HTML element in the same Vune graph. */
 export function Component<C extends VueComponentType>(type: C, ...args: VueComponentArguments<C>): ModifiableViewNode
 export function Component(type: string, props?: Record<string, unknown> | null, ...children: ViewValue[]): ModifiableViewNode
 export function Component(
   type: VueComponentType | string,
-  props: (Record<string, unknown> & { readonly slots?: Record<string, MuseVueSlot> }) | null = null,
+  props: (Record<string, unknown> & { readonly slots?: Record<string, VuneVueSlot> }) | null = null,
   ...children: ViewValue[]
 ): ModifiableViewNode {
   if (typeof type === "string") return viewElement(type, props, children)
@@ -315,7 +315,7 @@ export function Component(
   return ForeignComponent(type, { props: componentProps, slots }, ...children)
 }
 
-/** Adapt a Vue component definition into a Muse-callable, preserving its Vue prop surface. */
+/** Adapt a Vue component definition into a Vune-callable, preserving its Vue prop surface. */
 export function vueComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
   const name = typeof type === "function" && type.name ? type.name : "VueComponent"
   const View = defineView(name, {
@@ -325,7 +325,7 @@ export function vueComponent<C extends VueComponentType>(type: C): VueComponentV
       args => ({ props: args[0] ?? null }),
     )],
     intrinsic: true,
-    body: ({ props }: { readonly props: Record<string, unknown> | null }) => Component(type, (props ?? {}) as MuseVueComponentProps<C>),
+    body: ({ props }: { readonly props: Record<string, unknown> | null }) => Component(type, (props ?? {}) as VuneVueComponentProps<C>),
   }) as unknown as VueComponentView<C>
   Object.defineProperty(View, "component", { configurable: false, enumerable: false, value: type })
   return View
@@ -336,7 +336,7 @@ export function foreignComponent<C extends VueComponentType>(type: C): VueCompon
   return vueComponent(type)
 }
 
-/** Bridge Muse State to a Vue Ref without making State a Vue primitive. */
+/** Bridge Vune State to a Vue Ref without making State a Vue primitive. */
 export function toVueRef<T>(state: StateRef<T>): Ref<T> {
   return customRef<T>((track, trigger) => {
     const unsubscribe = subscribeState(state, trigger)
@@ -348,7 +348,7 @@ export function toVueRef<T>(state: StateRef<T>): Ref<T> {
   })
 }
 
-/** Bridge any Vue Ref to a writable Muse Binding lens. */
+/** Bridge any Vue Ref to a writable Vune Binding lens. */
 export function fromVueRef<T>(ref: Ref<T>): BindingRef<T> {
   return Binding(() => ref.value, value => { ref.value = value })
 }
@@ -360,7 +360,7 @@ export interface VueMountOptions {
 
 /** Mount a graph into Vue, optionally hydrating markup produced by SSR. */
 export function mount(value: ViewGraphValue, target: Element, options: VueMountOptions = {}): () => void {
-  const app = options.hydrate ? createSSRApp(MuseView, { value }) : createApp(MuseView, { value })
+  const app = options.hydrate ? createSSRApp(VuneView, { value }) : createApp(VuneView, { value })
   app.mount(target)
   return () => app.unmount()
 }

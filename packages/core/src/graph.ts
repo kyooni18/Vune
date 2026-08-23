@@ -5,7 +5,7 @@
  * adapters depend on stable graph contracts rather than one monolithic file:
  * types/environment, nodes, modifiers, traversal, and initializer semantics.
  */
-export { museForeignComponent, museInitializers, museNamedArguments, museView } from "./graph/symbols.js"
+export { vuneForeignComponent, vuneInitializers, vuneNamedArguments, vuneView } from "./graph/symbols.js"
 export * from "./graph/types.js"
 export * from "./graph/environment.js"
 export { modifiedContent, modifier, modifierGraphOf } from "./graph/modifiers.js"

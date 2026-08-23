@@ -1,0 +1,22 @@
+{
+  "name": "create-vune-ui",
+  "version": "0.1.1",
+  "description": "Create a ready-to-run Vune UI project with Vite, React, and TypeScript.",
+  "type": "module",
+  "files": [
+    "bin"
+  ],
+  "bin": {
+    "create-vune-ui": "bin/create-vune-ui.mjs"
+  },
+  "scripts": {
+    "build": "node --check bin/create-vune-ui.mjs",
+    "check": "node --check bin/create-vune-ui.mjs"
+  },
+  "dependencies": {
+    "vune-ui": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

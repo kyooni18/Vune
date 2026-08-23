@@ -1,0 +1,88 @@
+vue-package.test.mjs:24: test("@muse/vue renders the renderer-independent graph as Vue VNodes", async () => {
+vue-package.test.mjs:100: test("@muse/vue preserves component events, refs, and graph keys", () => {
+vue-package.test.mjs:121: test("@muse/vue materializes GeometryReader through a measured host boundary", async () => {
+renderer-conformance-live.test.mjs:93:     .replaceAll('from "@muse/core"', `from "${coreUrl}"`)
+compiler-package.test.mjs:9: test("@muse/compiler lowers .muse.ts builders through declaration-neutral syntax", () => {
+compiler-package.test.mjs:20: test("@muse/compiler keeps TypeScript lexical syntax separate from Muse HTML and blocks", () => {
+compiler-package.test.mjs:38: test("@muse/compiler lowers ViewBuilder statements and children in one executable closure", () => {
+compiler-package.test.mjs:72: test("@muse/compiler preserves State call shape, generic arguments, and object initializers", () => {
+compiler-package.test.mjs:75: import { view } from "@muse/react"
+compiler-package.test.mjs:96: test("@muse/compiler preserves meaningful raw HTML whitespace and explicit ForEach identity", () => {
+compiler-package.test.mjs:129:   const source = `import { Text, VStack } from "@muse/core"
+compiler-package.test.mjs:143:   assert.ok(model.imports.some(item => item.module === "@muse/core"))
+compiler-package.test.mjs:154:   const source = `import { Text, VStack } from "@muse/core"
+compiler-package.test.mjs:204:   assert.equal(model.symbol("VueChart")?.rendererAdapter, "@muse/vue")
+compiler-package.test.mjs:232: test("@muse/compiler preserves empty, optional, and array builder results", () => {
+compiler-package.test.mjs:245: test("@muse/compiler keeps statement-bearing action closures out of ViewBuilder arrays", () => {
+compiler-package.test.mjs:253: test("@muse/compiler preserves async action closures", () => {
+compiler-package.test.mjs:287: test("@muse/compiler exposes source-ranged builder and struct ASTs", () => {
+compiler-package.test.mjs:345: test("@muse/compiler exposes source maps, diagnostics, language service, and Vite adapter", () => {
+compiler-package.test.mjs:380:   const staticModifier = plugin.transform('import { Text } from "@muse/core"\nconst value = Text("Hi").padding(4)', new URL("../StaticModifier.ts", import.meta.url).pathname)
+compiler-package.test.mjs:488:   const source = `import { VStack } from "@muse/react"\nstruct Card<Content: View>: View {\n  let content: Content\n  init(@ViewBuilder content: () => Content) { self.content = content() }\n  var body: some View { VStack() { content } }\n}`
+compiler-package.test.mjs:513:   const source = `import { Text } from "@muse/core"
+compiler-package.test.mjs:524:   const source = `import { Text, VStack } from "@muse/core"
+compiler-package.test.mjs:532:   const source = `import { Text } from "@muse/core"
+compiler-package.test.mjs:581:   const source = `import { Text, VStack } from "@muse/core"
+compiler-package.test.mjs:706:   const source = `import { Text, VStack } from "@muse/core"
+compiler-package.test.mjs:794:   const source = `import { VStack } from "@muse/core"
+control-primitives.test.mjs:38: test("@muse/react controls are compatibility aliases of core controls", () => {
+react-client.test.mjs:134: test('canonical @muse/react graph output hydrates through the standard React boundary', async () => {
+compiler-hardening.test.mjs:70: import { view } from "@muse/react"
+compiler-hardening.test.mjs:87: import { view } from "@muse/react"
+compiler-hardening.test.mjs:94: import { view } from "@muse/react"
+compiler-hardening.test.mjs:163:   const source = `import { State as S } from "@muse/core"
+presentation-primitives.test.mjs:44: test("@muse/react presentation Views are compatibility aliases of core Views", () => {
+advanced-primitives.test.mjs:35: test("@muse/react advanced Views are compatibility aliases of core Views", () => {
+canonical-exports.test.mjs:6: import * as legacy from "@muse/react/legacy"
+bundle-size.test.mjs:28:     await writeFile(entry, `import { Text } from "@muse/core"\nimport { renderToHTML } from "@muse/web"\nconsole.log(renderToHTML(Text("tree-shake")))\n`)
+bundle-size.test.mjs:35:           "@muse/core": resolve("packages/core/dist/index.js"),
+bundle-size.test.mjs:36:           "@muse/web": resolve("packages/web/dist/index.js"),
+web-package.test.mjs:26: test("@muse/web renders the same core graph without React", () => {
+web-package.test.mjs:31: test("@muse/web preserves raw HTML attributes and object styles", () => {
+web-package.test.mjs:49: test("@muse/web merges object styles and classes supplied by withProps", () => {
+web-package.test.mjs:58: test("@muse/web serializes scroll and safe-area CSS from the core graph", () => {
+web-package.test.mjs:71: test("@muse/web exposes GeometryReader in SSR and DOM modes", () => {
+web-package.test.mjs:78: test("@muse/web measures CSS safe-area insets at the DOM boundary", async () => {
+web-package.test.mjs:92: test("@muse/web resolves renderer-independent View state", () => {
+web-package.test.mjs:101: test("@muse/web mount reevaluates State reads and cleans up", async () => {
+web-package.test.mjs:119: test("@muse/web DOM mount preserves events, refs, and State invalidation", async () => {
+web-package.test.mjs:143: test("@muse/web patches text, attributes, and events without replacing the DOM node", async () => {
+web-package.test.mjs:172: test("@muse/web windows lazy children and responds to scroll without rebuilding the boundary", async () => {
+web-package.test.mjs:202: test("@muse/web refines lazy ranges from measured child sizes", async () => {
+web-package.test.mjs:229: test("@muse/web preserves keyed child State across reorder and resets it after remount", async () => {
+web-package.test.mjs:262: test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", async () => {
+web-package.test.mjs:283: test("@muse/web keeps explicit ForEach identity through SSR hydration and reorder", async () => {
+web-package.test.mjs:312: test("@muse/web hydrates the frame host without replacing its child", async () => {
+web-package.test.mjs:339: test("@muse/web falls back to a fresh client tree when hydration structure mismatches", async () => {
+web-package.test.mjs:364: test("@muse/web commits refs only after live DOM reconciliation and keeps stable refs stable", async () => {
+web-package.test.mjs:388: test("@muse/web normalizes DOM event names and boolean, ARIA, and enumerated attributes", () => {
+web-package.test.mjs:418: test("@muse/web hydration reconciles stale server attributes without replacing matching nodes", () => {
+web-package.test.mjs:435: test("@muse/web creates contextual SVG namespaces and returns to HTML inside foreignObject", () => {
+web-package.test.mjs:466: test("@muse/web preserves State for logically present offscreen lazy rows and drops removed rows", async () => {
+core.test.mjs:46: test("@muse/core builds a renderer-independent graph with immutable modifiers", () => {
+core.test.mjs:70: test("@muse/core state and Binding stay independent from a renderer", () => {
+core.test.mjs:106: test("@muse/core keeps View identity storage renderer-independent", () => {
+core.test.mjs:116: test("@muse/core makes View type changes explicit remount boundaries", () => {
+core.test.mjs:143: test("@muse/core owns built-in and custom View graphs without a renderer", () => {
+core.test.mjs:170: test("@muse/core represents foreign components as explicit graph descriptors", () => {
+core.test.mjs:193: test("@muse/core normalizes boolean leaves and rejects arbitrary object leaves before renderers", () => {
+core.test.mjs:210: test("@muse/core gives ForEach children stable identity keys", () => {
+core.test.mjs:276: test("@muse/core exposes renderer-independent scroll and safe-area semantics", () => {
+core.test.mjs:291: test("@muse/core falls back to a deterministic zero GeometryProxy without a renderer", () => {
+core.test.mjs:303: test("@muse/core normalizes measured CSS safe-area values", () => {
+core.test.mjs:312: test("@muse/core applies declared generic View constraints during initializer resolution", () => {
+core.test.mjs:327: test("@muse/core resolves declared union value types without overload-order bias", () => {
+core.test.mjs:332: test("@muse/core routes a trailing closure past omitted optional parameters", () => {
+core.test.mjs:348: test("@muse/core applies Content: View constraints to built-in stack builders", () => {
+core.test.mjs:353: test("@muse/core exposes the same View symbol consumed by compiler adapters", () => {
+api-surface.test.mjs:85: test("@muse/react canonical entry stays independent from legacy compiler machinery", () => {
+api-surface.test.mjs:92:   assert.equal(manifest.dependencies?.["@muse/legacy-react"], "workspace:*")
+muse-cli.test.mjs:36:   assert.equal(manifest.dependencies['@muse/react'], '^0.1.0')
+muse-cli.test.mjs:37:   assert.equal(manifest.devDependencies['@muse/vite'], '^0.1.0')
+react-package.test.mjs:23: test("@muse/react renders the core graph at the React boundary", () => {
+react-package.test.mjs:29: test("@muse/react view keeps props at the renderer boundary", () => {
+react-package.test.mjs:35: test("@muse/react stateful view scopes State creation to each mounted identity", () => {
+react-package.test.mjs:46: test("@muse/react adapts raw HTML names to native React props at the boundary", () => {
+react-package.test.mjs:54: test("@muse/react adapts real inline CSS strings at the renderer boundary", () => {
+react-package.test.mjs:60: test("@muse/react shares core scroll and safe-area Views", () => {
+react-package.test.mjs:69: test("@muse/react materializes GeometryReader with a renderer-owned boundary", () => {

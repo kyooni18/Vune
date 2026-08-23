@@ -22,12 +22,12 @@ import {
   zeroGeometry,
   type GeometryProxy,
   type ModifiableViewNode,
-  type MuseRenderer,
+  type VuneRenderer,
   type StateRef,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
-} from "@muse/core"
+} from "@vune-ui/core"
 
 function cssLength(value: unknown): string | number | undefined {
   return typeof value === "number" ? `${value}px` : typeof value === "string" ? value : undefined
@@ -107,7 +107,7 @@ function normalizeElementProps(props: Record<string, unknown> | null): Record<st
 }
 
 function normalizeForeignProps(
-  type: Parameters<NonNullable<MuseRenderer<ReactNode>["element"]>>[0],
+  type: Parameters<NonNullable<VuneRenderer<ReactNode>["element"]>>[0],
   props: Record<string, unknown> | null,
   children: ReactNode[],
 ): Record<string, unknown> | null {
@@ -190,7 +190,7 @@ function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNo
       window.removeEventListener("resize", update)
     }
   }, [])
-  return createElement("div", { ref: host, "data-muse": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value)
+  return createElement("div", { ref: host, "data-vune": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, value)
 }
 
 function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } & Record<string, unknown>): ReactNode {
@@ -200,7 +200,7 @@ function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } 
   return applyProps(renderViewNode(value, renderer), forwardedProps)
 }
 
-const renderer: MuseRenderer<ReactNode> = {
+const renderer: VuneRenderer<ReactNode> = {
   element(type, props, ...children) {
     const component = isForeignComponent(type) ? type.component : type
     return createElement(component as any, normalizeForeignProps(type, props, children) as any, ...children)
@@ -233,7 +233,7 @@ export function render(value: ViewGraphValue): ReactNode {
   return renderViewNode(value, renderer)
 }
 
-export function MuseView<Props extends Record<string, unknown> = Record<string, unknown>>({
+export function VuneView<Props extends Record<string, unknown> = Record<string, unknown>>({
   body,
   props,
 }: {
@@ -249,7 +249,7 @@ export interface StatefulViewDefinition<State extends object, Props extends obje
   readonly body: (state: State, props: Props) => ViewGraphValue
 }
 
-function StatefulMuseView<State extends object, Props extends object>({
+function StatefulVuneView<State extends object, Props extends object>({
   definition,
   props,
 }: {
@@ -264,7 +264,7 @@ function StatefulMuseView<State extends object, Props extends object>({
 export function statefulView<State extends object, Props extends object = Record<string, unknown>>(
   definition: StatefulViewDefinition<State, Props>,
 ): (props: Props) => ReactNode {
-  return (props: Props) => createElement(StatefulMuseView as any, { definition, props })
+  return (props: Props) => createElement(StatefulVuneView as any, { definition, props })
 }
 
 export function view<State extends object, Props extends object = Record<string, unknown>>(
@@ -274,11 +274,11 @@ export function view<Props extends Record<string, unknown> = Record<string, unkn
   body: (props: Props) => ViewGraphValue,
 ): (props: Props) => ReactNode
 export function view(input: ((props: Record<string, unknown>) => ViewGraphValue) | StatefulViewDefinition<object, Record<string, unknown>>): (props: Record<string, unknown>) => ReactNode {
-  if (typeof input === "function") return (props: Record<string, unknown>) => createElement(MuseView as any, { body: input, props })
-  return (props: Record<string, unknown>) => createElement(StatefulMuseView as any, { definition: input, props })
+  if (typeof input === "function") return (props: Record<string, unknown>) => createElement(VuneView as any, { body: input, props })
+  return (props: Record<string, unknown>) => createElement(StatefulVuneView as any, { definition: input, props })
 }
 
-export function createRenderer(): MuseRenderer<ReactNode> {
+export function createRenderer(): VuneRenderer<ReactNode> {
   return renderer
 }
 

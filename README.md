@@ -1,67 +1,79 @@
 # Vune UI
 
 Vune UI is a renderer-independent declarative UI framework hosted by TypeScript.
-Its `muse` package and `@muse/core` build immutable Muse View graphs;
-`@muse/react`, `@muse/vue`, and `@muse/web` materialize those graphs for their
-respective runtimes. `vune-ui` remains an explicit compatibility package.
+Its `vune-ui` package and `@vune-ui/core` build immutable Vune View graphs;
+`@vune-ui/react`, `@vune-ui/vue`, and `@vune-ui/web` materialize those graphs for their
+respective runtimes. Legacy React APIs are isolated under `vune-ui/legacy`.
 
 The dependency direction is:
 
 ```text
-.muse.ts -> @muse/compiler -> Muse View graph -> @muse/react, @muse/vue, or @muse/web
+.vune.ts -> @vune-ui/compiler -> Vune View graph -> @vune-ui/react, @vune-ui/vue, or @vune-ui/web
 ```
 
-React is a renderer, not the definition of a Muse View.
+React is a renderer, not the definition of a Vune View.
 
-New framework code should import graph values from `muse` and select a renderer
-explicitly from `@muse/react`, `@muse/vue`, or `@muse/web`. The historical
-`vune-ui` entry point remains available as a compatibility facade backed
-by the separate `@muse/legacy-react` package through preserved
-`@muse/react/legacy` proxy paths.
+New framework code should import graph values from `vune-ui` and select a renderer
+explicitly from `@vune-ui/react`, `@vune-ui/vue`, or `@vune-ui/web`. The
+`vune-ui/legacy` entry point remains available for compatibility, backed by the
+separate `@vune-ui/legacy-react` package.
 
-The canonical Vite workflow lowers Muse builders and custom `struct ...: View` declarations without coupling the graph to a renderer. The compatibility React workflow also offers `State`, `Action`, and `view` macros.
+The canonical Vite workflow lowers Vune builders and custom `struct ...: View` declarations without coupling the graph to a renderer. The compatibility React workflow also offers `State`, `Action`, and `view` macros.
 
 ## Quick start
 
 Create a complete canonical React + Vite + TypeScript project:
 
 ```bash
-pnpm dlx muse create my-muse-app
-cd my-muse-app
+pnpm dlx vune-ui create my-vune-app
+cd my-vune-app
 pnpm dev
 ```
 
-The command writes the project files, configures `musePlugin()` before the
-React plugin, installs `muse`, `@muse/react`, and `@muse/vite`, and gives you a
+The same initializer is available in the standard Vite-style form:
+
+```bash
+pnpm create vune-ui my-vune-app
+# or: npm create vune-ui my-vune-app
+```
+
+From an empty directory, pass `.` to create the app in place:
+
+```bash
+pnpm create vune-ui .
+```
+
+The command writes the project files, configures `vunePlugin()` before the
+React plugin, installs `vune-ui`, `@vune-ui/react`, and `@vune-ui/vite`, and gives you a
 small working counter as the first screen. Use `--no-install` when you want to
 inspect or edit the generated files before installing dependencies.
 
 For a local checkout, run the same canonical CLI directly:
 
 ```bash
-node ../Muse/packages/muse/bin/muse.mjs create my-muse-app
+node ../vune-ui/bin/vune-ui.mjs create my-vune-app
 ```
 
 To add the canonical setup to an empty existing directory, run
-`muse init --no-install` from that directory. Existing files are preserved
+`vune-ui init --no-install` from that directory. Existing files are preserved
 unless `--force` is explicitly provided.
 
-For the canonical Vite compiler, install the React plugin and put `musePlugin()` before it:
+For the canonical Vite compiler, install the React plugin and put `vunePlugin()` before it:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { musePlugin } from '@muse/vite'
+import { vunePlugin } from '@vune-ui/vite'
 
 export default defineConfig({
   plugins: [
-    musePlugin(),
+    vunePlugin(),
     react(),
   ],
 })
 ```
 
-A Muse screen can then be a plain `.ts` file:
+A Vune screen can then be a plain `.ts` file:
 
 ```ts
 import {
@@ -71,15 +83,15 @@ import {
   State,
   Text,
   VStack,
-} from 'muse'
-import { Action, view } from '@muse/react'
+} from 'vune-ui'
+import { Action, view } from '@vune-ui/react'
 
 const count = State(0)
 
 export default view(() => (
   VStack(
     { alignment: 'leading', spacing: 16 },
-    Text('Hello, Muse').fontSize(28).bold(),
+    Text('Hello, Vune').fontSize(28).bold(),
     Text(`Count: ${count.value}`),
     Button('Increase', Action(() => { count.value += 1 })),
     HStack(
@@ -93,7 +105,7 @@ export default view(() => (
 ))
 ```
 
-`@muse/vite` is the canonical syntax-lowering plugin. It transforms builder
+`@vune-ui/vite` is the canonical syntax-lowering plugin. It transforms builder
 blocks, labeled initializers, shorthand modifiers, raw HTML, and custom
 `struct ...: View` declarations, and returns token-anchored source maps. The
 compatibility `vune-ui/vite` entry point remains available for the legacy
@@ -102,13 +114,13 @@ TypeScript AST macro that hoists top-level `State()` declarations and rewrites
 
 ## View values, initializers, and builders
 
-Muse's declarative core now has a View/initializer boundary. Built-in Views and
+Vune's declarative core now has a View/initializer boundary. Built-in Views and
 user Views select a registered initializer from the actual argument list before
 rendering; a trailing block is valid only when that selected initializer accepts
 `@ViewBuilder` or `@Action`.
 
 ```ts
-import { defineView, initializer, resolveBuilderClosure, Text, VStack } from 'muse'
+import { defineView, initializer, resolveBuilderClosure, Text, VStack } from 'vune-ui'
 
 const Card = defineView('Card', {
   initializers: [initializer(
@@ -130,7 +142,7 @@ model, including `var body`, `@ViewBuilder`, `@Action`, and `@State` fields.
 Builder blocks support nested Views, conditionals, optional branches, and
 `ForEach(items) { item in ... }`. The compiler resolves syntax by initializer
 metadata rather than a hard-coded component-name list; malformed calls produce
-structured compiler diagnostics and `MuseInitializerError` at the runtime
+structured compiler diagnostics and `VuneInitializerError` at the runtime
 boundary. When a same-file custom View call has exactly one declaration-defined
 initializer match, or an imported View exposes one unique non-variadic typed
 call signature, the compiler emits a direct initializer-index path; ambiguous
@@ -138,7 +150,7 @@ overloads retain the normal runtime resolver.
 
 The same source syntax can be used with built-in and custom Views:
 
-`Button` intentionally has only these two Muse forms:
+`Button` intentionally has only these two Vune forms:
 
 ```ts
 Button('Save') { save() }
@@ -163,17 +175,17 @@ Button(action: { save() }, label: {
 })
 ```
 
-`musePlugin()` lowers these builder, labeled-argument, shorthand-modifier, and
-`struct` forms before the TypeScript/React transform. `parseMuseBuilder()` and
-`parseMuseStructs()` expose the source-ranged AST consumed by that lowering
+`vunePlugin()` lowers these builder, labeled-argument, shorthand-modifier, and
+`struct` forms before the TypeScript/React transform. `parseVuneBuilder()` and
+`parseVuneStructs()` expose the source-ranged AST consumed by that lowering
 pass, without a component-name allow-list. Labeled calls use an internal
 `namedArguments()` carrier; JavaScript object calls remain available as the
 compatibility form. Editor integrations that do not
-run Vite can use `createMuseLanguageService()` from `@muse/compiler`;
-its diagnostics and positions remain in the original Muse source space. A
-TypeScript host can use `createMuseTypeScriptLanguageService()` to parse the
+run Vite can use `createVuneLanguageService()` from `@vune-ui/compiler`;
+its diagnostics and positions remain in the original Vune source space. A
+TypeScript host can use `createVuneTypeScriptLanguageService()` to parse the
 same lowered snapshots in editor tooling; diagnostics and common text spans are
-mapped back to the original Muse file.
+mapped back to the original Vune file.
 
 ## React entry point
 
@@ -197,7 +209,7 @@ const Greeting = view((props: { name: string }) =>
 )
 ```
 
-State-scoped views can initialize their local Muse state from React props too:
+State-scoped views can initialize their local Vune state from React props too:
 
 ```ts
 type CounterProps = {
@@ -222,7 +234,7 @@ Arrays and plain objects stored in `State()` are mutation-aware, including neste
 
 ```ts
 const todos = State([
-  { title: 'Ship Muse', done: false },
+  { title: 'Ship Vune', done: false },
 ])
 
 Button('Add', Action(
@@ -252,7 +264,7 @@ metadata/plugin registry, and block-builder transform are experimental while
 their integration contract is being consolidated:
 
 ```ts
-import { layoutPass, registerMusePlugin } from 'vune-ui/experimental'
+import { layoutPass, registerVunePlugin } from 'vune-ui/experimental'
 ```
 
 The automatic JSX runtime remains available through `vune-ui/jsx-runtime` and
@@ -263,7 +275,7 @@ contract.
 
 ## Coordinate-free layout
 
-Muse prefers relationships over x/y coordinates:
+Vune prefers relationships over x/y coordinates:
 
 ```ts
 VStack(
@@ -334,12 +346,12 @@ CSS escape hatch through `.style()` and `.className()`.
 
 Automatic JSX remains an optional React compatibility surface. Set
 `jsxImportSource` to `vune-ui` when using its legacy JSX runtime. New
-renderer-independent code should use the `muse` function DSL; the canonical
+renderer-independent code should use the `vune-ui` function DSL; the canonical
 graph does not depend on JSX or React's runtime.
 
 ## React components are first-class layout items
 
-Ordinary React components can sit beside Muse primitives and `Spacer()`:
+Ordinary React components can sit beside Vune primitives and `Spacer()`:
 
 ```ts
 function ProfileCard(props: { name: string }) {
@@ -349,13 +361,13 @@ function ProfileCard(props: { name: string }) {
 HStack(
   Text('Profile'),
   Spacer(),
-  Component(ProfileCard, { name: 'Muse' })
+  Component(ProfileCard, { name: 'Vune' })
     .padding(12)
     .frame({ minWidth: 240 }),
 )
 ```
 
-Inside a Muse layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
+Inside a Vune layout container, a normal React component gets one neutral outer layout host. Layout modifiers apply to that host instead of being pushed into the component's own props. React keeps ownership of the component itself, including hooks, refs, context, props, children, and rendering. Direct React elements, `memo(...)`, and `forwardRef(...)` components follow the same layout-host rule.
 
 `Raw(element)` accepts an already-created React element when modifier chaining is needed.
 
@@ -392,7 +404,7 @@ LazyHStack(...cards)
 LazyGrid({ columns: 3, estimatedItemSize: 160 }, ...cards)
 ```
 
-`Lazy*` carries estimated-size metadata for every renderer. Direct `@muse/web`
+`Lazy*` carries estimated-size metadata for every renderer. Direct `@vune-ui/web`
 mounts window children and updates the range on scroll/resize; SSR, React, and
 Vue materialize the full graph while retaining the browser `content-visibility`
 hint.
@@ -449,16 +461,16 @@ pnpm run benchmark:modifiers
 pnpm run benchmark:performance:ci
 ```
 
-`test:browser` is opt-in and uses `MUSE_BROWSER_URL` so it can target a running
+`test:browser` is opt-in and uses `VUNE_BROWSER_URL` so it can target a running
 demo server, for example
-`MUSE_BROWSER_URL=http://localhost:5173 pnpm run test:browser`. CI uses the
+`VUNE_BROWSER_URL=http://localhost:5173 pnpm run test:browser`. CI uses the
 committed `pnpm-lock.yaml` with frozen-lockfile mode
 and runs the suite against React 18 and React 19.
 
 ## End-to-end example
 
 The Vite example is a small component demo in [`examples/App.ts`](examples/App.ts). It
-shows a text field, slider, checkbox, button, and progress view in a Muse
+shows a text field, slider, checkbox, button, and progress view in a Vune
 layout.
 
 Run it locally with:
@@ -476,7 +488,7 @@ The package family is currently versioned as `0.1.0`. React is an optional
 renderer; Vue and direct web/DOM renderers are first-class canonical adapters.
 The previous root API remains available only through the explicit legacy layer.
 
-Muse's layout API is SwiftUI-inspired and CSS-native rather than a promise of
+Vune's layout API is SwiftUI-inspired and CSS-native rather than a promise of
 SwiftUI's proposal-based geometry algorithm. `frame`, `Spacer`, stacks, and
 infinity sizing translate the relationship into CSS-native web layout semantics; they
 do not guarantee pixel-for-pixel SwiftUI behavior.

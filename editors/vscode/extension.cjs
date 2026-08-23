@@ -2,10 +2,10 @@ const vscode = require('vscode')
 const path = require('path')
 
 function loadSemanticCompiler() {
-  for (const request of ['@muse/compiler', path.resolve(__dirname, '../../packages/compiler/dist/index.js')]) {
+  for (const request of ['@vune-ui/compiler', path.resolve(__dirname, '../../packages/compiler/dist/index.js')]) {
     try {
       const compiler = require(request)
-      if (typeof compiler.diagnoseMuseSource === 'function') return compiler
+      if (typeof compiler.diagnoseVuneSource === 'function') return compiler
     } catch { /* The standalone extension can still use its lexical fallback. */ }
   }
   return undefined
@@ -47,10 +47,10 @@ function completionItem(label, detail, kind) {
   return item
 }
 
-function openMuseDocuments(document) {
+function openVuneDocuments(document) {
   const documents = [document, ...(vscode.workspace.textDocuments ?? [])]
   return [...new Map(documents
-    .filter(candidate => candidate && (candidate.languageId === 'muse' || candidate.languageId === 'vue'))
+    .filter(candidate => candidate && (candidate.languageId === 'vune-ui' || candidate.languageId === 'vue'))
     .map(candidate => [String(candidate.uri), candidate])).values()]
 }
 
@@ -63,11 +63,11 @@ function semanticSource(document) {
 }
 
 function semanticModel(document) {
-  if (typeof semanticCompiler?.createMuseSemanticModel !== 'function') return undefined
+  if (typeof semanticCompiler?.createVuneSemanticModel !== 'function') return undefined
   const region = semanticSource(document)
   if (!region) return undefined
   try {
-    return { ...region, model: semanticCompiler.createMuseSemanticModel(region.source, String(document.uri)) }
+    return { ...region, model: semanticCompiler.createVuneSemanticModel(region.source, String(document.uri)) }
   } catch { return undefined }
 }
 
@@ -96,7 +96,7 @@ function htmlTagAtPosition(document, position) {
 function signatureMap(document) {
   const signatures = {}
   let usedSemanticModel = false
-  for (const candidate of openMuseDocuments(document)) {
+  for (const candidate of openVuneDocuments(document)) {
     const source = candidate.getText()
     const semantic = semanticModel(candidate)
     if (semantic) {
@@ -149,7 +149,7 @@ function hover(document, position) {
   const signatures = signatureMap(document)[token.name]
   if (signatures) {
     const markdown = new vscode.MarkdownString()
-    markdown.appendCodeblock(signatures.join('\n'), 'muse')
+    markdown.appendCodeblock(signatures.join('\n'), 'vune-ui')
     markdown.isTrusted = false
     return new vscode.Hover(markdown, token.range)
   }
@@ -204,10 +204,10 @@ function declarations(document) {
   return result
 }
 
-async function workspaceMuseDocuments(document) {
-  const documents = openMuseDocuments(document)
+async function workspaceVuneDocuments(document) {
+  const documents = openVuneDocuments(document)
   if (typeof vscode.workspace.findFiles !== 'function' || typeof vscode.workspace.openTextDocument !== 'function') return documents
-  const uris = await vscode.workspace.findFiles('**/*.{muse.ts,vue}', '**/{node_modules,dist,.git}/**', 200)
+  const uris = await vscode.workspace.findFiles('**/*.{vune.ts,vue}', '**/{node_modules,dist,.git}/**', 200)
   for (const uri of uris) {
     if (documents.some(candidate => String(candidate.uri) === String(uri))) continue
     try { documents.push(await vscode.workspace.openTextDocument(uri)) } catch { /* Ignore unreadable workspace files. */ }
@@ -217,7 +217,7 @@ async function workspaceMuseDocuments(document) {
 
 async function definition(document, position) {
   const token = tokenAt(document, position)
-  for (const candidate of await workspaceMuseDocuments(document)) {
+  for (const candidate of await workspaceVuneDocuments(document)) {
     const location = declarations(candidate).get(token.name)
     if (location) return location
   }
@@ -267,7 +267,7 @@ async function renameEdits(document, position, newName) {
   const token = tokenAt(document, position)
   if (!token.name || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(newName)) return undefined
   const edit = new vscode.WorkspaceEdit()
-  const documents = await workspaceMuseDocuments(document)
+  const documents = await workspaceVuneDocuments(document)
   if (!documents.some(candidate => declarations(candidate).has(token.name))) return undefined
   const semanticTarget = documents.some(candidate => semanticModel(candidate)?.model.views?.some(view => view.name === token.name))
   if (semanticTarget) {
@@ -426,16 +426,16 @@ function diagnosticsInSource(document, source, offset) {
       const expected = { ')': '(', ']': '[', '}': '{' }[character]
       const opening = stack.pop()
       if (!opening || opening.character !== expected) {
-        report(index, `Unexpected '${character}' in Muse source.`)
+        report(index, `Unexpected '${character}' in Vune source.`)
       } else if (opening.template) mode = 'template'
     }
   }
-  if (mode === 'single' || mode === 'double') report(modeStart, `Unclosed ${mode === 'single' ? "'" : '"'} string in Muse source.`)
-  else if (mode === 'template' || templates.length > 0) report(templates.at(-1) ?? modeStart, 'Unclosed template literal in Muse source.')
-  else if (mode === 'blockComment') report(modeStart, 'Unclosed block comment in Muse source.')
-  else if (mode === 'regex') report(modeStart, 'Unclosed regular expression in Muse source.')
+  if (mode === 'single' || mode === 'double') report(modeStart, `Unclosed ${mode === 'single' ? "'" : '"'} string in Vune source.`)
+  else if (mode === 'template' || templates.length > 0) report(templates.at(-1) ?? modeStart, 'Unclosed template literal in Vune source.')
+  else if (mode === 'blockComment') report(modeStart, 'Unclosed block comment in Vune source.')
+  else if (mode === 'regex') report(modeStart, 'Unclosed regular expression in Vune source.')
   for (const opening of stack) {
-    report(opening.index, `Unclosed '${opening.character}' in Muse source.`)
+    report(opening.index, `Unclosed '${opening.character}' in Vune source.`)
   }
   return diagnostics
 }
@@ -451,7 +451,7 @@ function offsetsForLines(source) {
 function semanticDiagnostics(document, source, offset) {
   if (!semanticCompiler) return undefined
   const offsets = offsetsForLines(source)
-  return semanticCompiler.diagnoseMuseSource(source).map(diagnostic => {
+  return semanticCompiler.diagnoseVuneSource(source).map(diagnostic => {
     const line = Math.max(1, diagnostic.line)
     const column = Math.max(1, diagnostic.column)
     const sourceOffset = (offsets[line - 1] ?? source.length) + column - 1
@@ -508,10 +508,10 @@ function formatVue(document) {
 }
 
 function activate(context) {
-  const collection = vscode.languages.createDiagnosticCollection('muse')
-  const refresh = document => { if (document.languageId === 'muse' || document.languageId === 'vue') collection.set(document.uri, diagnostics(document)) }
-  const languages = ['muse']
-  if (vscode.workspace.getConfiguration('muse.languageTools').get('enableVue', true)) languages.push('vue')
+  const collection = vscode.languages.createDiagnosticCollection('vune-ui')
+  const refresh = document => { if (document.languageId === 'vune-ui' || document.languageId === 'vue') collection.set(document.uri, diagnostics(document)) }
+  const languages = ['vune-ui']
+  if (vscode.workspace.getConfiguration('vune.languageTools').get('enableVue', true)) languages.push('vue')
   context.subscriptions.push(collection)
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(refresh))
   context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => refresh(event.document)))
@@ -530,7 +530,7 @@ function activate(context) {
     provideRenameEdits: renameEdits,
   }))
   context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(languages, { provideDocumentSemanticTokens: semanticTokens }, SEMANTIC_LEGEND))
-  context.subscriptions.push(vscode.commands.registerCommand('muse.formatDocument', () => vscode.commands.executeCommand('editor.action.formatDocument')))
+  context.subscriptions.push(vscode.commands.registerCommand('vune.formatDocument', () => vscode.commands.executeCommand('editor.action.formatDocument')))
   vscode.workspace.textDocuments.forEach(refresh)
 }
 

@@ -1,5 +1,5 @@
 import * as ts from "typescript"
-import { parseMuseBuilder, parseMuseStructs, lowerMuseBuilderAst, type MuseBuilderNode, type MuseBuilderProgram, type MuseCallExpression } from "./ast.js"
+import { parseVuneBuilder, parseVuneStructs, lowerVuneBuilderAst, type VuneBuilderNode, type VuneBuilderProgram, type VuneCallExpression } from "./ast.js"
 import {
   findBuilder,
   findRawHtml,
@@ -16,8 +16,8 @@ import {
   topLevelColon,
   type BuilderCall,
 } from "./scanner.js"
-import * as Core from "@muse/core"
-import { resolveSemanticCall, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@muse/core"
+import * as Core from "@vune-ui/core"
+import { resolveSemanticCall, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
 
 const nonBindingDollarNames = new Set([
@@ -34,22 +34,22 @@ for (const [name, value] of Object.entries(Core)) {
 
 type InitializerSymbolRegistry = ReadonlyMap<string, readonly SemanticInitializerSymbol[]>
 
-function symbolsForCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): readonly SemanticInitializerSymbol[] | undefined {
+function symbolsForCall(call: VuneCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): readonly SemanticInitializerSymbol[] | undefined {
   return registry.get(call.callee)
 }
 
-class MuseInitializerSyntaxError extends SyntaxError {
-  readonly code = "MUSE_INITIALIZER" as const
+class VuneInitializerSyntaxError extends SyntaxError {
+  readonly code = "VUNE_INITIALIZER" as const
   readonly offset: number
 
   constructor(message: string, offset: number) {
     super(message)
-    this.name = "MuseInitializerSyntaxError"
+    this.name = "VuneInitializerSyntaxError"
     this.offset = offset
   }
 }
 
-function buttonInitializerMessage(call: MuseCallExpression): string {
+function buttonInitializerMessage(call: VuneCallExpression): string {
   const labels = call.arguments.flatMap(argument => argument.label ? [argument.label] : [])
   if (labels.includes("label") && labels.includes("action") && labels.indexOf("label") < labels.indexOf("action")) {
     return "Button arguments must follow declaration order: action:, label:."
@@ -60,7 +60,7 @@ function buttonInitializerMessage(call: MuseCallExpression): string {
   return "Button requires a text label before its trailing action.\nUse:\nButton(\"Save\") { ... }"
 }
 
-function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument[] {
+function knownCallArguments(call: VuneCallExpression): readonly SemanticArgument[] {
   const arguments_ = call.arguments.flatMap((argument, argumentIndex) => {
     if (argument.value.kind === "closure") return [{ label: argument.label, type: "function" }]
     if (call.callee === "ForEach" && argumentIndex === 1 && /^\{\s*(?:id|key)\s*:/.test(argument.value.source) && /=>/.test(argument.value.source)) {
@@ -73,14 +73,14 @@ function knownCallArguments(call: MuseCallExpression): readonly SemanticArgument
   return call.trailing ? [...arguments_, { type: "function", trailing: true }] : arguments_
 }
 
-function canDeferDynamicButton(call: MuseCallExpression, arguments_: readonly SemanticArgument[]): boolean {
+function canDeferDynamicButton(call: VuneCallExpression, arguments_: readonly SemanticArgument[]): boolean {
   if (!arguments_.some(argument => argument.type === "unknown")) return false
   if (call.trailing) return call.arguments.length === 1 && !call.arguments[0]?.label
   const labels = call.arguments.map(argument => argument.label)
   return labels.length === 2 && labels[0] === "action" && labels[1] === "label"
 }
 
-function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): {
+function resolveKnownCall(call: VuneCallExpression, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): {
   readonly symbols: readonly SemanticInitializerSymbol[]
   readonly initializerIndex: number
   readonly resolution: SemanticCallResolution
@@ -98,9 +98,9 @@ function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolR
   const result = resolveSemanticCall(viewType, arguments_)
   if (!result.resolvedInitializer) {
     if (call.callee === "Button" && canDeferDynamicButton(call, arguments_)) return undefined
-    if (call.callee === "Button") throw new MuseInitializerSyntaxError(buttonInitializerMessage(call), call.range.start)
+    if (call.callee === "Button") throw new VuneInitializerSyntaxError(buttonInitializerMessage(call), call.range.start)
     if (call.trailing && canonicalInitializerSymbols.get(call.callee) !== symbols) {
-      throw new MuseInitializerSyntaxError(
+      throw new VuneInitializerSyntaxError(
         result.diagnostics[0]?.message ?? `No matching initializer for ${call.callee}.`,
         call.range.start,
       )
@@ -110,8 +110,8 @@ function resolveKnownCall(call: MuseCallExpression, registry: InitializerSymbolR
   return { symbols, initializerIndex: result.resolvedInitializer.index, resolution: result }
 }
 
-function validateKnownCalls(program: MuseBuilderProgram, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
-  const visit = (node: MuseBuilderNode): void => {
+function validateKnownCalls(program: VuneBuilderProgram, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
+  const visit = (node: VuneBuilderNode): void => {
     if (node.kind === "call") {
       if (node.callee === "Button" || node.trailing) resolveKnownCall(node, registry)
       for (const argument of node.arguments) if (argument.value.kind === "closure") validateKnownCalls(argument.value.body, registry)
@@ -130,16 +130,16 @@ function validateKnownCalls(program: MuseBuilderProgram, registry: InitializerSy
 }
 
 function validateKnownTypeScriptCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
-  const file = ts.createSourceFile("muse-call-validation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = ts.createSourceFile("vune-call-validation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && registry.has(node.expression.text)) {
-      // The Muse scanner owns trailing closures. TypeScript sees the call
+      // The Vune scanner owns trailing closures. TypeScript sees the call
       // prefix as a complete call, so leave that shape to validateKnownCalls.
       const callText = source.slice(node.expression.end, node.end)
-      const hasMuseLabels = /(?:^|,)\s*[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(callText)
-      if (!hasMuseLabels && source[skipTrivia(source, node.end)] !== "{" && node.expression.text === "Button") {
+      const hasVuneLabels = /(?:^|,)\s*[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(callText)
+      if (!hasVuneLabels && source[skipTrivia(source, node.end)] !== "{" && node.expression.text === "Button") {
         const callSource = `${node.expression.text}(${node.arguments.map(argument => argument.getText(file)).join(", ")})`
-        const parsed = parseMuseBuilder(callSource, node.expression.getStart(file)).statements[0]
+        const parsed = parseVuneBuilder(callSource, node.expression.getStart(file)).statements[0]
         if (parsed?.kind === "call") resolveKnownCall(parsed, registry)
       }
     }
@@ -149,7 +149,7 @@ function validateKnownTypeScriptCalls(source: string, registry: InitializerSymbo
 }
 
 function closureRoleForKnownCall(
-  call: MuseCallExpression,
+  call: VuneCallExpression,
   context: { readonly position: "argument" | "trailing"; readonly argumentIndex?: number; readonly label?: string },
   registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
 ): "value" | "viewBuilder" | "action" | undefined {
@@ -209,12 +209,12 @@ function isBindingShorthandIdentifier(node: ts.Identifier): boolean {
 
 /**
  * Lower only actual identifier nodes. The source is intentionally edited by
- * span so the rest of Muse's syntax lowering keeps its original formatting.
+ * span so the rest of Vune's syntax lowering keeps its original formatting.
  * This prevents member properties, declarations, strings, comments, regexes,
  * and identifiers containing `$` from being mistaken for projections.
  */
 function lowerShorthand(source: string): string {
-  const file = ts.createSourceFile("muse-shorthand.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = ts.createSourceFile("vune-shorthand.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const edits: Array<{ start: number; end: number; replacement: string }> = []
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && isBindingShorthandIdentifier(node)) {
@@ -272,13 +272,13 @@ function isViewBuilderExpression(expression: ts.Expression): boolean {
 }
 
 function lowerViewBuilderAstStatements(source: string, registry: InitializerSymbolRegistry, childrenName: string): string {
-  // First lower nested Muse-only expressions (trailing closures, raw HTML,
+  // First lower nested Vune-only expressions (trailing closures, raw HTML,
   // binding shorthand) so the statement tree is valid TypeScript. Then let
   // TypeScript own control-flow parsing instead of maintaining a second,
-  // incomplete statement grammar in Muse.
+  // incomplete statement grammar in Vune.
   const lowered = lowerRange(source, registry)
-  const wrapper = `function __muse_builder__() {\n${lowered}\n}`
-  const file = ts.createSourceFile("muse-view-builder.ts", wrapper, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const wrapper = `function __vune_builder__() {\n${lowered}\n}`
+  const file = ts.createSourceFile("vune-view-builder.ts", wrapper, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const fn = file.statements.find(ts.isFunctionDeclaration)
   if (!fn?.body) return lowered
 
@@ -355,7 +355,7 @@ function needsStatementAwareViewBody(source: string): boolean {
 
 function lowerViewBuilderClosure(body: string, parameter: string | undefined, registry: InitializerSymbolRegistry): string {
   if (!needsStatementAwareViewBody(body)) {
-    const lowered = lowerMuseBuilderAst(parseMuseBuilder(body), {
+    const lowered = lowerVuneBuilderAst(parseVuneBuilder(body), {
       transformRaw: value => lowerRange(value, registry),
       transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
       closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
@@ -364,9 +364,9 @@ function lowerViewBuilderClosure(body: string, parameter: string | undefined, re
     return `${parameter ? `(${parameter})` : "()"} => [${lowered}]`
   }
   const prefix = parameter ? `(${parameter})` : "()"
-  let childrenName = "__museChildren"
+  let childrenName = "__vuneChildren"
   let suffix = 0
-  while (new RegExp(`\\b${childrenName}\\b`).test(body)) childrenName = `__museChildren${++suffix}`
+  while (new RegExp(`\\b${childrenName}\\b`).test(body)) childrenName = `__vuneChildren${++suffix}`
   const statements = lowerViewBuilderAstStatements(body, registry, childrenName)
   return `${prefix} => { const ${childrenName} = []; ${statements} return ${childrenName}; }`
 }
@@ -385,7 +385,7 @@ function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", 
 }
 
 function lowerArguments(source: string, calleeName?: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
-  const parsed = calleeName ? parseMuseBuilder(`${calleeName}(${source})`).statements[0] : undefined
+  const parsed = calleeName ? parseVuneBuilder(`${calleeName}(${source})`).statements[0] : undefined
   const call = parsed?.kind === "call" ? parsed : undefined
   if (call && (call.callee === "Button" || call.trailing)) resolveKnownCall(call, registry)
   const positional: string[] = []
@@ -412,7 +412,7 @@ function lowerClosureOrExpression(source: string, role?: "value" | "viewBuilder"
   return lowerShorthand(lowerRange(value, registry))
 }
 
-function lowerForEachIdentityOptions(source: string, call: MuseCallExpression, argumentIndex: number, registry: InitializerSymbolRegistry): string {
+function lowerForEachIdentityOptions(source: string, call: VuneCallExpression, argumentIndex: number, registry: InitializerSymbolRegistry): string {
   const value = source.trim()
   if (call.callee !== "ForEach" || argumentIndex !== 1 || !value.startsWith("{") || matching(value, 0, "{", "}") !== value.length - 1) {
     return lowerRange(source, registry)
@@ -457,8 +457,8 @@ function lowerStatements(source: string, registry: InitializerSymbolRegistry = c
 
 function lowerAstClosure(body: string, parameter?: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   if (role === "viewBuilder") return lowerViewBuilderClosure(body, parameter, registry)
-  const parsed = parseMuseBuilder(body)
-  const lowered = lowerMuseBuilderAst(parsed, {
+  const parsed = parseVuneBuilder(body)
+  const lowered = lowerVuneBuilderAst(parsed, {
     transformRaw: value => lowerRange(value, registry),
     transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
     closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
@@ -473,8 +473,8 @@ function lowerAstClosure(body: string, parameter?: string, role?: "value" | "vie
 }
 
 function lowerBuilder(call: BuilderCall, source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
-  const parsed = parseMuseBuilder(source.slice(call.start, call.end), call.start)
-  const lowered = lowerMuseBuilderAst(parsed, {
+  const parsed = parseVuneBuilder(source.slice(call.start, call.end), call.start)
+  const lowered = lowerVuneBuilderAst(parsed, {
     transformRaw: value => lowerRange(value, registry),
     transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
     closure: (body, parameter, role) => lowerAstClosure(body, parameter, role, registry),
@@ -489,7 +489,7 @@ function lowerRange(source: string, registry: InitializerSymbolRegistry = canoni
   let cursor = 0
   let iterations = 0
   while (cursor < source.length) {
-    if (++iterations > source.length + 1) throw syntaxError("Muse lowering did not advance past a builder expression", cursor)
+    if (++iterations > source.length + 1) throw syntaxError("Vune lowering did not advance past a builder expression", cursor)
     const call = findBuilder(source, cursor)
     const html = findRawHtml(source, cursor, value => lowerRange(value, registry))
     if (!call && !html) break
@@ -570,9 +570,9 @@ interface StructInitializerPlan {
   readonly delegation?: readonly string[]
 }
 
-type MuseStruct = ReturnType<typeof parseMuseStructs>[number]
+type VuneStruct = ReturnType<typeof parseVuneStructs>[number]
 
-function structInitializerPlans(declaration: MuseStruct): readonly StructInitializerPlan[] {
+function structInitializerPlans(declaration: VuneStruct): readonly StructInitializerPlan[] {
   const fields = declaration.fields.map(field => ({
     name: field.name,
     kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
@@ -661,7 +661,7 @@ function semanticInitializerSymbol(name: string, plan: StructInitializerPlan, in
   }
 }
 
-function staticInitializerIndex(declaration: MuseStruct, argumentSource: string, offset = 0): number | undefined {
+function staticInitializerIndex(declaration: VuneStruct, argumentSource: string, offset = 0): number | undefined {
   const plans = structInitializerPlans(declaration)
   const arguments_ = compilerInitializerArguments(argumentSource).map(compilerSemanticArgument)
   const initializers = plans.map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index))
@@ -675,8 +675,8 @@ function staticInitializerIndex(declaration: MuseStruct, argumentSource: string,
   }
   const result = resolveSemanticCall(viewType, arguments_)
   if (result.resolvedInitializer) return result.resolvedInitializer.index
-  if (result.diagnostics[0]?.code === "MUSE_INITIALIZER" && arguments_.some(argument => argument.type === "unknown")) return undefined
-  throw new MuseInitializerSyntaxError(
+  if (result.diagnostics[0]?.code === "VUNE_INITIALIZER" && arguments_.some(argument => argument.type === "unknown")) return undefined
+  throw new VuneInitializerSyntaxError(
     result.diagnostics[0]?.message ?? `No matching initializer for ${declaration.name}.`,
     offset,
   )
@@ -758,7 +758,7 @@ function delegatedStructInitializer(
   return `initializer(${JSON.stringify(signature)}, args => args.length >= ${required} && args.length <= ${maximum}${checks.length ? ` && ${checks.join(" && ")}` : ""}, args => { ${parameters.map((parameter, parameterIndex) => `const ${parameter.name} = args[${parameterIndex}]${parameter.defaultValue ? ` === undefined ? (${parameter.defaultValue}) : args[${parameterIndex}]` : ""}` ).join("; ")}; return { ${values.join(", ")} } }, ${metadata})`
 }
 
-function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[number], registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
+function lowerStructDefinition(declaration: ReturnType<typeof parseVuneStructs>[number], registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
     const fields: StructField[] = declaration.fields.map(field => ({
       name: field.name,
       kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
@@ -781,7 +781,7 @@ function lowerStructDefinition(declaration: ReturnType<typeof parseMuseStructs>[
 }
 
 function lowerStructs(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
-  const declarations = parseMuseStructs(source)
+  const declarations = parseVuneStructs(source)
   if (declarations.length === 0) return source
   let output = source
   for (const declaration of [...declarations].sort((left, right) => right.range.start - left.range.start)) {
@@ -795,16 +795,16 @@ function lowerStructs(source: string, registry: InitializerSymbolRegistry = cano
   return output
 }
 
-function lowerStaticStructCalls(source: string, declarations: readonly MuseStruct[]): string {
+function lowerStaticStructCalls(source: string, declarations: readonly VuneStruct[]): string {
   if (declarations.length === 0) return source
-  const known = new Map<string, MuseStruct>()
-  const add = (declaration: MuseStruct): void => {
+  const known = new Map<string, VuneStruct>()
+  const add = (declaration: VuneStruct): void => {
     known.set(declaration.name, declaration)
     for (const nested of declaration.nested ?? []) add(nested)
   }
   for (const declaration of declarations) add(declaration)
 
-  const file = ts.createSourceFile("muse-specialization.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = ts.createSourceFile("vune-specialization.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const edits: Array<{ start: number; end: number; replacement: string }> = []
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
@@ -838,7 +838,7 @@ interface TopLevelStateDeclaration {
   readonly eligible: boolean
 }
 
-interface MuseApiBindings {
+interface VuneApiBindings {
   readonly state: ReadonlySet<string>
   readonly view: ReadonlySet<string>
   readonly namespaces: ReadonlySet<string>
@@ -846,8 +846,8 @@ interface MuseApiBindings {
   readonly blockedView: boolean
 }
 
-function isMusePackage(moduleName: string): boolean {
-  return moduleName === "muse" || moduleName.startsWith("@muse/")
+function isVunePackage(moduleName: string): boolean {
+  return moduleName === "vune-ui" || moduleName.startsWith("@vune-ui/")
 }
 
 function bindingNames(name: ts.BindingName): string[] {
@@ -858,7 +858,7 @@ function bindingNames(name: ts.BindingName): string[] {
   return []
 }
 
-function museApiBindings(file: ts.SourceFile): MuseApiBindings {
+function vuneApiBindings(file: ts.SourceFile): VuneApiBindings {
   const state = new Set<string>()
   const view = new Set<string>()
   const namespaces = new Set<string>()
@@ -867,25 +867,25 @@ function museApiBindings(file: ts.SourceFile): MuseApiBindings {
 
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-      const muse = isMusePackage(statement.moduleSpecifier.text)
+      const vune = isVunePackage(statement.moduleSpecifier.text)
       const clause = statement.importClause
       if (clause?.name) {
-        if (!muse && clause.name.text === "State") blockedState = true
-        if (!muse && clause.name.text === "view") blockedView = true
+        if (!vune && clause.name.text === "State") blockedState = true
+        if (!vune && clause.name.text === "view") blockedView = true
       }
       const bindings = clause?.namedBindings
       if (bindings && ts.isNamespaceImport(bindings)) {
-        if (muse) namespaces.add(bindings.name.text)
+        if (vune) namespaces.add(bindings.name.text)
         continue
       }
       if (bindings && ts.isNamedImports(bindings)) {
         for (const element of bindings.elements) {
           const imported = element.propertyName?.text ?? element.name.text
           const local = element.name.text
-          if (muse && imported === "State") state.add(local)
-          else if (!muse && local === "State") blockedState = true
-          if (muse && imported === "view") view.add(local)
-          else if (!muse && local === "view") blockedView = true
+          if (vune && imported === "State") state.add(local)
+          else if (!vune && local === "State") blockedState = true
+          if (vune && imported === "view") view.add(local)
+          else if (!vune && local === "view") blockedView = true
         }
       }
       continue
@@ -913,13 +913,13 @@ function unwrapTsExpression(expression: ts.Expression): ts.Expression {
   return current
 }
 
-function isMuseApiCall(call: ts.CallExpression, api: "State" | "view", bindings: MuseApiBindings): boolean {
+function isVuneApiCall(call: ts.CallExpression, api: "State" | "view", bindings: VuneApiBindings): boolean {
   const expression = unwrapTsExpression(call.expression)
   const named = api === "State" ? bindings.state : bindings.view
   const blocked = api === "State" ? bindings.blockedState : bindings.blockedView
   if (ts.isIdentifier(expression)) {
     if (named.has(expression.text)) return true
-    // `.muse.ts` supports the canonical names without an explicit import; do
+    // `.vune.ts` supports the canonical names without an explicit import; do
     // not claim them when the file has provided an unrelated binding.
     return expression.text === api && !blocked && named.size === 0
   }
@@ -930,7 +930,7 @@ function isMuseApiCall(call: ts.CallExpression, api: "State" | "view", bindings:
   return false
 }
 
-function collectTopLevelStates(file: ts.SourceFile, bindings: MuseApiBindings): TopLevelStateDeclaration[] {
+function collectTopLevelStates(file: ts.SourceFile, bindings: VuneApiBindings): TopLevelStateDeclaration[] {
   const states: TopLevelStateDeclaration[] = []
   for (const statement of file.statements) {
     if (!ts.isVariableStatement(statement)) continue
@@ -939,7 +939,7 @@ function collectTopLevelStates(file: ts.SourceFile, bindings: MuseApiBindings): 
     for (const declaration of statement.declarationList.declarations) {
       if (!declaration.initializer) continue
       const initializer = unwrapTsExpression(declaration.initializer)
-      if (!ts.isCallExpression(initializer) || !isMuseApiCall(initializer, "State", bindings)) continue
+      if (!ts.isCallExpression(initializer) || !isVuneApiCall(initializer, "State", bindings)) continue
       states.push({
         name: ts.isIdentifier(declaration.name) ? declaration.name.text : undefined,
         statement,
@@ -1018,10 +1018,10 @@ function referencedStateNames(
   return result
 }
 
-function collectMuseViewCalls(file: ts.SourceFile, bindings: MuseApiBindings): ts.CallExpression[] {
+function collectVuneViewCalls(file: ts.SourceFile, bindings: VuneApiBindings): ts.CallExpression[] {
   const calls: ts.CallExpression[] = []
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && isMuseApiCall(node, "view", bindings)) {
+    if (ts.isCallExpression(node) && isVuneApiCall(node, "view", bindings)) {
       calls.push(node)
       return
     }
@@ -1052,8 +1052,8 @@ function transitiveStateClosure(
 }
 
 function lowerTopLevelState(source: string): string {
-  const file = ts.createSourceFile("muse-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const bindings = museApiBindings(file)
+  const file = ts.createSourceFile("vune-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = vuneApiBindings(file)
   const states = collectTopLevelStates(file, bindings)
   const eligibleStates = states.filter((state): state is TopLevelStateDeclaration & { readonly name: string } => state.eligible && state.name !== undefined)
   if (eligibleStates.length === 0) return source
@@ -1063,11 +1063,11 @@ function lowerTopLevelState(source: string): string {
   const dependencies = new Map<string, ReadonlySet<string>>()
   for (const state of eligibleStates) dependencies.set(state.name, stateDependencies(state, allNames))
 
-  const views = collectMuseViewCalls(file, bindings)
+  const views = collectVuneViewCalls(file, bindings)
   if (views.length === 0) return source
   const viewSet = new Set<ts.Node>(views)
 
-  // Any reference outside a Muse view keeps that State module-scoped. This
+  // Any reference outside a Vune view keeps that State module-scoped. This
   // includes helper functions and ineligible/exported/mutable State factories.
   const directOutside = new Set<string>()
   const stateDeclarations = new Set(states.map(state => state.declaration))
@@ -1165,24 +1165,24 @@ function ensureImports(source: string): string {
     .filter(name => new RegExp(`\\b${name}(?:<[^()\\n]*>)?\\s*\\(`).test(source) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
   let result = source
   if (required.length === 0) return result
-  const imports = [...result.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*(["'])(muse|@muse\/core)\2[\t ]*;?/g)]
+  const imports = [...result.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*(["'])(vune-ui|@vune-ui\/core)\2[\t ]*;?/g)]
   const imported = new Set(imports.flatMap(match => match[1].split(",").map(value => value.trim()).filter(Boolean)))
   const missing = required.filter(name => !imported.has(name))
   if (missing.length === 0) return result
-  const existingCore = imports.find(match => match[3] === "@muse/core")
-  if (!existingCore) return `import { ${missing.join(", ")} } from "@muse/core"\n${result}`
+  const existingCore = imports.find(match => match[3] === "@vune-ui/core")
+  if (!existingCore) return `import { ${missing.join(", ")} } from "@vune-ui/core"\n${result}`
   const names = existingCore[1].split(",").map(value => value.trim()).filter(Boolean)
   for (const name of missing) if (!names.includes(name)) names.push(name)
-  const replacement = `import { ${names.join(", ")} } from ${existingCore[2]}@muse/core${existingCore[2]}`
+  const replacement = `import { ${names.join(", ")} } from ${existingCore[2]}@vune-ui/core${existingCore[2]}`
   result = result.slice(0, existingCore.index) + replacement + result.slice(existingCore.index + existingCore[0].length)
   return result
 }
 
-function lowerNamedMuseCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
+function lowerNamedVuneCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   let output = source
   let iterations = 0
   while (true) {
-    if (++iterations > output.length + 1) throw syntaxError("Muse named-argument lowering did not advance", output.length)
+    if (++iterations > output.length + 1) throw syntaxError("Vune named-argument lowering did not advance", output.length)
     const calls = [...output.matchAll(/\b(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*\s*\(/g)]
     let replacement: { start: number; end: number; value: string } | undefined
     for (const match of calls.reverse()) {
@@ -1204,9 +1204,9 @@ function lowerNamedMuseCalls(source: string, registry: InitializerSymbolRegistry
   }
 }
 
-function initializerRegistryFor(declarations: readonly MuseStruct[]): Map<string, readonly SemanticInitializerSymbol[]> {
+function initializerRegistryFor(declarations: readonly VuneStruct[]): Map<string, readonly SemanticInitializerSymbol[]> {
   const registry = new Map(canonicalInitializerSymbols)
-  const add = (declaration: MuseStruct): void => {
+  const add = (declaration: VuneStruct): void => {
     registry.set(
       declaration.name,
       structInitializerPlans(declaration).map((plan, index) => semanticInitializerSymbol(declaration.name, plan, index)),
@@ -1218,7 +1218,7 @@ function initializerRegistryFor(declarations: readonly MuseStruct[]): Map<string
 }
 
 function lowerVueComponentImports(source: string): string {
-  const file = ts.createSourceFile("muse-vue-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = ts.createSourceFile("vune-vue-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const existingNames = new Set<string>()
   const collectNames = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) existingNames.add(node.text)
@@ -1235,8 +1235,8 @@ function lowerVueComponentImports(source: string): string {
         ? statement.importClause.namedBindings.elements.find(element => element.propertyName?.text === "default")?.name.text
         : undefined)
     if (!importedName) continue
-    let adapterName = `__museForeignComponent${index++}`
-    while (existingNames.has(adapterName)) adapterName = `__museForeignComponent${index++}`
+    let adapterName = `__vuneForeignComponent${index++}`
+    while (existingNames.has(adapterName)) adapterName = `__vuneForeignComponent${index++}`
     existingNames.add(adapterName)
     const quote = source[statement.moduleSpecifier.getStart(file)]
     const module = statement.moduleSpecifier.text
@@ -1245,28 +1245,28 @@ function lowerVueComponentImports(source: string): string {
     replacements.push({
       start: statement.getStart(file),
       end: statement.end,
-      value: `${indent}import ${adapterName} from ${quote}${module}${quote}\n${indent}const ${importedName} = __museForeignComponent(${adapterName})`,
+      value: `${indent}import ${adapterName} from ${quote}${module}${quote}\n${indent}const ${importedName} = __vuneForeignComponent(${adapterName})`,
     })
   }
   if (replacements.length === 0) return source
   let result = source
   for (const replacement of replacements.reverse()) result = result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end)
-  return `import { foreignComponent as __museForeignComponent } from "@muse/vue"\n${result}`
+  return `import { foreignComponent as __vuneForeignComponent } from "@vune-ui/vue"\n${result}`
 }
 
-export function transformMuseSource(source: string, fileName = "muse-source.ts"): string {
+export function transformVuneSource(source: string, fileName = "vune-source.ts"): string {
   const withVueImports = lowerVueComponentImports(source)
-  const declarations = parseMuseStructs(withVueImports)
+  const declarations = parseVuneStructs(withVueImports)
   const registry = initializerRegistryFor(declarations)
-  validateKnownCalls(parseMuseBuilder(withVueImports), registry)
+  validateKnownCalls(parseVuneBuilder(withVueImports), registry)
   validateKnownTypeScriptCalls(withVueImports, registry)
   for (const declaration of declarations) {
-    validateKnownCalls(parseMuseBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
+    validateKnownCalls(parseVuneBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
   }
   const withStructs = lowerStructs(withVueImports, registry)
-  const withNamedArguments = lowerNamedMuseCalls(withStructs, registry)
+  const withNamedArguments = lowerNamedVuneCalls(withStructs, registry)
   const withBuilderSyntax = lowerRange(withNamedArguments, registry)
-  // State ownership is resolved only after Muse-only syntax has become valid
+  // State ownership is resolved only after Vune-only syntax has become valid
   // TypeScript. This lets the TypeScript AST see complete view() arguments
   // instead of truncating them at trailing builder blocks.
   const lowered = lowerTopLevelState(withBuilderSyntax)
@@ -1275,7 +1275,7 @@ export function transformMuseSource(source: string, fileName = "muse-source.ts")
   return ensureImports(lowerStaticImportedCalls(withStaticModifiers, fileName))
 }
 
-function hasNamedMuseArguments(source: string): boolean {
+function hasNamedVuneArguments(source: string): boolean {
   const calls = /\b[A-Z][A-Za-z0-9_$]*\s*\(/g
   let match: RegExpExecArray | null
   while ((match = calls.exec(source))) {
@@ -1299,11 +1299,11 @@ function hasStaticModifierSyntax(source: string): boolean {
   return Array.from(staticModifierNames).some(name => new RegExp(`\\.${name}\\s*\\(`).test(source))
 }
 
-export function hasMuseSyntax(source: string, allowRawHtml = true): boolean {
+export function hasVuneSyntax(source: string, allowRawHtml = true): boolean {
   return /\bstruct\s+[A-Z][A-Za-z0-9_$]*(?:\s*<[^>{}]*>)?\s*:\s*View/.test(source)
     || (allowRawHtml && findRawHtml(source) !== undefined)
     || findBuilder(source, 0, true) !== undefined
     || hasBindingShorthand(source)
-    || hasNamedMuseArguments(source)
+    || hasNamedVuneArguments(source)
     || hasStaticModifierSyntax(source)
 }

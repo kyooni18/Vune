@@ -57,18 +57,18 @@ export {
   closureForKind,
   closureKindOf,
   closureVariantsOf,
-  markMuseClosure,
-  museClosureKind,
-  museClosureVariants,
+  markVuneClosure,
+  vuneClosureKind,
+  vuneClosureVariants,
   overloadClosure,
   valueClosure,
   viewBuilderClosure,
 } from './closures.js'
-export type { MuseClosure, MuseClosureKind, MuseClosureVariants } from './closures.js'
+export type { VuneClosure, VuneClosureKind, VuneClosureVariants } from './closures.js'
 export { modifierGraphOf, styled } from './modifiers.js'
 export type { ModifierRecord } from './modifiers.js'
 export { materializeViewNode, reactRenderer, renderViewNode } from './runtime/renderer.js'
-export type { MuseRenderer, RendererChild } from './runtime/renderer.js'
+export type { VuneRenderer, RendererChild } from './runtime/renderer.js'
 export { createViewIdentityStore } from './runtime/view-storage.js'
 export type { ViewIdentityStore } from './runtime/view-storage.js'
 export {
@@ -81,7 +81,7 @@ export {
   viewHost,
   viewNodeOf,
 } from './runtime/view-graph.js'
-export type { MuseBuilder } from './builder.js'
+export type { VuneBuilder } from './builder.js'
 export { view } from './view.js'
 export {
   ViewBuilder,
@@ -92,10 +92,10 @@ export {
   initializersOf,
   initializer,
   initializerKinds,
-  MuseInitializerError,
-  museNamedArguments,
-  museInitializers,
-  museView,
+  VuneInitializerError,
+  vuneNamedArguments,
+  vuneInitializers,
+  vuneView,
   namedArguments,
   registerInitializers,
   renderViewTree,

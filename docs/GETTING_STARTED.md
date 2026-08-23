@@ -1,9 +1,9 @@
-# Getting started with Muse
+# Getting started with Vune
 
-Muse is a renderer-independent, SwiftUI-like declarative UI graph for
-TypeScript. `muse` defines Views, state, builders, modifiers, and raw HTML;
-`@muse/react` materializes the graph in React. The same graph can also be
-rendered by `@muse/vue` or `@muse/web`.
+Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+TypeScript. `vune-ui` defines Views, state, builders, modifiers, and raw HTML;
+`@vune-ui/react` materializes the graph in React. The same graph can also be
+rendered by `@vune-ui/vue` or `@vune-ui/web`.
 
 ## Requirements
 
@@ -17,45 +17,58 @@ The recommended path creates the app and configures the complete canonical
 toolchain in one command:
 
 ```bash
-pnpm dlx muse create my-muse-app
-cd my-muse-app
+pnpm dlx vune-ui create my-vune-app
+cd my-vune-app
 pnpm dev
 ```
 
-Use `muse create my-muse-app --no-install` to generate files without running a
-package-manager install. The generated app uses `muse`, `@muse/react`, and
-`@muse/vite`; it does not use the legacy `vune-ui` package.
+You can also use the familiar npm initializer form:
+
+```bash
+pnpm create vune-ui my-vune-app
+# or: npm create vune-ui my-vune-app
+```
+
+To scaffold the current empty directory, use `.`:
+
+```bash
+pnpm create vune-ui .
+```
+
+Use `vune-ui create my-vune-app --no-install` to generate files without running a
+package-manager install. The generated app uses `vune-ui`, `@vune-ui/react`, and
+`@vune-ui/vite`; it does not require the `vune-ui/legacy` compatibility entry point.
 
 For a local checkout:
 
 ```bash
-node ../Muse/packages/muse/bin/muse.mjs create my-muse-app
+node ../vune-ui/bin/vune-ui.mjs create my-vune-app
 ```
 
-## Install Muse manually
+## Install Vune manually
 
 In an existing React application:
 
 ```bash
-pnpm add muse @muse/react @muse/vite react react-dom
+pnpm add vune-ui @vune-ui/react @vune-ui/vite react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
-When working from a local Muse checkout:
+When working from a local Vune checkout:
 
 ```bash
-pnpm add ../Muse/packages/muse ../Muse/packages/react ../Muse/packages/vite
+pnpm add ../vune-ui ../vune-ui/packages/react ../vune-ui/packages/vite
 pnpm add react react-dom
 pnpm add -D @vitejs/plugin-react
 ```
 
 ## Initialize an existing directory
 
-From an empty directory, `muse init` uses the same canonical template as
-`muse create`:
+From an empty directory, `vune-ui init` uses the same canonical template as
+`vune-ui create`:
 
 ```bash
-muse init
+vune-ui init
 ```
 
 Use `--no-install` to defer dependency installation or `--force` when the
@@ -63,17 +76,17 @@ directory already contains files you explicitly want to replace.
 
 ## Configure Vite
 
-The canonical compiler handles `.muse.ts` files and must run before the React
+The canonical compiler handles `.vune.ts` files and must run before the React
 plugin:
 
 ```ts
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { musePlugin } from '@muse/vite'
+import { vunePlugin } from '@vune-ui/vite'
 
 export default defineConfig({
   plugins: [
-    musePlugin(),
+    vunePlugin(),
     react(),
   ],
 })
@@ -82,35 +95,35 @@ export default defineConfig({
 The plugin is a build-time syntax transform. It does not replace React or
 introduce a second renderer.
 
-For Vue, install `@vitejs/plugin-vue` and keep the same `musePlugin()` before
-it. The adapter lowers Muse syntax in `.vue` script blocks and Vue virtual
+For Vue, install `@vitejs/plugin-vue` and keep the same `vunePlugin()` before
+it. The adapter lowers Vune syntax in `.vue` script blocks and Vue virtual
 script modules while leaving `<template>` and stylesheet modules to Vue/Vite:
 
 ```ts
 import vue from '@vitejs/plugin-vue'
-import { musePlugin } from '@muse/vite'
+import { vunePlugin } from '@vune-ui/vite'
 
-export default defineConfig({ plugins: [musePlugin(), vue()] })
+export default defineConfig({ plugins: [vunePlugin(), vue()] })
 ```
 
 If a compatibility JSX entry is needed, configure it explicitly. Canonical
-Muse source does not require JSX:
+Vune source does not require JSX:
 
 ```json
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "@muse/react/legacy"
+    "jsxImportSource": "@vune-ui/react/legacy"
   }
 }
 ```
 
 This enables legacy intrinsic JSX such as `<div padding={12} />`. Function DSL
-and canonical `.muse.ts` source use the same graph modifier pipeline.
+and canonical `.vune.ts` source use the same graph modifier pipeline.
 
 ## Create the React entry point
 
-Muse views are React components, so mount them with the normal React DOM API:
+Vune views are React components, so mount them with the normal React DOM API:
 
 ```ts
 import { createElement } from 'react'
@@ -122,11 +135,11 @@ createRoot(document.getElementById('app')!).render(createElement(App))
 
 ## Build a stateful screen
 
-Put canonical builder syntax in `App.muse.ts`:
+Put canonical builder syntax in `App.vune.ts`:
 
 ```ts
-import { Button, State, Text, VStack } from "muse"
-import { view } from "@muse/react"
+import { Button, State, Text, VStack } from "vune-ui"
+import { view } from "@vune-ui/react"
 
 const count = State(0)
 
@@ -139,10 +152,10 @@ export default view(() => VStack(alignment: .leading, spacing: 12) {
   .padding(24)
 ```
 
-Because `count` belongs unambiguously to this one Muse `view`, the compiler makes
+Because `count` belongs unambiguously to this one Vune `view`, the compiler makes
 it instance-local. A top-level State that is exported, mutable, destructured,
 shared by multiple Views, or used outside its owning View remains module-scoped
-and emits `MUSE_STATE_SCOPE` as a warning. This decision is based on bindings and
+and emits `VUNE_STATE_SCOPE` as a warning. This decision is based on bindings and
 references, not formatting.
 
 The explicit no-hoisting form remains available through `view({ state, body })`
@@ -174,13 +187,13 @@ React elements, replace the root value instead of mutating it in place.
 
 ## Compose layouts and controls
 
-Muse layouts accept React nodes, Muse elements, and ordinary React components in
+Vune layouts accept React nodes, Vune elements, and ordinary React components in
 the same tree:
 
 ```ts
 import { createElement } from 'react'
-import { HStack, Spacer, Text, VStack } from 'muse'
-import { Component } from '@muse/react'
+import { HStack, Spacer, Text, VStack } from 'vune-ui'
+import { Component } from '@vune-ui/react'
 
 function ProfileCard({ name }: { name: string }) {
   return createElement('strong', null, name)
@@ -191,7 +204,7 @@ VStack(
   HStack(
     Text('Profile'),
     Spacer(),
-    Component(ProfileCard, { name: 'Muse' }).padding(12),
+    Component(ProfileCard, { name: 'Vune' }).padding(12),
   ),
 )
 ```
@@ -216,8 +229,8 @@ identity is not a public contract; replace the State root for frozen values,
 class instances, `Map`, `Set`, or React elements.
 
 The root `vune-ui` import and `vune-ui/vite` macro remain available
-only for compatibility with older applications. New code should use `muse`,
-`@muse/react`, and `@muse/vite`.
+only for compatibility with older applications. New code should use `vune-ui`,
+`@vune-ui/react`, and `@vune-ui/vite`.
 
 ## Styling
 
@@ -257,11 +270,11 @@ On the client, `Sheet` handles Escape, initial focus, focus wrapping, and focus
 restoration. `Alert` exposes one `alertdialog` host, and `Menu` provides
 keyboard navigation with `menuitem` children.
 
-## Run the Muse example
+## Run the Vune example
 
 The repository includes React, Vue, and direct Web adapter demos in
-`examples/App.ts`, `examples/VueCounter.vue`, and `examples/WebCounter.muse.ts`.
-They use the same Muse graph primitives at their renderer boundary.
+`examples/App.ts`, `examples/VueCounter.vue`, and `examples/WebCounter.vune.ts`.
+They use the same Vune graph primitives at their renderer boundary.
 
 From the repository root:
 
@@ -274,9 +287,9 @@ For the larger integration fixture, run `pnpm run demo:showcase:build` or start
 the Showcase Vite config. It exercises filtering, bindings, async actions, keyed
 reordering, lazy collections, custom Views, raw HTML, and modifier chains.
 
-## Verify a Muse project
+## Verify a Vune project
 
-For the Muse repository itself:
+For the Vune repository itself:
 
 ```bash
 pnpm test
@@ -292,7 +305,7 @@ pnpm run benchmark:performance:ci
 
 `pnpm test` checks the TypeScript build, public type usage, runtime rendering,
 macro transforms, controls, presentation, and State behavior.
-`benchmark:modifiers` compares raw React styles with Muse modifier chains and
+`benchmark:modifiers` compares raw React styles with Vune modifier chains and
 the compiler-shaped flat modifier construction across element counts and chain
 depths. `benchmark:performance:ci` additionally guards initializer
 specialization, compiler transforms, View construction, `ForEach`, State

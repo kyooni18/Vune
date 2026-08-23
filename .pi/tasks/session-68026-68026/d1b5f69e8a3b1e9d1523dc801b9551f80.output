@@ -1,0 +1,115 @@
+Warning: No project session found with id 'delegate-0caabdf72fca55998f780f3e1491c379'; creating a new session with that id.
+## Current state
+
+The repo is only partially rebranded:
+
+- Root package is already `vune-ui`, but its `bin` is still `muse`.
+- Canonical packages remain `muse` and `@muse/*`.
+- Root source still exposes `src/muse.ts`; docs describe Muse as canonical.
+- CLI, compiler, editor support, tests, fixtures, environment variables, DOM markers, and generated artifacts still use Muse.
+
+## Recommended package/CLI mappings
+
+Use `vune-ui` as the sole canonical top-level package. Absorb or remove the duplicate `packages/muse` package rather than publishing two competing authoring packages.
+
+| Current | New |
+|---|---|
+| `muse` | `vune-ui` |
+| `@muse/core` | `@vune-ui/core` |
+| `@muse/compiler` | `@vune-ui/compiler` |
+| `@muse/react` | `@vune-ui/react` |
+| `@muse/vue` | `@vune-ui/vue` |
+| `@muse/web` | `@vune-ui/web` |
+| `@muse/vite` | `@vune-ui/vite` |
+| `@muse/legacy-react` | `@vune-ui/legacy-react` |
+| `muse` CLI | `vune-ui` CLI |
+| `bin/muse.mjs` | `bin/vune-ui.mjs` |
+| `muse create/init` | `vune-ui create/init` |
+| `musePlugin()` | `vunePlugin()` |
+
+Update workspace dependencies, `pnpm-lock.yaml`, release verification, templates, and all package manifests. The current root `vune-ui` package should become the canonical public facade, while the old root compatibility API should move under explicit legacy subpaths.
+
+## Source/API identifiers
+
+Apply branded identifier mappings such as:
+
+- `MuseView` → `VuneView`
+- `MuseRenderer` → `VuneRenderer`
+- `MuseBuilder` → `VuneBuilder`
+- `MuseDiagnostic` → `VuneDiagnostic`
+- `compileMuseFile` → `compileVuneFile`
+- `createMuseSemanticModel` → `createVuneSemanticModel`
+- `createMuseVitePlugin` → `createVuneVitePlugin`
+- `createMuseLanguageService` → `createVuneLanguageService`
+- `museMacro` → `vuneMacro`
+- `museSyntaxError` → `vuneSyntaxError`
+- `museNode`, `museIntrinsic`, `museClosure*`, `museForeignComponent` → corresponding `vune*` names
+- generated `__muse*` names → `__vune*`
+- plugin names `muse-compiler`, `muse-macro`, and `muse-builder-transform` → `vune-ui-compiler`, etc.
+
+Change runtime branding markers:
+
+- `Symbol.for("muse.*")` → `Symbol.for("vune-ui.*")`
+- `data-muse`, `data-muse-*` → `data-vune-ui`, `data-vune-ui-*`
+- `--muse-*` CSS custom properties → `--vune-ui-*`
+- `x-muse-parity` → `x-vune-ui-parity`
+- source-map extension `x_muse` → `x_vune_ui`
+
+## Files, language, and editor support
+
+Rename and update:
+
+- `src/muse.ts` → `src/vune-ui.ts`
+- `packages/muse/` → remove/merge into the canonical root package
+- `*.muse.ts` → `*.vune.ts`
+- `muse-cli.test.mjs` → `vune-ui-cli.test.mjs`
+- `local-packages/muse-*.tgz` → `local-packages/vune-ui-*.tgz`
+- `editors/vscode/syntaxes/muse.tmLanguage.json` → `vune.tmLanguage.json`
+
+Update VS Code:
+
+- language ID `muse` → `vune`
+- aliases `Muse`/`muse.ts` → `Vune UI`/`vune.ts`
+- scope `source.muse` → `source.vune`
+- command `muse.formatDocument` → `vune-ui.formatDocument`
+- settings `muse.languageTools.*` → `vuneUi.languageTools.*`
+
+Update compiler filename detection, default virtual filenames, Vite cache names, examples, templates, and all docs under `README.md`, `docs/`, `examples/`, `scripts/`, and `.github/workflows/`.
+
+## Environment variables
+
+Rename variables consistently:
+
+- `MUSE_BROWSER_URL` → `VUNE_UI_BROWSER_URL`
+- `MUSE_VUE_BROWSER_URL` → `VUNE_UI_VUE_BROWSER_URL`
+- `MUSE_WEB_BROWSER_URL` → `VUNE_UI_WEB_BROWSER_URL`
+- `MUSE_PARITY_REACT_URL` → `VUNE_UI_PARITY_REACT_URL`
+- `MUSE_PARITY_VUE_URL` → `VUNE_UI_PARITY_VUE_URL`
+- `MUSE_PARITY_WEB_URL` → `VUNE_UI_PARITY_WEB_URL`
+- `MUSE_SHOWCASE_URL` → `VUNE_UI_SHOWCASE_URL`
+- `MUSE_CHROMIUM_EXECUTABLE` → `VUNE_UI_CHROMIUM_EXECUTABLE`
+- `MUSE_BENCH_*` → `VUNE_UI_BENCH_*`
+- `MUSE_PNPM_CLI` → `VUNE_UI_PNPM_CLI`
+
+Update package scripts, browser tests, benchmark scripts, release scripts, and CI.
+
+## Compatibility strategy
+
+For at least one deprecation cycle:
+
+1. Publish old `muse` and `@muse/*` packages as forwarding shims.
+2. Keep `muse` as a hidden/alias CLI invoking `vune-ui`.
+3. Accept both `.muse.ts` and `.vune.ts`.
+4. Export old API names as deprecated aliases.
+5. Read both old and new environment variables, preferring `VUNE_UI_*`.
+6. Consume and optionally emit both old and new DOM markers.
+7. Preserve old `Symbol.for("muse.*")` markers so mixed-version graphs interoperate.
+8. Preserve `MUSE_*` diagnostic codes and `x_muse` source-map data, while adding `VUNE_UI_*`/`x_vune_ui` equivalents; changing machine-readable codes outright would break tooling and tests.
+
+## Terms that should remain semantic
+
+Do **not** rename core UI concepts merely because they contain no brand:
+
+`View`, `ViewBuilder`, `State`, `Binding`, `Element`, `Modifier`, `Renderer`, `GeometryReader`, `Text`, `Button`, `VStack`, `HStack`, `List`, `Spacer`, HTML/CSS terms, and React/Vue/Web names.
+
+Only branded prefixes, package names, CLI names, language identifiers, metadata, diagnostics, and documentation prose should change.

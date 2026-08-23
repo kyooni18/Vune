@@ -1,3 +1,3 @@
-export { createMuseVitePlugin as musePlugin, createMuseVitePlugin } from "@muse/compiler"
-export { mapGeneratedPosition, mapOriginalPosition } from "@muse/compiler"
-export type { MuseDiagnostic, MuseLanguageService, MuseSourceMap, MuseTransformResult, MuseVitePluginOptions } from "@muse/compiler"
+export { createVuneVitePlugin as vunePlugin, createVuneVitePlugin } from "@vune-ui/compiler"
+export { mapGeneratedPosition, mapOriginalPosition } from "@vune-ui/compiler"
+export type { VuneDiagnostic, VuneLanguageService, VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "@vune-ui/compiler"

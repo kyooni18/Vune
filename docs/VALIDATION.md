@@ -1,6 +1,6 @@
 # Validation
 
-This file records the release-hardening checks expected before a Muse alpha is
+This file records the release-hardening checks expected before a Vune alpha is
 published. The commands are intentionally reproducible and are also represented
 in CI where they need network or real-browser support.
 

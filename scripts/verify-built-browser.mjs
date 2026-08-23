@@ -40,8 +40,8 @@ async function validateDemo(browser) {
   await page.getByText('DEMO', { exact: true }).waitFor()
   assert.ok(await page.locator('[class*="demoTitleModule"]').first().isVisible())
   const text = page.getByRole('textbox', { name: 'Demo text field' })
-  await text.fill('Muse UI')
-  assert.equal(await text.inputValue(), 'Muse UI')
+  await text.fill('Vune UI')
+  assert.equal(await text.inputValue(), 'Vune UI')
   const slider = page.getByRole('slider', { name: 'Demo slider' })
   await slider.fill('80')
   assert.equal(await slider.inputValue(), '80')
@@ -94,7 +94,7 @@ async function validateParity(browser, dir, renderer) {
   await page.getByRole('button', { name: 'Reorder' }).click()
   assert.deepEqual(await page.locator('[data-row]').evaluateAll(es => es.map(e => e.getAttribute('data-row'))), ['b', 'a'], renderer)
   assert.equal(await page.locator('[data-row="a"]').textContent(), 'a:1', renderer)
-  const custom = page.locator('x-muse-parity')
+  const custom = page.locator('x-vune-parity')
   assert.equal(await custom.getAttribute('data-testid'), 'custom-element', renderer)
   assert.ok((await custom.boundingBox())?.width > 0, renderer)
   await page.locator('[data-testid="geometry"]').waitFor()
@@ -130,7 +130,7 @@ async function validateShowcase(browser) {
 
 const browser = await chromium.launch({
   headless: true,
-  ...(process.env.MUSE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.MUSE_CHROMIUM_EXECUTABLE } : {}),
+  ...(process.env.VUNE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.VUNE_CHROMIUM_EXECUTABLE } : {}),
 })
 try {
   await validateDemo(browser)

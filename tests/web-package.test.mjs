@@ -23,12 +23,12 @@ const Text = defineBuiltinView(
   ({ value }) => viewElement("span", null, [value]),
 )
 
-test("@muse/web renders the same core graph without React", () => {
+test("@vune-ui/web renders the same core graph without React", () => {
   assert.equal(renderToHTML(Text("Hello").padding(4)), '<span style="padding:4px">Hello</span>')
   assert.equal(renderToHTML(Text("Styled").className(["card", false, "active"])), '<span class="card active">Styled</span>')
 })
 
-test("@muse/web preserves raw HTML attributes and object styles", () => {
+test("@vune-ui/web preserves raw HTML attributes and object styles", () => {
   const value = Element("label", {
     class: "card",
     htmlFor: "name",
@@ -46,7 +46,7 @@ test("@muse/web preserves raw HTML attributes and object styles", () => {
   assert.equal(renderToHTML(Element("input", { disabled: true, style: "color: red", "data-field": "name" })), '<input disabled style="color: red" data-field="name">')
 })
 
-test("@muse/web merges object styles and classes supplied by withProps", () => {
+test("@vune-ui/web merges object styles and classes supplied by withProps", () => {
   const value = Element("div", { class: "base", style: { color: "red" } }, "Card")
     .className("accent")
     .withProps({ className: "interactive", style: { backgroundColor: "blue" } })
@@ -55,27 +55,27 @@ test("@muse/web merges object styles and classes supplied by withProps", () => {
   assert.match(html, /color:red;background-color:blue/)
 })
 
-test("@muse/web serializes scroll and safe-area CSS from the core graph", () => {
+test("@vune-ui/web serializes scroll and safe-area CSS from the core graph", () => {
   const value = SafeArea(["top", "bottom"], () => [
     ScrollView("both", () => [Element("div", null, "Content")]),
   ])
   const html = renderToHTML(value)
-  assert.match(html, /data-muse="SafeArea"/)
+  assert.match(html, /data-vune="SafeArea"/)
   assert.match(html, /padding-top:env\(safe-area-inset-top\)/)
   assert.match(html, /padding-bottom:env\(safe-area-inset-bottom\)/)
-  assert.match(html, /data-muse="ScrollView"/)
+  assert.match(html, /data-vune="ScrollView"/)
   assert.match(html, /overflow-x:auto/)
   assert.match(html, /overflow-y:auto/)
 })
 
-test("@muse/web exposes GeometryReader in SSR and DOM modes", () => {
+test("@vune-ui/web exposes GeometryReader in SSR and DOM modes", () => {
   const value = GeometryReader(geometry => Element("span", null, `${geometry.size.width}x${geometry.size.height}`))
   const html = renderToHTML(value)
-  assert.match(html, /data-muse="GeometryReader"/)
+  assert.match(html, /data-vune="GeometryReader"/)
   assert.match(html, />0x0<\/span>/)
 })
 
-test("@muse/web measures CSS safe-area insets at the DOM boundary", async () => {
+test("@vune-ui/web measures CSS safe-area insets at the DOM boundary", async () => {
   const dom = new JSDOM("<div id=app></div>")
   dom.window.getComputedStyle = () => ({ paddingTop: "12px", paddingRight: "8px", paddingBottom: "4px", paddingLeft: "2px" })
   const container = dom.window.document.querySelector("#app")
@@ -89,7 +89,7 @@ test("@muse/web measures CSS safe-area insets at the DOM boundary", async () => 
   dom.window.close()
 })
 
-test("@muse/web resolves renderer-independent View state", () => {
+test("@vune-ui/web resolves renderer-independent View state", () => {
   const Counter = defineView("Counter", {
     initializers: [initializer("Counter()", args => args.length === 0)],
     state: () => ({ count: State(3) }),
@@ -98,7 +98,7 @@ test("@muse/web resolves renderer-independent View state", () => {
   assert.equal(renderToHTML(Counter()), "<span>3</span>")
 })
 
-test("@muse/web mount reevaluates State reads and cleans up", async () => {
+test("@vune-ui/web mount reevaluates State reads and cleans up", async () => {
   const state = State(1)
   const Counter = defineView("MountedCounter", {
     initializers: [initializer("MountedCounter()", args => args.length === 0)],
@@ -116,7 +116,7 @@ test("@muse/web mount reevaluates State reads and cleans up", async () => {
   assert.equal(container.innerHTML, "")
 })
 
-test("@muse/web DOM mount preserves events, refs, and State invalidation", async () => {
+test("@vune-ui/web DOM mount preserves events, refs, and State invalidation", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -140,7 +140,7 @@ test("@muse/web DOM mount preserves events, refs, and State invalidation", async
   assert.equal(container.innerHTML, "")
 })
 
-test("@muse/web patches text, attributes, and events without replacing the DOM node", async () => {
+test("@vune-ui/web patches text, attributes, and events without replacing the DOM node", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -169,7 +169,7 @@ test("@muse/web patches text, attributes, and events without replacing the DOM n
   dom.window.close()
 })
 
-test("@muse/web windows lazy children and responds to scroll without rebuilding the boundary", async () => {
+test("@vune-ui/web windows lazy children and responds to scroll without rebuilding the boundary", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -180,10 +180,10 @@ test("@muse/web windows lazy children and responds to scroll without rebuilding 
   const unmount = mount(value, container)
   await Promise.resolve()
   await Promise.resolve()
-  const boundary = container.querySelector("[data-muse-lazy]")
+  const boundary = container.querySelector("[data-vune-lazy]")
   assert.ok(boundary)
   assert.ok(boundary.querySelectorAll("[data-item]").length < children.length)
-  assert.ok(boundary.querySelector("[data-muse-lazy-spacer=after]"))
+  assert.ok(boundary.querySelector("[data-vune-lazy-spacer=after]"))
 
   const before = boundary.querySelector("[data-item=0]")
   container.scrollTop = 400
@@ -193,13 +193,13 @@ test("@muse/web windows lazy children and responds to scroll without rebuilding 
   assert.equal(container.scrollTop, 400)
   assert.equal(boundary.querySelector("[data-item=0]"), null)
   assert.ok(boundary.querySelector("[data-item=20]"))
-  assert.equal(boundary, container.querySelector("[data-muse-lazy]"))
+  assert.equal(boundary, container.querySelector("[data-vune-lazy]"))
   assert.equal(before?.isConnected, false)
   unmount()
   dom.window.close()
 })
 
-test("@muse/web refines lazy ranges from measured child sizes", async () => {
+test("@vune-ui/web refines lazy ranges from measured child sizes", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -218,7 +218,7 @@ test("@muse/web refines lazy ranges from measured child sizes", async () => {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
-  const boundary = container.querySelector("[data-muse-lazy]")
+  const boundary = container.querySelector("[data-vune-lazy]")
   assert.ok(boundary)
   assert.equal(boundary.querySelectorAll("[data-item]").length, 3)
   unmount()
@@ -226,7 +226,7 @@ test("@muse/web refines lazy ranges from measured child sizes", async () => {
   dom.window.close()
 })
 
-test("@muse/web preserves keyed child State across reorder and resets it after remount", async () => {
+test("@vune-ui/web preserves keyed child State across reorder and resets it after remount", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -259,7 +259,7 @@ test("@muse/web preserves keyed child State across reorder and resets it after r
   dom.window.close()
 })
 
-test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", async () => {
+test("@vune-ui/web hydrates existing SSR markup and wires the live DOM boundary", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -280,7 +280,7 @@ test("@muse/web hydrates existing SSR markup and wires the live DOM boundary", a
   dom.window.close()
 })
 
-test("@muse/web keeps explicit ForEach identity through SSR hydration and reorder", async () => {
+test("@vune-ui/web keeps explicit ForEach identity through SSR hydration and reorder", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -309,7 +309,7 @@ test("@muse/web keeps explicit ForEach identity through SSR hydration and reorde
   dom.window.close()
 })
 
-test("@muse/web hydrates the frame host without replacing its child", async () => {
+test("@vune-ui/web hydrates the frame host without replacing its child", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -336,7 +336,7 @@ test("@muse/web hydrates the frame host without replacing its child", async () =
   dom.window.close()
 })
 
-test("@muse/web falls back to a fresh client tree when hydration structure mismatches", async () => {
+test("@vune-ui/web falls back to a fresh client tree when hydration structure mismatches", async () => {
   const dom = new JSDOM("<div id=app><div data-stale>stale</div></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -361,7 +361,7 @@ test("@muse/web falls back to a fresh client tree when hydration structure misma
   dom.window.close()
 })
 
-test("@muse/web commits refs only after live DOM reconciliation and keeps stable refs stable", async () => {
+test("@vune-ui/web commits refs only after live DOM reconciliation and keeps stable refs stable", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -385,7 +385,7 @@ test("@muse/web commits refs only after live DOM reconciliation and keeps stable
   dom.window.close()
 })
 
-test("@muse/web normalizes DOM event names and boolean, ARIA, and enumerated attributes", () => {
+test("@vune-ui/web normalizes DOM event names and boolean, ARIA, and enumerated attributes", () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -415,7 +415,7 @@ test("@muse/web normalizes DOM event names and boolean, ARIA, and enumerated att
   dom.window.close()
 })
 
-test("@muse/web hydration reconciles stale server attributes without replacing matching nodes", () => {
+test("@vune-ui/web hydration reconciles stale server attributes without replacing matching nodes", () => {
   const dom = new JSDOM('<div id=app><div class="server" title="old" style="width:10px" data-stale="yes">server</div></div>')
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -432,7 +432,7 @@ test("@muse/web hydration reconciles stale server attributes without replacing m
   dom.window.close()
 })
 
-test("@muse/web creates contextual SVG namespaces and returns to HTML inside foreignObject", () => {
+test("@vune-ui/web creates contextual SVG namespaces and returns to HTML inside foreignObject", () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -463,7 +463,7 @@ test("@muse/web creates contextual SVG namespaces and returns to HTML inside for
   dom.window.close()
 })
 
-test("@muse/web preserves State for logically present offscreen lazy rows and drops removed rows", async () => {
+test("@vune-ui/web preserves State for logically present offscreen lazy rows and drops removed rows", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)

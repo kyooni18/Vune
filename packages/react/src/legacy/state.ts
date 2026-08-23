@@ -1,1 +1,1 @@
-export * from "@muse/legacy-react/state"
+export * from "@vune-ui/legacy-react/state"

@@ -8,28 +8,19 @@ importers:
 
   .:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:packages/core
-      '@muse/react':
+      '@vune-ui/react':
         specifier: workspace:*
         version: link:packages/react
-      '@muse/vue':
+      '@vune-ui/vue':
         specifier: workspace:*
         version: link:packages/vue
-      muse:
-        specifier: workspace:*
-        version: link:packages/muse
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
     devDependencies:
-      '@muse/vite':
-        specifier: workspace:*
-        version: link:packages/vite
-      '@muse/web':
-        specifier: workspace:*
-        version: link:packages/web
       '@playwright/test':
         specifier: ^1.52.0
         version: 1.62.1
@@ -51,6 +42,12 @@ importers:
       '@vue/server-renderer':
         specifier: ^3.5.0
         version: 3.5.41
+      '@vune-ui/vite':
+        specifier: workspace:*
+        version: link:packages/vite
+      '@vune-ui/web':
+        specifier: workspace:*
+        version: link:packages/web
       autoprefixer:
         specifier: ^10.5.4
         version: 10.5.4(postcss@8.5.26)
@@ -83,18 +80,24 @@ importers:
 
   packages/compiler:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
 
+  packages/create-vune-ui:
+    dependencies:
+      vune-ui:
+        specifier: workspace:*
+        version: link:../..
+
   packages/core: {}
 
   packages/legacy-react:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
       react:
@@ -107,18 +110,12 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/muse:
-    dependencies:
-      '@muse/core':
-        specifier: workspace:*
-        version: link:../core
-
   packages/react:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
-      '@muse/legacy-react':
+      '@vune-ui/legacy-react':
         specifier: workspace:*
         version: link:../legacy-react
       react:
@@ -134,13 +131,13 @@ importers:
 
   packages/vite:
     dependencies:
-      '@muse/compiler':
+      '@vune-ui/compiler':
         specifier: workspace:*
         version: link:../compiler
 
   packages/vue:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -150,7 +147,7 @@ importers:
 
   packages/web:
     dependencies:
-      '@muse/core':
+      '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
 

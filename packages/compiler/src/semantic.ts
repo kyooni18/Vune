@@ -1,5 +1,5 @@
 import * as ts from "typescript"
-import * as Core from "@muse/core"
+import * as Core from "@vune-ui/core"
 import {
   SemanticModel,
   resolveSemanticCall,
@@ -16,118 +16,118 @@ import {
   type SemanticStateSymbol,
   type SemanticSymbol,
   type SemanticViewTypeSymbol,
-} from "@muse/core"
+} from "@vune-ui/core"
 import {
-  parseMuseBuilder,
-  parseMuseStructs,
-  type MuseBuilderNode,
-  type MuseBuilderProgram,
-  type MuseStructDeclaration,
-  type MuseSourceRange,
+  parseVuneBuilder,
+  parseVuneStructs,
+  type VuneBuilderNode,
+  type VuneBuilderProgram,
+  type VuneStructDeclaration,
+  type VuneSourceRange,
 } from "./ast.js"
-import { createMuseSourceMap, mapGeneratedPosition, type MuseSourcePosition } from "./source-map.js"
+import { createVuneSourceMap, mapGeneratedPosition, type VuneSourcePosition } from "./source-map.js"
 
-export interface MuseSemanticInitializer {
+export interface VuneSemanticInitializer {
   readonly index: number
   readonly signature: string
   readonly parametersSource: string
   readonly parameters: readonly SemanticInitializerParameter[]
   readonly symbol: SemanticInitializerSymbol
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseSemanticField {
+export interface VuneSemanticField {
   readonly name: string
-  readonly kind: MuseStructDeclaration["fields"][number]["kind"]
+  readonly kind: VuneStructDeclaration["fields"][number]["kind"]
   readonly type?: string
   readonly initializer?: string
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseSemanticView {
+export interface VuneSemanticView {
   readonly name: string
   readonly qualifiedName: string
   readonly genericParameters?: string
-  readonly fields: readonly MuseSemanticField[]
-  readonly initializers: readonly MuseSemanticInitializer[]
+  readonly fields: readonly VuneSemanticField[]
+  readonly initializers: readonly VuneSemanticInitializer[]
   readonly symbol: SemanticViewTypeSymbol
-  readonly bodyRange: MuseSourceRange
-  readonly range: MuseSourceRange
+  readonly bodyRange: VuneSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseSemanticCall {
+export interface VuneSemanticCall {
   readonly callee: string
   readonly arguments: readonly {
     readonly label?: string
     readonly kind: "expression" | "closure"
     readonly source: string
-    readonly range: MuseSourceRange
+    readonly range: VuneSourceRange
   }[]
   readonly trailingClosure: boolean
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
   /** The shared semantic answer consumed by compiler and IDE clients. */
   readonly resolution: SemanticCallResolution
 }
 
-export interface MuseSemanticImport {
+export interface VuneSemanticImport {
   readonly module: string
-  readonly range: MuseSourceRange
+  readonly range: VuneSourceRange
 }
 
-export interface MuseSemanticHtmlElement {
+export interface VuneSemanticHtmlElement {
   readonly tag: string
   readonly attributes: readonly string[]
   readonly attributeSymbols: readonly SemanticHtmlAttributeSymbol[]
   readonly symbol: SemanticHtmlElementSymbol
-  /** Range mapped back to the original Muse source. */
-  readonly range: MuseSourceRange
+  /** Range mapped back to the original Vune source. */
+  readonly range: VuneSourceRange
   /** Range in the lowered TypeScript snapshot. */
-  readonly generatedRange: MuseSourceRange
+  readonly generatedRange: VuneSourceRange
 }
 
-export interface MuseSemanticHtmlDiagnostic {
-  readonly code: "MUSE_HTML_ATTRIBUTE" | "MUSE_HTML_VALUE"
+export interface VuneSemanticHtmlDiagnostic {
+  readonly code: "VUNE_HTML_ATTRIBUTE" | "VUNE_HTML_VALUE"
   readonly message: string
-  readonly range: MuseSourceRange
-  readonly generatedRange: MuseSourceRange
+  readonly range: VuneSourceRange
+  readonly generatedRange: VuneSourceRange
 }
 
-export interface MuseSemanticForeignComponent {
+export interface VuneSemanticForeignComponent {
   readonly localName: string
   readonly module: string
-  /** Range mapped back to the original Muse source. */
-  readonly range: MuseSourceRange
-  readonly generatedRange: MuseSourceRange
+  /** Range mapped back to the original Vune source. */
+  readonly range: VuneSourceRange
+  readonly generatedRange: VuneSourceRange
   readonly symbol: SemanticForeignComponentTypeSymbol
 }
 
 /**
- * Shared compiler/editor view of a Muse file.
+ * Shared compiler/editor view of a Vune file.
  *
- * Muse-only declarations and builder blocks stay in the Muse AST. Normal
+ * Vune-only declarations and builder blocks stay in the Vune AST. Normal
  * imports, expressions, types, and diagnostics are represented by the
  * TypeScript SourceFile produced from the lowered snapshot.
  */
-export interface MuseSemanticModel {
-  readonly kind: "MuseSemanticModel"
+export interface VuneSemanticModel {
+  readonly kind: "VuneSemanticModel"
   readonly fileName: string
   readonly source: string
   readonly generatedSource: string
   readonly typescript: ts.SourceFile
   readonly typeChecker: ts.TypeChecker
   readonly typescriptDiagnostics: readonly ts.Diagnostic[]
-  readonly htmlDiagnostics: readonly MuseSemanticHtmlDiagnostic[]
-  readonly structs: readonly MuseStructDeclaration[]
-  readonly views: readonly MuseSemanticView[]
-  readonly builderPrograms: readonly MuseBuilderProgram[]
-  readonly calls: readonly MuseSemanticCall[]
-  readonly imports: readonly MuseSemanticImport[]
-  readonly htmlElements: readonly MuseSemanticHtmlElement[]
-  readonly foreignComponents: readonly MuseSemanticForeignComponent[]
+  readonly htmlDiagnostics: readonly VuneSemanticHtmlDiagnostic[]
+  readonly structs: readonly VuneStructDeclaration[]
+  readonly views: readonly VuneSemanticView[]
+  readonly builderPrograms: readonly VuneBuilderProgram[]
+  readonly calls: readonly VuneSemanticCall[]
+  readonly imports: readonly VuneSemanticImport[]
+  readonly htmlElements: readonly VuneSemanticHtmlElement[]
+  readonly foreignComponents: readonly VuneSemanticForeignComponent[]
   /** Canonical symbol table shared with runtime ViewType metadata. */
   readonly symbolTable: SemanticModel
   readonly symbols: readonly SemanticSymbol[]
-  view(name: string): MuseSemanticView | undefined
+  view(name: string): VuneSemanticView | undefined
   symbol(name: string): SemanticSymbol | undefined
 }
 
@@ -226,8 +226,8 @@ function semanticInitializerParameters(source: string): readonly SemanticInitial
   })
 }
 
-function flattenStructs(structs: readonly MuseStructDeclaration[], prefix = ""): MuseSemanticView[] {
-  const result: MuseSemanticView[] = []
+function flattenStructs(structs: readonly VuneStructDeclaration[], prefix = ""): VuneSemanticView[] {
+  const result: VuneSemanticView[] = []
   for (const declaration of structs) {
     const qualifiedName = prefix ? `${prefix}.${declaration.name}` : declaration.name
     const initializers = declaration.initializers.map((initializer, index) => {
@@ -277,8 +277,8 @@ function flattenStructs(structs: readonly MuseStructDeclaration[], prefix = ""):
   return result
 }
 
-function collectCalls(program: MuseBuilderProgram, output: MuseSemanticCall[]): void {
-  const visit = (node: MuseBuilderNode): void => {
+function collectCalls(program: VuneBuilderProgram, output: VuneSemanticCall[]): void {
+  const visit = (node: VuneBuilderNode): void => {
     if (node.kind === "call") {
       output.push({
         callee: node.callee,
@@ -335,7 +335,7 @@ function checkerTypeForExpression(source: string, checker: ts.TypeChecker, sourc
   if (!candidate) return undefined
   const type = checker.getTypeAtLocation(candidate)
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
-  // `const label = "x"` has the literal type `"x"`, but a normal Muse
+  // `const label = "x"` has the literal type `"x"`, but a normal Vune
   // initializer accepting `string` must still accept it. Preserve literal
   // precision in TypeScript itself while normalizing the compiler-facing
   // semantic category used for overload matching.
@@ -373,11 +373,11 @@ function compilerSemanticArgument(
 }
 
 function resolvedCalls(
-  calls: readonly MuseSemanticCall[],
-  views: readonly MuseSemanticView[],
+  calls: readonly VuneSemanticCall[],
+  views: readonly VuneSemanticView[],
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
-): MuseSemanticCall[] {
+): VuneSemanticCall[] {
   const symbols = canonicalViewSymbols()
   for (const view of views) symbols.set(view.name, view.symbol)
   const declaredTypes = new Map<string, string>()
@@ -396,18 +396,18 @@ function resolvedCalls(
   })
 }
 
-function builderProgramsFor(source: string, structs: readonly MuseStructDeclaration[]): MuseBuilderProgram[] {
-  const programs: MuseBuilderProgram[] = []
+function builderProgramsFor(source: string, structs: readonly VuneStructDeclaration[]): VuneBuilderProgram[] {
+  const programs: VuneBuilderProgram[] = []
   const seen = new Set<string>()
-  const add = (value: MuseBuilderProgram): void => {
+  const add = (value: VuneBuilderProgram): void => {
     const key = `${value.range.start}:${value.range.end}`
     if (seen.has(key)) return
     seen.add(key)
     programs.push(value)
   }
-  const visit = (declarations: readonly MuseStructDeclaration[]): void => {
+  const visit = (declarations: readonly VuneStructDeclaration[]): void => {
     for (const declaration of declarations) {
-      add(parseMuseBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start))
+      add(parseVuneBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start))
       visit(declaration.nested ?? [])
     }
   }
@@ -419,14 +419,14 @@ function builderProgramsFor(source: string, structs: readonly MuseStructDeclarat
     for (const declaration of [...structs].sort((left, right) => right.range.start - left.range.start)) {
       masked = masked.slice(0, declaration.range.start) + " ".repeat(declaration.range.end - declaration.range.start) + masked.slice(declaration.range.end)
     }
-    add(parseMuseBuilder(masked))
+    add(parseVuneBuilder(masked))
   }
   visit(structs)
-  if (programs.length === 0 && /\b[A-Z][A-Za-z0-9_$]*\s*\(/.test(source)) add(parseMuseBuilder(source))
+  if (programs.length === 0 && /\b[A-Z][A-Za-z0-9_$]*\s*\(/.test(source)) add(parseVuneBuilder(source))
   return programs
 }
 
-function importsOf(source: string, generatedSource: string, sourceFile: ts.SourceFile, sourceMap: ReturnType<typeof createMuseSourceMap>): MuseSemanticImport[] {
+function importsOf(source: string, generatedSource: string, sourceFile: ts.SourceFile, sourceMap: ReturnType<typeof createVuneSourceMap>): VuneSemanticImport[] {
   return sourceFile.statements.flatMap(statement => {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return []
     const generatedRange = { start: statement.getStart(sourceFile), end: statement.end }
@@ -478,21 +478,21 @@ function acceptsHtmlValue(
   return false
 }
 
-function positionAt(source: string, offset: number): MuseSourcePosition {
+function positionAt(source: string, offset: number): VuneSourcePosition {
   const bounded = Math.max(0, Math.min(source.length, offset))
   const prefix = source.slice(0, bounded)
   const line = prefix.split("\n")
   return { line: line.length, column: (line[line.length - 1]?.length ?? 0) + 1 }
 }
 
-function offsetAt(source: string, position: MuseSourcePosition): number {
+function offsetAt(source: string, position: VuneSourcePosition): number {
   const lines = source.split("\n")
   const line = Math.max(1, Math.min(lines.length, position.line))
   const offset = lines.slice(0, line - 1).reduce((sum, value) => sum + value.length + 1, 0)
   return Math.min(source.length, offset + Math.max(0, position.column - 1))
 }
 
-function mapRange(source: string, generatedSource: string, map: ReturnType<typeof createMuseSourceMap>, generatedRange: MuseSourceRange): MuseSourceRange {
+function mapRange(source: string, generatedSource: string, map: ReturnType<typeof createVuneSourceMap>, generatedRange: VuneSourceRange): VuneSourceRange {
   const start = mapGeneratedPosition(map, positionAt(generatedSource, generatedRange.start))
   const end = mapGeneratedPosition(map, positionAt(generatedSource, generatedRange.end))
   return { start: offsetAt(source, start), end: Math.max(offsetAt(source, start), offsetAt(source, end)) }
@@ -517,7 +517,7 @@ function matchingDelimiter(source: string, open: number, opener: string, closer:
   return source.length - 1
 }
 
-function originalCallRange(source: string, name: string): MuseSourceRange | undefined {
+function originalCallRange(source: string, name: string): VuneSourceRange | undefined {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const expression = new RegExp(`\\b${escaped}\\s*\\(`, "g")
   const match = expression.exec(source)
@@ -528,7 +528,7 @@ function originalCallRange(source: string, name: string): MuseSourceRange | unde
   return { start: match.index, end: Math.min(source.length, close + 1) }
 }
 
-function originalElementRange(source: string, tag: string, from: number): { readonly range: MuseSourceRange; readonly next: number } | undefined {
+function originalElementRange(source: string, tag: string, from: number): { readonly range: VuneSourceRange; readonly next: number } | undefined {
   const rawStart = source.indexOf("<" + tag, from)
   const rawBoundary = rawStart < 0 ? undefined : source[rawStart + tag.length + 1]
   const validRawStart = rawStart >= 0 && rawBoundary !== undefined && (rawBoundary === " " || rawBoundary === "\t" || rawBoundary === "/" || rawBoundary === ">") ? rawStart : -1
@@ -553,15 +553,15 @@ function typescriptGraphSymbols(
   generatedSource: string,
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
-  sourceMap: ReturnType<typeof createMuseSourceMap>,
+  sourceMap: ReturnType<typeof createVuneSourceMap>,
 ): {
-  readonly htmlElements: MuseSemanticHtmlElement[]
-  readonly htmlDiagnostics: MuseSemanticHtmlDiagnostic[]
-  readonly foreignComponents: MuseSemanticForeignComponent[]
+  readonly htmlElements: VuneSemanticHtmlElement[]
+  readonly htmlDiagnostics: VuneSemanticHtmlDiagnostic[]
+  readonly foreignComponents: VuneSemanticForeignComponent[]
 } {
-  const htmlElements: MuseSemanticHtmlElement[] = []
-  const htmlDiagnostics: MuseSemanticHtmlDiagnostic[] = []
-  const foreignComponents: MuseSemanticForeignComponent[] = []
+  const htmlElements: VuneSemanticHtmlElement[] = []
+  const htmlDiagnostics: VuneSemanticHtmlDiagnostic[] = []
+  const foreignComponents: VuneSemanticForeignComponent[] = []
   const vueImports = new Map<string, string>()
   let elementCursor = 0
   for (const statement of sourceFile.statements) {
@@ -575,7 +575,7 @@ function typescriptGraphSymbols(
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isCallExpression(node.initializer)) {
       const expression = node.initializer.expression
       const argument = node.initializer.arguments[0]
-      if (ts.isIdentifier(expression) && /^(?:__museForeignComponent|__museVueComponent)/.test(expression.text) && ts.isIdentifier(argument)) {
+      if (ts.isIdentifier(expression) && /^(?:__vuneForeignComponent|__vuneVueComponent)/.test(expression.text) && ts.isIdentifier(argument)) {
         const module = vueImports.get(argument.text)
         if (module) {
           const generatedRange = { start: node.getStart(sourceFile), end: node.end }
@@ -588,7 +588,7 @@ function typescriptGraphSymbols(
               kind: "foreign-component",
               localName: node.name.text,
               module,
-              rendererAdapter: "@muse/vue",
+              rendererAdapter: "@vune-ui/vue",
             },
           })
         }
@@ -631,7 +631,7 @@ function typescriptGraphSymbols(
             const diagnosticRange = mapRange(source, generatedSource, sourceMap, generatedAttributeRange)
             if (!spec) {
               htmlDiagnostics.push({
-                code: "MUSE_HTML_ATTRIBUTE",
+                code: "VUNE_HTML_ATTRIBUTE",
                 message: `Unknown attribute \"${name}\" on <${tag.text}>.`,
                 range: diagnosticRange,
                 generatedRange: generatedAttributeRange,
@@ -641,7 +641,7 @@ function typescriptGraphSymbols(
             if (!acceptsHtmlValue(spec, valueType, expression)) {
               const expected = spec.values?.length ? spec.values.map(value => `\"${value}\"`).join(" | ") : spec.type
               htmlDiagnostics.push({
-                code: "MUSE_HTML_VALUE",
+                code: "VUNE_HTML_VALUE",
                 message: `Attribute \"${name}\" on <${tag.text}> expects ${expected}.`,
                 range: diagnosticRange,
                 generatedRange: generatedAttributeRange,
@@ -708,16 +708,16 @@ function typescriptSnapshot(fileName: string, source: string): {
   }
 }
 
-export function createSemanticModel(source: string, fileName: string, generatedSource: string): MuseSemanticModel {
+export function createSemanticModel(source: string, fileName: string, generatedSource: string): VuneSemanticModel {
   const snapshot = typescriptSnapshot(fileName, generatedSource)
   const typescript = snapshot.sourceFile
-  const structs = parseMuseStructs(source)
+  const structs = parseVuneStructs(source)
   const builderPrograms = builderProgramsFor(source, structs)
-  const collectedCalls: MuseSemanticCall[] = []
+  const collectedCalls: VuneSemanticCall[] = []
   for (const program of builderPrograms) collectCalls(program, collectedCalls)
   const views = flattenStructs(structs)
   const calls = resolvedCalls(collectedCalls, views, snapshot.checker, typescript)
-  const sourceMap = createMuseSourceMap(source, generatedSource, fileName)
+  const sourceMap = createVuneSourceMap(source, generatedSource, fileName)
   const graphSymbols = typescriptGraphSymbols(source, generatedSource, typescript, snapshot.checker, sourceMap)
   const symbolTable = new SemanticModel()
   for (const view of canonicalViewSymbols().values()) {
@@ -741,7 +741,7 @@ export function createSemanticModel(source: string, fileName: string, generatedS
   for (const foreign of graphSymbols.foreignComponents) symbolTable.register(foreign.symbol)
   for (const element of graphSymbols.htmlElements) symbolTable.register(element.symbol)
   return {
-    kind: "MuseSemanticModel",
+    kind: "VuneSemanticModel",
     fileName,
     source,
     generatedSource,

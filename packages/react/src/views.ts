@@ -1,6 +1,6 @@
 /**
  * Compatibility module: built-in Views are renderer-independent and are owned
- * by @muse/core. Keeping this path avoids breaking existing React imports.
+ * by @vune-ui/core. Keeping this path avoids breaking existing React imports.
  */
 export {
   BindingValue,
@@ -18,5 +18,5 @@ export {
   Text,
   VStack,
   ZStack,
-} from "@muse/core"
-export type { HStackOptions, VStackOptions, ZStackOptions } from "@muse/core"
+} from "@vune-ui/core"
+export type { HStackOptions, VStackOptions, ZStackOptions } from "@vune-ui/core"

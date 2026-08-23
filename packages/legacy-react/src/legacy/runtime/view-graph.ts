@@ -13,7 +13,7 @@ import {
   type ViewHostNode,
   type ViewModifierNode,
   type ViewNode,
-} from "@muse/core"
+} from "@vune-ui/core"
 
 export type {
   ElementViewNode,

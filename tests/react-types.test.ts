@@ -13,7 +13,7 @@ import {
   VStack,
   view,
   renderViewNode,
-  type MuseRenderer,
+  type VuneRenderer,
   type StyledElement,
 } from '../src/index.js'
 
@@ -30,7 +30,7 @@ const count = State(0)
 const custom: StyledElement = Component(Badge, { label: 'React' }).padding(8)
 // @ts-expect-error required React props must be supplied to Component()
 Component(Badge)
-Text('Theme').style({ '--muse-accent': '#7c3aed' })
+Text('Theme').style({ '--vune-accent': '#7c3aed' })
 Text('Conditional').className(['card', false && 'featured'])
 
 export const StaticView = view(
@@ -53,7 +53,7 @@ Button('Missing action')
 // @ts-expect-error Button titles cannot be arbitrary objects
 Button({ title: 'Invalid' }, () => undefined)
 
-const graphRenderer: MuseRenderer<{ kind: 'node'; type: unknown; children: unknown[] }> = {
+const graphRenderer: VuneRenderer<{ kind: 'node'; type: unknown; children: unknown[] }> = {
   element(type, _props, ...children) { return { kind: 'node', type, children } },
   fragment(children) { return { kind: 'node', type: 'fragment', children: [...children] } },
   render(value) { return renderViewNode(value, graphRenderer) },
@@ -72,7 +72,7 @@ export const GreetingView = view((props: { name: string }) =>
   Text(`Hello, ${props.name}`),
 )
 
-createElement(GreetingView, { name: 'Muse' })
+createElement(GreetingView, { name: 'Vune' })
 // @ts-expect-error name is required
 createElement(GreetingView, {})
 

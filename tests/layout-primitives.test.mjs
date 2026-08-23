@@ -13,7 +13,7 @@ test("migrated layout primitives keep the graph-first contract", () => {
   const value = HStack(Text("Left"), Spacer(24), Text("Right")).padding(8)
   assert.equal(value.kind, "modified")
   const html = renderToStaticMarkup(renderReact(value))
-  assert.match(html, /data-muse="HStack"/)
+  assert.match(html, /data-vune="HStack"/)
   assert.match(html, /flex-grow:1/)
   assert.match(html, /padding:8px/)
 })
@@ -25,8 +25,8 @@ test("Group, ZStack, Element, and Divider compose without React elements in core
     Element("section", { id: "native" }, Divider()),
   )))
   assert.match(html, /A.*B/)
-  assert.match(html, /data-muse="ZStack"/)
-  assert.match(html, /<section id="native"><hr data-muse="Divider"\/?><\/section>/)
+  assert.match(html, /data-vune="ZStack"/)
+  assert.match(html, /<section id="native"><hr data-vune="Divider"\/?><\/section>/)
 })
 
 test("layout semantics stay aligned across React, Vue, and Web renderers", async () => {

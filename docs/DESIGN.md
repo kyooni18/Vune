@@ -1,15 +1,15 @@
-# Muse React design
+# Vune React design
 
-Muse is a declarative TypeScript UI framework. `muse` and `@muse/core` define
-the language and immutable View graph; renderers such as `@muse/react`,
-`@muse/vue`, and `@muse/web` consume that graph. The root `vune-ui`
+Vune is a declarative TypeScript UI framework. `vune-ui` and `@vune-ui/core` define
+the language and immutable View graph; renderers such as `@vune-ui/react`,
+`@vune-ui/vue`, and `@vune-ui/web` consume that graph. The root `vune-ui`
 package is kept as a compatibility layer.
 
 ## Layout
 
 The normal API expresses relationships rather than coordinates. `VStack`, `HStack`, `ZStack`, `Grid`, `Spacer`, alignment, spacing, and `frame` are the primary layout vocabulary. Low-level CSS remains available through modifiers when needed.
 
-Muse's layout is SwiftUI-inspired, not a promise to reproduce SwiftUI's
+Vune's layout is SwiftUI-inspired, not a promise to reproduce SwiftUI's
 proposal-based geometry algorithm. `frame`, infinity sizing, and stacks map
 the relationship into web-native CSS semantics.
 
@@ -36,36 +36,36 @@ The web layout contract is intentionally CSS-native and renderer-independent:
 - `ScrollView` owns overflow only for its declared axis. Other overflow stays
   clipped unless the host's ordinary CSS changes it explicitly.
 - `SafeArea` maps selected edges to `env(safe-area-inset-*)`; it does not change
-  the child's coordinate system or merge Muse state with browser layout state.
+  the child's coordinate system or merge Vune state with browser layout state.
 - `GeometryReader` reports the measured host box and normalized safe-area insets.
   SSR and renderer-less evaluation use zero geometry and must remain deterministic.
 
 Arbitrary CSS remains host CSS. A `.style()` modifier before `frame` styles the
 content; a `.style()` modifier after `frame` styles the frame host. External
 stylesheets, CSS Modules, Sass, PostCSS, and Tailwind can target either element
-through ordinary selectors without a Muse-specific preprocessing step.
+through ordinary selectors without a Vune-specific preprocessing step.
 
 ## Renderer boundary
 
-`Muse View !== React Element` and `Muse View !== Vue VNode`. A call such as
+`Vune View !== React Element` and `Vune View !== Vue VNode`. A call such as
 `VStack { Text("Hello") }` first produces a graph. A renderer decides how that
 graph becomes a DOM, HTML string, React element, or Vue VNode.
 
 ## React ownership boundary
 
-Muse owns the external layout slot of a child. React owns the child component itself.
+Vune owns the external layout slot of a child. React owns the child component itself.
 
-For ordinary React components, Muse stores layout metadata outside the React element and inserts one neutral layout host when the component is placed inside a Muse layout container. This avoids relying on prop forwarding or assuming a single DOM root inside the component.
+For ordinary React components, Vune stores layout metadata outside the React element and inserts one neutral layout host when the component is placed inside a Vune layout container. This avoids relying on prop forwarding or assuming a single DOM root inside the component.
 
 Component props, hooks, refs, context, children, and rendering remain React-owned.
 
 ## Modifier model
 
-React elements are treated as immutable. Muse modifiers use `cloneElement()` and a proxy facade for method chaining. Component layout metadata is kept separately rather than mutating React element objects.
+React elements are treated as immutable. Vune modifiers use `cloneElement()` and a proxy facade for method chaining. Component layout metadata is kept separately rather than mutating React element objects.
 
 ## State model
 
-`State()` is a small observable value with a `.value` API. A Muse `view()` tracks State reads during render and subscribes the React component to those values.
+`State()` is a small observable value with a `.value` API. A Vune `view()` tracks State reads during render and subscribes the React component to those values.
 
 Arrays and plain objects are mutation-aware. If multiple `State()` values wrap
 the same raw mutable container, they share mutation ownership and all of their
@@ -79,9 +79,9 @@ reconcile that graph, so old objects do not retain stale records indefinitely.
 Circular graphs are traversed with identity tracking.
 
 With the compatibility React Vite macro, top-level State declarations are moved
-into `view({ state, body })`. The canonical `@muse/vite` compiler lowers View
+into `view({ state, body })`. The canonical `@vune-ui/vite` compiler lowers View
 syntax and leaves renderer-independent state ownership to the selected adapter.
-The state factory runs once per mounted Muse component instance, so two instances
+The state factory runs once per mounted Vune component instance, so two instances
 of the same View do not share local state.
 
 ## Macros
@@ -105,20 +105,17 @@ The explicit runtime APIs remain available when macros are undesirable.
 ## Interoperability
 
 Raw HTML is represented by graph `Element` nodes and retains ordinary HTML
-attributes. `Component()` in `@muse/react` or `@muse/vue` creates a renderer-
+attributes. `Component()` in `@vune-ui/react` or `@vune-ui/vue` creates a renderer-
 owned component node; the Vue adapter also supports default/named slots and
 explicit `toVueRef`/`fromVueRef` bridges. Renderer-specific interop does not
-enter `@muse/core`.
+enter `@vune-ui/core`.
 
 ## Public surface
 
-The canonical function-DSL entry points are `@muse/core` and `@muse/react`.
-The root `vune-ui` entry point intentionally remains the stable compatibility
-surface, but it is only a facade: its implementation is provided by
-`@muse/react/legacy`. `vune-ui/core` and `vune-ui/muse` expose the
-canonical graph and React layers without requiring consumers to migrate all imports
-at once. The automatic JSX runtimes and `vune-ui/vite` remain supported
-integration entry points.
+The canonical function-DSL entry points are `vune-ui`, `@vune-ui/core`, and
+`@vune-ui/react`. The explicit `vune-ui/legacy` subpath retains the legacy React
+compatibility surface, implemented by `@vune-ui/legacy-react`. The automatic JSX
+runtimes and `vune-ui/vite` remain supported integration entry points.
 Coordinate spaces expose `CoordinateNode` values, while the proposal-based
 measurement experiment exposes `LayoutNode` values; keeping those concepts
 distinct avoids silently treating observed DOM geometry as a layout proposal.

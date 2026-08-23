@@ -1,8 +1,8 @@
 /**
  * Compatibility module: native controls build renderer-independent graph
- * nodes and are owned by @muse/core.
+ * nodes and are owned by @vune-ui/core.
  */
-export { Binding, Image, Link, Slider, TextField, Toggle } from "@muse/core"
+export { Binding, Image, Link, Slider, TextField, Toggle } from "@vune-ui/core"
 export type {
   ImageOptions,
   ImageProps,
@@ -11,4 +11,4 @@ export type {
   SliderProps,
   TextFieldProps,
   ToggleProps,
-} from "@muse/core"
+} from "@vune-ui/core"

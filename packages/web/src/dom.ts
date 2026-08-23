@@ -7,7 +7,7 @@ import {
   subscribeState,
   viewIdentityKey,
   zeroGeometry,
-  type MuseRenderer,
+  type VuneRenderer,
   type GeometryProxy,
   type LazyViewNode,
   type LazyViewRange,
@@ -15,7 +15,7 @@ import {
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
-} from "@muse/core"
+} from "@vune-ui/core"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
 import { applyDomProps, patchDomProps, setDomRef } from "./props.js"
@@ -101,13 +101,13 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
 }
 
 function lazyEstimate(node: LazyViewNode): number {
-  const value = node.props["data-muse-lazy-estimate"]
+  const value = node.props["data-vune-lazy-estimate"]
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 44
 }
 
 function lazyOverscan(node: LazyViewNode): number {
-  const value = node.props["data-muse-lazy-overscan"]
+  const value = node.props["data-vune-lazy-overscan"]
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 2
 }
@@ -126,7 +126,7 @@ function lazyScrollParent(element: HTMLElement, axis: LazyViewNode["axis"]): HTM
 
 function measuredLazySize(element: HTMLElement, node: LazyViewNode): number | undefined {
   const values = [...element.children].flatMap(child => {
-    if (child.hasAttribute("data-muse-lazy-spacer")) return []
+    if (child.hasAttribute("data-vune-lazy-spacer")) return []
     const rect = child.getBoundingClientRect()
     const value = node.axis === "horizontal" ? rect.width : rect.height
     return Number.isFinite(value) && value > 0 ? [value] : []
@@ -168,7 +168,7 @@ function sameLazyRange(left: LazyViewRange | undefined, right: LazyViewRange): b
 function lazySpacer(context: DomRenderContext, node: LazyViewNode, size: number, position: "before" | "after"): HTMLElement {
   const spacer = context.document.createElement("div")
   applyDomProps(spacer, {
-    "data-muse-lazy-spacer": position,
+    "data-vune-lazy-spacer": position,
     "aria-hidden": true,
     style: node.axis === "horizontal"
       ? { width: `${Math.max(0, size)}px`, flex: "0 0 auto" }
@@ -231,7 +231,7 @@ function appendDomChild(parent: Node, child: Node, context: DomRenderContext): v
   parent.appendChild(normalized)
 }
 
-function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
+function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
   return {
     element(type, props, ...children) {
       const tag = typeof type === "string" ? type : "div"
@@ -313,8 +313,8 @@ function createDomRenderer(context: DomRenderContext): MuseRenderer<Node> {
     geometry(_node, render) {
       const index = context.geometryIndex++
       const wrapper = context.document.createElement("div")
-      wrapper.dataset.muse = "GeometryReader"
-      wrapper.dataset.museGeometry = String(index)
+      wrapper.dataset.vune = "GeometryReader"
+      wrapper.dataset.vuneGeometry = String(index)
       wrapper.style.boxSizing = "border-box"
       wrapper.style.width = "100%"
       appendDomChild(wrapper, render(context.geometries.get(index) ?? zeroGeometry), context)
@@ -413,8 +413,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const updateGeometry = () => {
       if (stopped || context.geometryIndex === 0) return
       let changed = false
-      container.querySelectorAll<HTMLElement>('[data-muse="GeometryReader"][data-muse-geometry]').forEach(element => {
-        const index = Number(element.dataset.museGeometry)
+      container.querySelectorAll<HTMLElement>('[data-vune="GeometryReader"][data-vune-geometry]').forEach(element => {
+        const index = Number(element.dataset.vuneGeometry)
         if (!Number.isInteger(index)) return
         const next = geometryFromElement(element)
         const previous = context.geometries.get(index)
@@ -434,7 +434,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const refreshLazyRanges = (): boolean => {
       if (context.lazyNodes.size === 0) return false
       let changed = false
-      const elements = [...container.querySelectorAll<HTMLElement>("[data-muse-lazy]")]
+      const elements = [...container.querySelectorAll<HTMLElement>("[data-vune-lazy]")]
       for (const element of elements) {
         const key = context.lazyKeys.get(element)
         if (!key) continue
@@ -466,7 +466,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       const window = document.defaultView
       if (window) targets.push(window)
       targets.push(container)
-      container.querySelectorAll<HTMLElement>("[data-muse-lazy]").forEach(element => {
+      container.querySelectorAll<HTMLElement>("[data-vune-lazy]").forEach(element => {
         const key = context.lazyKeys.get(element)
         const node = key ? context.lazyNodes.get(key) : undefined
         const parent = node ? lazyScrollParent(element, node.axis) : null
@@ -487,7 +487,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const captureLazyScrollPositions = () => {
       const positions = new Map<HTMLElement, { readonly top: number; readonly left: number }>()
       if (context.lazyNodes.size === 0) return positions
-      container.querySelectorAll<HTMLElement>("[data-muse-lazy]").forEach(element => {
+      container.querySelectorAll<HTMLElement>("[data-vune-lazy]").forEach(element => {
         const key = context.lazyKeys.get(element)
         const node = key ? context.lazyNodes.get(key) : undefined
         const parent = node ? lazyScrollParent(element, node.axis) : null

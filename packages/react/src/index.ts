@@ -1,5 +1,5 @@
-export * from "@muse/core"
-export { MuseView, createRenderer, render, statefulView, view } from "./renderer.js"
+export * from "@vune-ui/core"
+export { VuneView, createRenderer, render, statefulView, view } from "./renderer.js"
 export type { StatefulViewDefinition } from "./renderer.js"
 export { Button, Divider, Element, ForEach, Group, HStack, LazyHStack, LazyVStack, List, Section, Spacer, Text, VStack, ZStack } from "./views.js"
 export type { HStackOptions, VStackOptions, ZStackOptions } from "./views.js"

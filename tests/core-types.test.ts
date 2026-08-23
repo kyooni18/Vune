@@ -33,7 +33,7 @@ import {
   type ViewBuilderClosure,
 } from '../packages/core/src/index.js'
 
-Text('Muse')
+Text('Vune')
 Text(1)
 VStack(() => Text('Builder'))
 VStack({ alignment: 'leading', spacing: 8 }, () => Text('Options'))
@@ -44,25 +44,25 @@ ScrollView('both', () => Text('Scrollable'))
 SafeArea(['top', 'left'], () => Text('Inset'))
 GeometryReader(geometry => Text(geometry.size.width))
 Text('Frame').frame({ minWidth: 120, maxWidth: 'infinity', height: '3rem', alignment: 'center' })
-Text('Styled').foreground('CanvasText').background('Canvas').style({ borderRadius: 8, '--muse-accent': '#7c3aed' })
+Text('Styled').foreground('CanvasText').background('Canvas').style({ borderRadius: 8, '--vune-accent': '#7c3aed' })
 // @ts-expect-error inline style names are checked while CSS custom properties stay extensible
 Text('Invalid style').style({ colro: 'tomato' })
 Element('button', { onPointerMove: event => event.preventDefault?.(), onKeyDown: event => event.currentTarget?.key })
 // @ts-expect-error standard HTML event names are checked
 Element('button', { onClic: () => undefined })
-Element('muse-chart', { onAnything: () => undefined, 'data-series': 'revenue', 'aria-label': 'Chart' })
+Element('vune-chart', { onAnything: () => undefined, 'data-series': 'revenue', 'aria-label': 'Chart' })
 Button('Save', () => undefined)
 Button(namedArguments({ action: () => undefined, label: () => Text('Label') }))
 const count = State(0)
 const countBinding = Binding(count)
 const enabled = State(false)
-const name = State('Muse')
+const name = State('Vune')
 const selection = State<'one' | 'two'>('one')
 Toggle('Enabled', Binding(enabled))
 TextField(Binding(name), 'Name')
 TextArea(Binding(name), 'Description')
 Slider(countBinding, { min: 0, max: 10, step: 1 })
-Image('/muse.png', { alt: 'Muse' })
+Image('/vune.png', { alt: 'Vune' })
 Link('Docs', () => '/docs')
 Box(() => Text('Box'))
 Grid({ columns: 2 }, () => [Text('A'), Text('B')])
@@ -83,7 +83,7 @@ Element('button', {
   onclick: event => event.currentTarget?.value,
 }, 'Save')
 Element('input', { type: 'checkbox', checked: true, onchange: event => event.target?.checked })
-Element('img', { src: '/muse.png', alt: 'Muse', loading: 'lazy' })
+Element('img', { src: '/vune.png', alt: 'Vune', loading: 'lazy' })
 Element('x-card', { value: count.value, theme: 'dark', 'aria-label': 'Card' }, Text('Custom'))
 const requiresBinding = (_value: BindingRef<number>) => undefined
 requiresBinding(countBinding)
@@ -99,7 +99,7 @@ TextField(countBinding)
 // @ts-expect-error Slider options are numeric
 Slider(countBinding, { min: 'zero' })
 // @ts-expect-error Image options reject unknown properties
-Image('/muse.png', { title: 'Invalid' })
+Image('/vune.png', { title: 'Invalid' })
 // @ts-expect-error Link href must resolve to a string
 Link('Invalid', 42)
 // @ts-expect-error Grid options reject unknown keys
@@ -137,7 +137,7 @@ Element('notarealtag', null)
 Text({ invalid: true })
 // @ts-expect-error ViewBuilder closures cannot produce primitive strings
 const invalidBuilder: ViewBuilderClosure = () => 'not a View'
-// @ts-expect-error VStack ViewBuilder closures must produce Muse Views
+// @ts-expect-error VStack ViewBuilder closures must produce Vune Views
 VStack(() => 'not a View')
 // @ts-expect-error VStack alignment is a closed layout semantic
 VStack({ alignment: 'baseline' }, () => Text('Invalid'))

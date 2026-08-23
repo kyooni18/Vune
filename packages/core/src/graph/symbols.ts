@@ -1,6 +1,6 @@
 /** Stable symbols shared by the graph's independently compiled modules. */
-export const museView = Symbol.for("muse.view")
-export const museInitializers = Symbol.for("muse.initializers")
-export const museNamedArguments = Symbol.for("muse.named.arguments")
-export const museViewNodeFactory = Symbol.for("muse.view.node.factory")
-export const museForeignComponent = Symbol.for("muse.foreign.component")
+export const vuneView = Symbol.for("vune.view")
+export const vuneInitializers = Symbol.for("vune.initializers")
+export const vuneNamedArguments = Symbol.for("vune.named.arguments")
+export const vuneViewNodeFactory = Symbol.for("vune.view.node.factory")
+export const vuneForeignComponent = Symbol.for("vune.foreign.component")

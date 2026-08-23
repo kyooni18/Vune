@@ -1,10 +1,10 @@
-import { createMuseSourceMap } from "./source-map.js"
-import { hasMuseSyntax, transformMuseSource } from "./pipeline.js"
-import type { MuseTransformResult, MuseVitePluginOptions } from "./types.js"
+import { createVuneSourceMap } from "./source-map.js"
+import { hasVuneSyntax, transformVuneSource } from "./pipeline.js"
+import type { VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
-function isMuseVueScript(attributes: string): boolean {
+function isVuneVueScript(attributes: string): boolean {
   const language = /\blang\s*=\s*(["'])([^"']+)\1/i.exec(attributes)?.[2]
-  return !language || /^(?:muse|js|jsx|ts|tsx|mts|cts)$/i.test(language)
+  return !language || /^(?:vune|js|jsx|ts|tsx|mts|cts)$/i.test(language)
 }
 
 function isGeneratedVueScript(source: string): boolean {
@@ -19,10 +19,10 @@ function transformVueSfcSource(source: string, fileName: string): string {
   let changed = false
   let match: RegExpExecArray | null
   while ((match = script.exec(source))) {
-    if (!isMuseVueScript(match[1])) continue
+    if (!isVuneVueScript(match[1])) continue
     const language = /\blang\s*=\s*(["'])([^"']+)\1/i.exec(match[1])?.[2] ?? "ts"
-    if (!hasMuseSyntax(match[2], !/^(?:tsx|jsx)$/i.test(language))) continue
-    const transformed = transformMuseSource(match[2], `${fileName}#script`)
+    if (!hasVuneSyntax(match[2], !/^(?:tsx|jsx)$/i.test(language))) continue
+    const transformed = transformVuneSource(match[2], `${fileName}#script`)
     if (transformed === match[2]) continue
     const bodyStart = match.index + match[0].indexOf(match[2])
     const outputStart = bodyStart + (output.length - source.length)
@@ -32,13 +32,13 @@ function transformVueSfcSource(source: string, fileName: string): string {
   return changed ? output : source
 }
 
-export function createMuseVitePlugin(options: MuseVitePluginOptions = {}) {
-  const cache = new Map<string, { source: string; result: MuseTransformResult | null }>()
-  const transform = (source: string, id: string): MuseTransformResult | null => {
+export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
+  const cache = new Map<string, { source: string; result: VuneTransformResult | null }>()
+  const transform = (source: string, id: string): VuneTransformResult | null => {
     const fileName = id.split("?", 1)[0]
     const query = id.slice(fileName.length + (id.includes("?") ? 1 : 0))
     // Compiled workspace packages are already TypeScript output. Re-running
-    // Muse lowering over their JavaScript can mistake ordinary method calls
+    // Vune lowering over their JavaScript can mistake ordinary method calls
     // for authoring syntax and corrupt otherwise valid module code.
     if (/[\\/]node_modules[\\/]/.test(fileName) || /[\\/]dist[\\/]/.test(fileName)) return null
     const isVue = /\.vue$/i.test(fileName)
@@ -48,7 +48,7 @@ export function createMuseVitePlugin(options: MuseVitePluginOptions = {}) {
       /(?:^|&)type=script(?:&|$)/.test(query)
       || (!isVueTemplate && !isVueStyle && !/<(?:script|template)\b/i.test(source))
     )
-    if (!isVue && !/\.muse\.tsx?$/.test(fileName) && !/\.[cm]?[jt]sx?$/.test(fileName)) return null
+    if (!isVue && !/\.vune\.tsx?$/.test(fileName) && !/\.[cm]?[jt]sx?$/.test(fileName)) return null
     if (options.include) {
       options.include.lastIndex = 0
       if (!options.include.test(fileName)) return null
@@ -58,23 +58,23 @@ export function createMuseVitePlugin(options: MuseVitePluginOptions = {}) {
     const vueSource = isVue && !isVueScript
       ? transformVueSfcSource(source, fileName)
       : source
-    if (!isVue && !/\.muse\.tsx?$/.test(fileName) && !hasMuseSyntax(source, false)) return null
+    if (!isVue && !/\.vune\.tsx?$/.test(fileName) && !hasVuneSyntax(source, false)) return null
     if (isVue && vueSource === source && !isVueScript) return null
-    if (isVueScript && !hasMuseSyntax(source, !/(?:^|&)lang\.(?:tsx|jsx)(?:&|$)/.test(query))) return null
+    if (isVueScript && !hasVuneSyntax(source, !/(?:^|&)lang\.(?:tsx|jsx)(?:&|$)/.test(query))) return null
     const cacheKey = isVue ? id : fileName
     const cached = cache.get(cacheKey)
     if (cached?.source === source) return cached.result
-    const code = isVue && !isVueScript ? vueSource : transformMuseSource(source, fileName)
-    const transformed = code === source ? null : { code, map: createMuseSourceMap(source, code, fileName) }
+    const code = isVue && !isVueScript ? vueSource : transformVuneSource(source, fileName)
+    const transformed = code === source ? null : { code, map: createVuneSourceMap(source, code, fileName) }
     cache.set(cacheKey, { source, result: transformed })
     return transformed
   }
   const dependencyScanPlugin = {
-    name: "muse-compiler:dependency-scan",
+    name: "vune-compiler:dependency-scan",
     transform,
   }
   return {
-    name: "muse-compiler",
+    name: "vune-compiler",
     enforce: "pre" as const,
     config() {
       return {

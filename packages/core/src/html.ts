@@ -1,4 +1,4 @@
-export type MuseHtmlTagName =
+export type VuneHtmlTagName =
   | "a" | "abbr" | "address" | "area" | "article" | "aside" | "audio"
   | "b" | "base" | "bdi" | "bdo" | "blockquote" | "body" | "br" | "button"
   | "canvas" | "caption" | "cite" | "code" | "col" | "colgroup"
@@ -10,7 +10,7 @@ export type MuseHtmlTagName =
   | "p" | "picture" | "pre" | "progress" | "q" | "rp" | "rt" | "ruby" | "s" | "samp" | "script" | "search" | "section" | "select" | "slot" | "small" | "source" | "span" | "strong" | "style" | "sub" | "summary" | "sup"
   | "table" | "tbody" | "td" | "template" | "textarea" | "tfoot" | "th" | "thead" | "time" | "title" | "tr" | "track" | "u" | "ul" | "var" | "video" | "wbr"
 
-export interface MuseEventTarget<Tag extends string = string> {
+export interface VuneEventTarget<Tag extends string = string> {
   readonly tagName?: Uppercase<Tag>
   readonly value?: string
   readonly checked?: boolean
@@ -22,18 +22,18 @@ export interface MuseEventTarget<Tag extends string = string> {
   readonly button?: number
 }
 
-export interface MuseDOMEvent<Tag extends string = string> {
-  readonly target?: MuseEventTarget<Tag>
-  readonly currentTarget?: MuseEventTarget<Tag>
+export interface VuneDOMEvent<Tag extends string = string> {
+  readonly target?: VuneEventTarget<Tag>
+  readonly currentTarget?: VuneEventTarget<Tag>
   readonly defaultPrevented?: boolean
   preventDefault?(): void
   stopPropagation?(): void
 }
 
-export type MuseEventHandler<Tag extends string = string> = (event: MuseDOMEvent<Tag>) => unknown
+export type VuneEventHandler<Tag extends string = string> = (event: VuneDOMEvent<Tag>) => unknown
 
 /** CSS values accepted by the renderer-neutral inline style modifier. */
-type MuseStylePropertyValue = string | number | undefined
+type VuneStylePropertyValue = string | number | undefined
 
 /**
  * Renderer-neutral CSS properties.
@@ -42,132 +42,132 @@ type MuseStylePropertyValue = string | number | undefined
  * signature keeps CSS custom properties (`--app-accent`) extensible. External
  * stylesheets and CSS processors remain ordinary host build-tool inputs.
  */
-export interface MuseStyleProperties {
-  readonly [property: `--${string}`]: MuseStylePropertyValue
-  readonly accentColor?: MuseStylePropertyValue
-  readonly alignContent?: MuseStylePropertyValue
-  readonly alignItems?: MuseStylePropertyValue
-  readonly alignSelf?: MuseStylePropertyValue
-  readonly appearance?: MuseStylePropertyValue
-  readonly aspectRatio?: MuseStylePropertyValue
-  readonly background?: MuseStylePropertyValue
-  readonly backgroundColor?: MuseStylePropertyValue
-  readonly backgroundImage?: MuseStylePropertyValue
-  readonly backgroundPosition?: MuseStylePropertyValue
-  readonly backgroundRepeat?: MuseStylePropertyValue
-  readonly backgroundSize?: MuseStylePropertyValue
-  readonly blockSize?: MuseStylePropertyValue
-  readonly border?: MuseStylePropertyValue
-  readonly borderBottom?: MuseStylePropertyValue
-  readonly borderColor?: MuseStylePropertyValue
-  readonly borderLeft?: MuseStylePropertyValue
-  readonly borderRadius?: MuseStylePropertyValue
-  readonly borderRight?: MuseStylePropertyValue
-  readonly borderStyle?: MuseStylePropertyValue
-  readonly borderTop?: MuseStylePropertyValue
-  readonly borderWidth?: MuseStylePropertyValue
-  readonly bottom?: MuseStylePropertyValue
-  readonly boxShadow?: MuseStylePropertyValue
-  readonly boxSizing?: MuseStylePropertyValue
-  readonly color?: MuseStylePropertyValue
-  readonly columnGap?: MuseStylePropertyValue
-  readonly columns?: MuseStylePropertyValue
-  readonly content?: MuseStylePropertyValue
-  readonly cursor?: MuseStylePropertyValue
-  readonly display?: MuseStylePropertyValue
-  readonly flex?: MuseStylePropertyValue
-  readonly flexBasis?: MuseStylePropertyValue
-  readonly flexDirection?: MuseStylePropertyValue
-  readonly flexGrow?: MuseStylePropertyValue
-  readonly flexShrink?: MuseStylePropertyValue
-  readonly flexWrap?: MuseStylePropertyValue
-  readonly float?: MuseStylePropertyValue
-  readonly font?: MuseStylePropertyValue
-  readonly fontFamily?: MuseStylePropertyValue
-  readonly fontSize?: MuseStylePropertyValue
-  readonly fontStyle?: MuseStylePropertyValue
-  readonly fontWeight?: MuseStylePropertyValue
-  readonly gap?: MuseStylePropertyValue
-  readonly gridArea?: MuseStylePropertyValue
-  readonly gridAutoColumns?: MuseStylePropertyValue
-  readonly gridAutoFlow?: MuseStylePropertyValue
-  readonly gridAutoRows?: MuseStylePropertyValue
-  readonly gridColumn?: MuseStylePropertyValue
-  readonly gridRow?: MuseStylePropertyValue
-  readonly gridTemplateColumns?: MuseStylePropertyValue
-  readonly gridTemplateRows?: MuseStylePropertyValue
-  readonly height?: MuseStylePropertyValue
-  readonly inset?: MuseStylePropertyValue
-  readonly insetBlock?: MuseStylePropertyValue
-  readonly insetInline?: MuseStylePropertyValue
-  readonly justifyContent?: MuseStylePropertyValue
-  readonly justifyItems?: MuseStylePropertyValue
-  readonly justifySelf?: MuseStylePropertyValue
-  readonly left?: MuseStylePropertyValue
-  readonly letterSpacing?: MuseStylePropertyValue
-  readonly lineHeight?: MuseStylePropertyValue
-  readonly listStyle?: MuseStylePropertyValue
-  readonly margin?: MuseStylePropertyValue
-  readonly marginBlock?: MuseStylePropertyValue
-  readonly marginInline?: MuseStylePropertyValue
-  readonly marginBottom?: MuseStylePropertyValue
-  readonly marginLeft?: MuseStylePropertyValue
-  readonly marginRight?: MuseStylePropertyValue
-  readonly marginTop?: MuseStylePropertyValue
-  readonly maxHeight?: MuseStylePropertyValue
-  readonly maxWidth?: MuseStylePropertyValue
-  readonly minHeight?: MuseStylePropertyValue
-  readonly minWidth?: MuseStylePropertyValue
-  readonly objectFit?: MuseStylePropertyValue
-  readonly opacity?: MuseStylePropertyValue
-  readonly order?: MuseStylePropertyValue
-  readonly outline?: MuseStylePropertyValue
-  readonly overflow?: MuseStylePropertyValue
-  readonly overflowX?: MuseStylePropertyValue
-  readonly overflowY?: MuseStylePropertyValue
-  readonly overscrollBehavior?: MuseStylePropertyValue
-  readonly padding?: MuseStylePropertyValue
-  readonly paddingBlock?: MuseStylePropertyValue
-  readonly paddingInline?: MuseStylePropertyValue
-  readonly paddingBottom?: MuseStylePropertyValue
-  readonly paddingLeft?: MuseStylePropertyValue
-  readonly paddingRight?: MuseStylePropertyValue
-  readonly paddingTop?: MuseStylePropertyValue
-  readonly placeContent?: MuseStylePropertyValue
-  readonly placeItems?: MuseStylePropertyValue
-  readonly placeSelf?: MuseStylePropertyValue
-  readonly pointerEvents?: MuseStylePropertyValue
-  readonly position?: MuseStylePropertyValue
-  readonly right?: MuseStylePropertyValue
-  readonly rowGap?: MuseStylePropertyValue
-  readonly scrollBehavior?: MuseStylePropertyValue
-  readonly textAlign?: MuseStylePropertyValue
-  readonly textDecoration?: MuseStylePropertyValue
-  readonly textOverflow?: MuseStylePropertyValue
-  readonly textTransform?: MuseStylePropertyValue
-  readonly top?: MuseStylePropertyValue
-  readonly transform?: MuseStylePropertyValue
-  readonly transformOrigin?: MuseStylePropertyValue
-  readonly userSelect?: MuseStylePropertyValue
-  readonly verticalAlign?: MuseStylePropertyValue
-  readonly visibility?: MuseStylePropertyValue
-  readonly whiteSpace?: MuseStylePropertyValue
-  readonly width?: MuseStylePropertyValue
-  readonly wordBreak?: MuseStylePropertyValue
-  readonly zIndex?: MuseStylePropertyValue
-  readonly WebkitOverflowScrolling?: MuseStylePropertyValue
-  readonly WebkitTapHighlightColor?: MuseStylePropertyValue
+export interface VuneStyleProperties {
+  readonly [property: `--${string}`]: VuneStylePropertyValue
+  readonly accentColor?: VuneStylePropertyValue
+  readonly alignContent?: VuneStylePropertyValue
+  readonly alignItems?: VuneStylePropertyValue
+  readonly alignSelf?: VuneStylePropertyValue
+  readonly appearance?: VuneStylePropertyValue
+  readonly aspectRatio?: VuneStylePropertyValue
+  readonly background?: VuneStylePropertyValue
+  readonly backgroundColor?: VuneStylePropertyValue
+  readonly backgroundImage?: VuneStylePropertyValue
+  readonly backgroundPosition?: VuneStylePropertyValue
+  readonly backgroundRepeat?: VuneStylePropertyValue
+  readonly backgroundSize?: VuneStylePropertyValue
+  readonly blockSize?: VuneStylePropertyValue
+  readonly border?: VuneStylePropertyValue
+  readonly borderBottom?: VuneStylePropertyValue
+  readonly borderColor?: VuneStylePropertyValue
+  readonly borderLeft?: VuneStylePropertyValue
+  readonly borderRadius?: VuneStylePropertyValue
+  readonly borderRight?: VuneStylePropertyValue
+  readonly borderStyle?: VuneStylePropertyValue
+  readonly borderTop?: VuneStylePropertyValue
+  readonly borderWidth?: VuneStylePropertyValue
+  readonly bottom?: VuneStylePropertyValue
+  readonly boxShadow?: VuneStylePropertyValue
+  readonly boxSizing?: VuneStylePropertyValue
+  readonly color?: VuneStylePropertyValue
+  readonly columnGap?: VuneStylePropertyValue
+  readonly columns?: VuneStylePropertyValue
+  readonly content?: VuneStylePropertyValue
+  readonly cursor?: VuneStylePropertyValue
+  readonly display?: VuneStylePropertyValue
+  readonly flex?: VuneStylePropertyValue
+  readonly flexBasis?: VuneStylePropertyValue
+  readonly flexDirection?: VuneStylePropertyValue
+  readonly flexGrow?: VuneStylePropertyValue
+  readonly flexShrink?: VuneStylePropertyValue
+  readonly flexWrap?: VuneStylePropertyValue
+  readonly float?: VuneStylePropertyValue
+  readonly font?: VuneStylePropertyValue
+  readonly fontFamily?: VuneStylePropertyValue
+  readonly fontSize?: VuneStylePropertyValue
+  readonly fontStyle?: VuneStylePropertyValue
+  readonly fontWeight?: VuneStylePropertyValue
+  readonly gap?: VuneStylePropertyValue
+  readonly gridArea?: VuneStylePropertyValue
+  readonly gridAutoColumns?: VuneStylePropertyValue
+  readonly gridAutoFlow?: VuneStylePropertyValue
+  readonly gridAutoRows?: VuneStylePropertyValue
+  readonly gridColumn?: VuneStylePropertyValue
+  readonly gridRow?: VuneStylePropertyValue
+  readonly gridTemplateColumns?: VuneStylePropertyValue
+  readonly gridTemplateRows?: VuneStylePropertyValue
+  readonly height?: VuneStylePropertyValue
+  readonly inset?: VuneStylePropertyValue
+  readonly insetBlock?: VuneStylePropertyValue
+  readonly insetInline?: VuneStylePropertyValue
+  readonly justifyContent?: VuneStylePropertyValue
+  readonly justifyItems?: VuneStylePropertyValue
+  readonly justifySelf?: VuneStylePropertyValue
+  readonly left?: VuneStylePropertyValue
+  readonly letterSpacing?: VuneStylePropertyValue
+  readonly lineHeight?: VuneStylePropertyValue
+  readonly listStyle?: VuneStylePropertyValue
+  readonly margin?: VuneStylePropertyValue
+  readonly marginBlock?: VuneStylePropertyValue
+  readonly marginInline?: VuneStylePropertyValue
+  readonly marginBottom?: VuneStylePropertyValue
+  readonly marginLeft?: VuneStylePropertyValue
+  readonly marginRight?: VuneStylePropertyValue
+  readonly marginTop?: VuneStylePropertyValue
+  readonly maxHeight?: VuneStylePropertyValue
+  readonly maxWidth?: VuneStylePropertyValue
+  readonly minHeight?: VuneStylePropertyValue
+  readonly minWidth?: VuneStylePropertyValue
+  readonly objectFit?: VuneStylePropertyValue
+  readonly opacity?: VuneStylePropertyValue
+  readonly order?: VuneStylePropertyValue
+  readonly outline?: VuneStylePropertyValue
+  readonly overflow?: VuneStylePropertyValue
+  readonly overflowX?: VuneStylePropertyValue
+  readonly overflowY?: VuneStylePropertyValue
+  readonly overscrollBehavior?: VuneStylePropertyValue
+  readonly padding?: VuneStylePropertyValue
+  readonly paddingBlock?: VuneStylePropertyValue
+  readonly paddingInline?: VuneStylePropertyValue
+  readonly paddingBottom?: VuneStylePropertyValue
+  readonly paddingLeft?: VuneStylePropertyValue
+  readonly paddingRight?: VuneStylePropertyValue
+  readonly paddingTop?: VuneStylePropertyValue
+  readonly placeContent?: VuneStylePropertyValue
+  readonly placeItems?: VuneStylePropertyValue
+  readonly placeSelf?: VuneStylePropertyValue
+  readonly pointerEvents?: VuneStylePropertyValue
+  readonly position?: VuneStylePropertyValue
+  readonly right?: VuneStylePropertyValue
+  readonly rowGap?: VuneStylePropertyValue
+  readonly scrollBehavior?: VuneStylePropertyValue
+  readonly textAlign?: VuneStylePropertyValue
+  readonly textDecoration?: VuneStylePropertyValue
+  readonly textOverflow?: VuneStylePropertyValue
+  readonly textTransform?: VuneStylePropertyValue
+  readonly top?: VuneStylePropertyValue
+  readonly transform?: VuneStylePropertyValue
+  readonly transformOrigin?: VuneStylePropertyValue
+  readonly userSelect?: VuneStylePropertyValue
+  readonly verticalAlign?: VuneStylePropertyValue
+  readonly visibility?: VuneStylePropertyValue
+  readonly whiteSpace?: VuneStylePropertyValue
+  readonly width?: VuneStylePropertyValue
+  readonly wordBreak?: VuneStylePropertyValue
+  readonly zIndex?: VuneStylePropertyValue
+  readonly WebkitOverflowScrolling?: VuneStylePropertyValue
+  readonly WebkitTapHighlightColor?: VuneStylePropertyValue
 }
-export type MuseStyleValue = string | MuseStyleProperties
+export type VuneStyleValue = string | VuneStyleProperties
 
 type AriaAttributes = { readonly [Name in `aria-${string}`]?: string | number | boolean }
 type DataAttributes = { readonly [Name in `data-${string}`]?: string | number | boolean }
 
-export interface MuseGlobalHtmlAttributes {
+export interface VuneGlobalHtmlAttributes {
   readonly id?: string
   readonly class?: string
   readonly className?: string
-  readonly style?: MuseStyleValue
+  readonly style?: VuneStyleValue
   readonly title?: string
   readonly role?: string
   readonly hidden?: boolean
@@ -183,79 +183,79 @@ export interface MuseGlobalHtmlAttributes {
   readonly ref?: unknown
 }
 
-export type MuseHtmlEventAttributes<Tag extends string> = {
-  readonly onclick?: MuseEventHandler<Tag>
-  readonly onClick?: MuseEventHandler<Tag>
-  readonly onchange?: MuseEventHandler<Tag>
-  readonly onChange?: MuseEventHandler<Tag>
-  readonly oninput?: MuseEventHandler<Tag>
-  readonly onInput?: MuseEventHandler<Tag>
-  readonly onsubmit?: MuseEventHandler<Tag>
-  readonly onSubmit?: MuseEventHandler<Tag>
-  readonly onkeydown?: MuseEventHandler<Tag>
-  readonly onKeyDown?: MuseEventHandler<Tag>
-  readonly onkeyup?: MuseEventHandler<Tag>
-  readonly onKeyUp?: MuseEventHandler<Tag>
-  readonly onfocus?: MuseEventHandler<Tag>
-  readonly onFocus?: MuseEventHandler<Tag>
-  readonly onblur?: MuseEventHandler<Tag>
-  readonly onBlur?: MuseEventHandler<Tag>
-  readonly onpointerdown?: MuseEventHandler<Tag>
-  readonly onPointerDown?: MuseEventHandler<Tag>
-  readonly onpointermove?: MuseEventHandler<Tag>
-  readonly onPointerMove?: MuseEventHandler<Tag>
-  readonly onpointerup?: MuseEventHandler<Tag>
-  readonly onPointerUp?: MuseEventHandler<Tag>
-  readonly onpointerenter?: MuseEventHandler<Tag>
-  readonly onPointerEnter?: MuseEventHandler<Tag>
-  readonly onpointerleave?: MuseEventHandler<Tag>
-  readonly onPointerLeave?: MuseEventHandler<Tag>
-  readonly onmouseenter?: MuseEventHandler<Tag>
-  readonly onMouseEnter?: MuseEventHandler<Tag>
-  readonly onmouseleave?: MuseEventHandler<Tag>
-  readonly onMouseLeave?: MuseEventHandler<Tag>
-  readonly onmousemove?: MuseEventHandler<Tag>
-  readonly onMouseMove?: MuseEventHandler<Tag>
-  readonly onmouseover?: MuseEventHandler<Tag>
-  readonly onMouseOver?: MuseEventHandler<Tag>
-  readonly oncontextmenu?: MuseEventHandler<Tag>
-  readonly onContextMenu?: MuseEventHandler<Tag>
-  readonly ondblclick?: MuseEventHandler<Tag>
-  readonly onDoubleClick?: MuseEventHandler<Tag>
-  readonly onwheel?: MuseEventHandler<Tag>
-  readonly onWheel?: MuseEventHandler<Tag>
-  readonly onscroll?: MuseEventHandler<Tag>
-  readonly onScroll?: MuseEventHandler<Tag>
-  readonly onfocusin?: MuseEventHandler<Tag>
-  readonly onFocusIn?: MuseEventHandler<Tag>
-  readonly onfocusout?: MuseEventHandler<Tag>
-  readonly onFocusOut?: MuseEventHandler<Tag>
-  readonly oncompositionstart?: MuseEventHandler<Tag>
-  readonly onCompositionStart?: MuseEventHandler<Tag>
-  readonly oncompositionend?: MuseEventHandler<Tag>
-  readonly onCompositionEnd?: MuseEventHandler<Tag>
-  readonly ondragstart?: MuseEventHandler<Tag>
-  readonly onDragStart?: MuseEventHandler<Tag>
-  readonly ondragover?: MuseEventHandler<Tag>
-  readonly onDragOver?: MuseEventHandler<Tag>
-  readonly ondrop?: MuseEventHandler<Tag>
-  readonly onDrop?: MuseEventHandler<Tag>
-  readonly oncopy?: MuseEventHandler<Tag>
-  readonly onCopy?: MuseEventHandler<Tag>
-  readonly oncut?: MuseEventHandler<Tag>
-  readonly onCut?: MuseEventHandler<Tag>
-  readonly onpaste?: MuseEventHandler<Tag>
-  readonly onPaste?: MuseEventHandler<Tag>
-  readonly ontouchstart?: MuseEventHandler<Tag>
-  readonly onTouchStart?: MuseEventHandler<Tag>
-  readonly ontouchmove?: MuseEventHandler<Tag>
-  readonly onTouchMove?: MuseEventHandler<Tag>
-  readonly ontouchend?: MuseEventHandler<Tag>
-  readonly onTouchEnd?: MuseEventHandler<Tag>
-  readonly onload?: MuseEventHandler<Tag>
-  readonly onLoad?: MuseEventHandler<Tag>
-  readonly onerror?: MuseEventHandler<Tag>
-  readonly onError?: MuseEventHandler<Tag>
+export type VuneHtmlEventAttributes<Tag extends string> = {
+  readonly onclick?: VuneEventHandler<Tag>
+  readonly onClick?: VuneEventHandler<Tag>
+  readonly onchange?: VuneEventHandler<Tag>
+  readonly onChange?: VuneEventHandler<Tag>
+  readonly oninput?: VuneEventHandler<Tag>
+  readonly onInput?: VuneEventHandler<Tag>
+  readonly onsubmit?: VuneEventHandler<Tag>
+  readonly onSubmit?: VuneEventHandler<Tag>
+  readonly onkeydown?: VuneEventHandler<Tag>
+  readonly onKeyDown?: VuneEventHandler<Tag>
+  readonly onkeyup?: VuneEventHandler<Tag>
+  readonly onKeyUp?: VuneEventHandler<Tag>
+  readonly onfocus?: VuneEventHandler<Tag>
+  readonly onFocus?: VuneEventHandler<Tag>
+  readonly onblur?: VuneEventHandler<Tag>
+  readonly onBlur?: VuneEventHandler<Tag>
+  readonly onpointerdown?: VuneEventHandler<Tag>
+  readonly onPointerDown?: VuneEventHandler<Tag>
+  readonly onpointermove?: VuneEventHandler<Tag>
+  readonly onPointerMove?: VuneEventHandler<Tag>
+  readonly onpointerup?: VuneEventHandler<Tag>
+  readonly onPointerUp?: VuneEventHandler<Tag>
+  readonly onpointerenter?: VuneEventHandler<Tag>
+  readonly onPointerEnter?: VuneEventHandler<Tag>
+  readonly onpointerleave?: VuneEventHandler<Tag>
+  readonly onPointerLeave?: VuneEventHandler<Tag>
+  readonly onmouseenter?: VuneEventHandler<Tag>
+  readonly onMouseEnter?: VuneEventHandler<Tag>
+  readonly onmouseleave?: VuneEventHandler<Tag>
+  readonly onMouseLeave?: VuneEventHandler<Tag>
+  readonly onmousemove?: VuneEventHandler<Tag>
+  readonly onMouseMove?: VuneEventHandler<Tag>
+  readonly onmouseover?: VuneEventHandler<Tag>
+  readonly onMouseOver?: VuneEventHandler<Tag>
+  readonly oncontextmenu?: VuneEventHandler<Tag>
+  readonly onContextMenu?: VuneEventHandler<Tag>
+  readonly ondblclick?: VuneEventHandler<Tag>
+  readonly onDoubleClick?: VuneEventHandler<Tag>
+  readonly onwheel?: VuneEventHandler<Tag>
+  readonly onWheel?: VuneEventHandler<Tag>
+  readonly onscroll?: VuneEventHandler<Tag>
+  readonly onScroll?: VuneEventHandler<Tag>
+  readonly onfocusin?: VuneEventHandler<Tag>
+  readonly onFocusIn?: VuneEventHandler<Tag>
+  readonly onfocusout?: VuneEventHandler<Tag>
+  readonly onFocusOut?: VuneEventHandler<Tag>
+  readonly oncompositionstart?: VuneEventHandler<Tag>
+  readonly onCompositionStart?: VuneEventHandler<Tag>
+  readonly oncompositionend?: VuneEventHandler<Tag>
+  readonly onCompositionEnd?: VuneEventHandler<Tag>
+  readonly ondragstart?: VuneEventHandler<Tag>
+  readonly onDragStart?: VuneEventHandler<Tag>
+  readonly ondragover?: VuneEventHandler<Tag>
+  readonly onDragOver?: VuneEventHandler<Tag>
+  readonly ondrop?: VuneEventHandler<Tag>
+  readonly onDrop?: VuneEventHandler<Tag>
+  readonly oncopy?: VuneEventHandler<Tag>
+  readonly onCopy?: VuneEventHandler<Tag>
+  readonly oncut?: VuneEventHandler<Tag>
+  readonly onCut?: VuneEventHandler<Tag>
+  readonly onpaste?: VuneEventHandler<Tag>
+  readonly onPaste?: VuneEventHandler<Tag>
+  readonly ontouchstart?: VuneEventHandler<Tag>
+  readonly onTouchStart?: VuneEventHandler<Tag>
+  readonly ontouchmove?: VuneEventHandler<Tag>
+  readonly onTouchMove?: VuneEventHandler<Tag>
+  readonly ontouchend?: VuneEventHandler<Tag>
+  readonly onTouchEnd?: VuneEventHandler<Tag>
+  readonly onload?: VuneEventHandler<Tag>
+  readonly onLoad?: VuneEventHandler<Tag>
+  readonly onerror?: VuneEventHandler<Tag>
+  readonly onError?: VuneEventHandler<Tag>
 }
 
 type AnchorAttributes = { readonly href?: string; readonly target?: "_self" | "_blank" | "_parent" | "_top" | string; readonly rel?: string; readonly download?: string | boolean; readonly hreflang?: string }
@@ -271,7 +271,7 @@ type MediaAttributes = { readonly src?: string; readonly controls?: boolean; rea
 type ProgressAttributes = { readonly value?: number; readonly max?: number }
 type TableCellAttributes = { readonly colspan?: number; readonly rowspan?: number; readonly headers?: string; readonly scope?: "row" | "col" | "rowgroup" | "colgroup" }
 
-type TagAttributes<Tag extends MuseHtmlTagName> =
+type TagAttributes<Tag extends VuneHtmlTagName> =
   Tag extends "a" ? AnchorAttributes
   : Tag extends "button" ? ButtonAttributes
   : Tag extends "form" ? FormAttributes
@@ -286,8 +286,8 @@ type TagAttributes<Tag extends MuseHtmlTagName> =
   : Tag extends "td" | "th" ? TableCellAttributes
   : Record<never, never>
 
-export type MuseHtmlAttributes<Tag extends MuseHtmlTagName> =
-  MuseGlobalHtmlAttributes & AriaAttributes & DataAttributes & MuseHtmlEventAttributes<Tag> & TagAttributes<Tag>
+export type VuneHtmlAttributes<Tag extends VuneHtmlTagName> =
+  VuneGlobalHtmlAttributes & AriaAttributes & DataAttributes & VuneHtmlEventAttributes<Tag> & TagAttributes<Tag>
 
-export type MuseCustomElementAttributes<Tag extends `${string}-${string}` = `${string}-${string}`> =
-  MuseGlobalHtmlAttributes & AriaAttributes & DataAttributes & MuseHtmlEventAttributes<Tag> & Readonly<Record<string, unknown>>
+export type VuneCustomElementAttributes<Tag extends `${string}-${string}` = `${string}-${string}`> =
+  VuneGlobalHtmlAttributes & AriaAttributes & DataAttributes & VuneHtmlEventAttributes<Tag> & Readonly<Record<string, unknown>>

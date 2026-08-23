@@ -1,37 +1,37 @@
 {
-  "name": "muse-language-support",
-  "displayName": "Muse Language Support",
-  "description": "Muse and raw HTML syntax and semantic highlighting, diagnostics, formatting, completion, hover, signature help, and language tooling.",
+  "name": "vune-language-support",
+  "displayName": "Vune Language Support",
+  "description": "Vune and raw HTML syntax and semantic highlighting, diagnostics, formatting, completion, hover, signature help, and language tooling.",
   "version": "0.1.0",
   "private": true,
-  "publisher": "muse",
+  "publisher": "vune-ui",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:muse", "onLanguage:vue"],
+  "activationEvents": ["onLanguage:vune", "onLanguage:vue"],
   "main": "./extension.cjs",
   "contributes": {
     "languages": [{
-      "id": "muse",
-      "aliases": ["Muse", "muse.ts"],
-      "extensions": [".muse.ts"],
+      "id": "vune-ui",
+      "aliases": ["Vune", "vune.ts"],
+      "extensions": [".vune.ts"],
       "configuration": "./language-configuration.json"
     }],
     "grammars": [{
-      "language": "muse",
-      "scopeName": "source.muse",
-      "path": "./syntaxes/muse.tmLanguage.json"
+      "language": "vune-ui",
+      "scopeName": "source.vune",
+      "path": "./syntaxes/vune.tmLanguage.json"
     }],
     "commands": [{
-      "command": "muse.formatDocument",
-      "title": "Muse: Format Document"
+      "command": "vune.formatDocument",
+      "title": "Vune: Format Document"
     }],
     "configuration": {
-      "title": "Muse",
+      "title": "Vune",
       "properties": {
-        "muse.languageTools.enableVue": {
+        "vune.languageTools.enableVue": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Muse formatting, completion, hover, signature help, definition, diagnostics, rename, and semantic highlighting in Vue SFCs."
+          "description": "Enable Vune formatting, completion, hover, signature help, definition, diagnostics, rename, and semantic highlighting in Vue SFCs."
         }
       }
     }

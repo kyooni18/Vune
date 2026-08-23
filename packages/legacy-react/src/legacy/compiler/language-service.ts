@@ -1,13 +1,13 @@
-import { createMuseSourceMap } from './source-map.js'
-import { diagnoseMuseSource, formatMuseSource, type MuseDiagnostic } from './language-tools.js'
+import { createVuneSourceMap } from './source-map.js'
+import { diagnoseVuneSource, formatVuneSource, type VuneDiagnostic } from './language-tools.js'
 
-export interface MuseSourcePosition {
+export interface VuneSourcePosition {
   readonly line: number
   readonly column: number
 }
-export interface MuseLanguageTransform {
+export interface VuneLanguageTransform {
   readonly code: string
-  readonly map: ReturnType<typeof createMuseSourceMap>
+  readonly map: ReturnType<typeof createVuneSourceMap>
 }
 
 /**
@@ -17,19 +17,19 @@ export interface MuseLanguageTransform {
  * makes diagnostics and text-editor selections useful even when the compiler
  * synthesizes closure wrappers or initializer objects.
  */
-export interface MuseLanguageService {
+export interface VuneLanguageService {
   format(source: string): string
-  diagnose(source: string): readonly MuseDiagnostic[]
-  transform(source: string, id?: string): MuseLanguageTransform
-  positionAt(source: string, offset: number): MuseSourcePosition
-  offsetAt(source: string, position: MuseSourcePosition): number
+  diagnose(source: string): readonly VuneDiagnostic[]
+  transform(source: string, id?: string): VuneLanguageTransform
+  positionAt(source: string, offset: number): VuneSourcePosition
+  offsetAt(source: string, position: VuneSourcePosition): number
 }
 
 function clampOffset(source: string, offset: number): number {
   return Math.max(0, Math.min(source.length, Math.trunc(offset)))
 }
 
-function positionAt(source: string, offset: number): MuseSourcePosition {
+function positionAt(source: string, offset: number): VuneSourcePosition {
   const bounded = clampOffset(source, offset)
   const before = source.slice(0, bounded)
   const lineStart = before.lastIndexOf('\n') + 1
@@ -39,7 +39,7 @@ function positionAt(source: string, offset: number): MuseSourcePosition {
   }
 }
 
-function offsetAt(source: string, position: MuseSourcePosition): number {
+function offsetAt(source: string, position: VuneSourcePosition): number {
   const line = Math.max(1, Math.trunc(position.line))
   const column = Math.max(1, Math.trunc(position.column))
   const lines = source.split('\n')
@@ -48,13 +48,13 @@ function offsetAt(source: string, position: MuseSourcePosition): number {
   return clampOffset(source, lineStart + column - 1)
 }
 
-export function createMuseLanguageService(): MuseLanguageService {
+export function createVuneLanguageService(): VuneLanguageService {
   return {
-    format: formatMuseSource,
-    diagnose: diagnoseMuseSource,
-    transform(source, id = 'muse-source.ts') {
-      const code = formatMuseSource(source)
-      return { code, map: createMuseSourceMap(source, code, id) }
+    format: formatVuneSource,
+    diagnose: diagnoseVuneSource,
+    transform(source, id = 'vune-source.ts') {
+      const code = formatVuneSource(source)
+      return { code, map: createVuneSourceMap(source, code, id) }
     },
     positionAt,
     offsetAt,

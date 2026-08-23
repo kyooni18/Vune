@@ -8,7 +8,7 @@ function compilerRootFileName(fileName: string): string {
     : `${ts.sys.getCurrentDirectory().replace(/[\\/]$/, "")}/${fileName}`
 }
 
-interface MuseTypeScriptProgram {
+interface VuneTypeScriptProgram {
   readonly sourceFile: ts.SourceFile
   readonly checker: ts.TypeChecker
 }
@@ -33,7 +33,7 @@ function rememberProgram(root: string, program: ts.Program): void {
   }
 }
 
-function createMuseTypeScriptProgram(source: string, fileName: string): MuseTypeScriptProgram | undefined {
+function createVuneTypeScriptProgram(source: string, fileName: string): VuneTypeScriptProgram | undefined {
   const rootFileName = compilerRootFileName(fileName)
   const options: ts.CompilerOptions = {
     allowJs: false,
@@ -89,11 +89,11 @@ export const staticModifierNames = new Set([
   "style", "className", "withProps", "keyed", "elementRef",
 ])
 
-function isMuseViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
+function isVuneViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return false
   const alias = type.aliasSymbol?.escapedName
   if (alias === "View" || alias === "ModifiableViewNode") return true
-  if (type.isUnion()) return type.types.length > 0 && type.types.every(item => isMuseViewType(checker, item))
+  if (type.isUnion()) return type.types.length > 0 && type.types.every(item => isVuneViewType(checker, item))
   const rendered = checker.typeToString(type)
   return rendered === "View" || rendered === "ModifiableViewNode"
 }
@@ -120,7 +120,7 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
 
   let result = source
   for (let pass = 0; pass < 8; pass += 1) {
-    const program = createMuseTypeScriptProgram(result, fileName)
+    const program = createVuneTypeScriptProgram(result, fileName)
     if (!program) return result
     const candidates: Array<{ node: ts.CallExpression; chain: { readonly base: ts.Expression; readonly calls: readonly StaticModifierCall[] } }> = []
     const visit = (node: ts.Node): void => {
@@ -131,7 +131,7 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
           && ts.isPropertyAccessExpression(parent.expression)
           && parent.expression.expression === node
           && staticModifierNames.has(parent.expression.name.text)
-        if (chain && !isNestedChain && isMuseViewType(program.checker, program.checker.getTypeAtLocation(chain.base))) {
+        if (chain && !isNestedChain && isVuneViewType(program.checker, program.checker.getTypeAtLocation(chain.base))) {
           candidates.push({ node, chain })
           return
         }
@@ -164,7 +164,7 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
 }
 
 export function lowerStaticImportedCalls(source: string, fileName: string): string {
-  const syntax = ts.createSourceFile("muse-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const syntax = ts.createSourceFile("vune-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const importedNames = new Set<string>()
   for (const statement of syntax.statements) {
     if (!ts.isImportDeclaration(statement) || !statement.importClause) continue
@@ -176,7 +176,7 @@ export function lowerStaticImportedCalls(source: string, fileName: string): stri
   }
   if (!Array.from(importedNames).some(name => new RegExp(`\\b${name}\\s*\\(`).test(source))) return source
 
-  const program = createMuseTypeScriptProgram(source, fileName)
+  const program = createVuneTypeScriptProgram(source, fileName)
   if (!program) return source
   const { sourceFile, checker } = program
   const hasRestParameter = (signature: ts.Signature): boolean => signature.parameters.some(parameter => (

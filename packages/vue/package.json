@@ -1,7 +1,7 @@
 {
-  "name": "@muse/vue",
-  "version": "0.1.0",
-  "description": "Vue renderer and explicit interop bridges for the renderer-independent Muse core.",
+  "name": "@vune-ui/vue",
+  "version": "0.1.1",
+  "description": "Vue renderer and explicit interop bridges for the renderer-independent Vune core.",
   "type": "module",
   "files": [
     "dist"
@@ -19,7 +19,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@muse/core": "workspace:*"
+    "@vune-ui/core": "^0.1.1"
   },
   "peerDependencies": {
     "vue": ">=3.4 <4"
@@ -27,5 +27,8 @@
   "devDependencies": {
     "vue": "^3.5.0"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

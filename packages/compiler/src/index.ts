@@ -1,39 +1,39 @@
-import { createMuseSourceMap } from "./source-map.js"
-import { createSemanticModel, type MuseSemanticModel } from "./semantic.js"
-import { transformMuseSource } from "./pipeline.js"
-import { diagnoseMuseSource } from "./diagnostics.js"
-import type { MuseLanguageService, MuseSourceMap, MuseTransformResult } from "./types.js"
+import { createVuneSourceMap } from "./source-map.js"
+import { createSemanticModel, type VuneSemanticModel } from "./semantic.js"
+import { transformVuneSource } from "./pipeline.js"
+import { diagnoseVuneSource } from "./diagnostics.js"
+import type { VuneLanguageService, VuneSourceMap, VuneTransformResult } from "./types.js"
 
-export { transformMuseSource } from "./pipeline.js"
-export { diagnoseMuseSource } from "./diagnostics.js"
-export { createMuseVitePlugin } from "./vite.js"
-export type { MuseDiagnostic, MuseLanguageService, MuseSourceMap, MuseTransformResult, MuseVitePluginOptions } from "./types.js"
+export { transformVuneSource } from "./pipeline.js"
+export { diagnoseVuneSource } from "./diagnostics.js"
+export { createVuneVitePlugin } from "./vite.js"
+export type { VuneDiagnostic, VuneLanguageService, VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
-export { lowerMuseBuilderAst, parseMuseBuilder, parseMuseStructs } from "./ast.js"
+export { lowerVuneBuilderAst, parseVuneBuilder, parseVuneStructs } from "./ast.js"
 export type {
-  MuseArgument,
-  MuseAstLowering,
-  MuseBuilderNode,
-  MuseBuilderProgram,
-  MuseCallExpression,
-  MuseClosureExpression,
-  MuseConditionalExpression,
-  MuseRawExpression,
-  MuseSourceRange,
-  MuseStructDeclaration,
-  MuseStructField,
-  MuseStructInitializer,
+  VuneArgument,
+  VuneAstLowering,
+  VuneBuilderNode,
+  VuneBuilderProgram,
+  VuneCallExpression,
+  VuneClosureExpression,
+  VuneConditionalExpression,
+  VuneRawExpression,
+  VuneSourceRange,
+  VuneStructDeclaration,
+  VuneStructField,
+  VuneStructInitializer,
 } from "./ast.js"
 export type {
-  MuseSemanticCall,
-  MuseSemanticField,
-  MuseSemanticForeignComponent,
-  MuseSemanticHtmlDiagnostic,
-  MuseSemanticHtmlElement,
-  MuseSemanticImport,
-  MuseSemanticInitializer,
-  MuseSemanticModel,
-  MuseSemanticView,
+  VuneSemanticCall,
+  VuneSemanticField,
+  VuneSemanticForeignComponent,
+  VuneSemanticHtmlDiagnostic,
+  VuneSemanticHtmlElement,
+  VuneSemanticImport,
+  VuneSemanticInitializer,
+  VuneSemanticModel,
+  VuneSemanticView,
 } from "./semantic.js"
 export type {
   SemanticArgument,
@@ -61,30 +61,30 @@ export type {
   SemanticStructSymbol,
   SemanticSymbol,
   SemanticViewTypeSymbol,
-} from "@muse/core"
-export { resolveSemanticCall, resolveSemanticInitializer, SemanticModel, semanticHtmlAttributeNames, semanticHtmlAttributeSpec, semanticHtmlTagNames, semanticHtmlTagSpec } from "@muse/core"
+} from "@vune-ui/core"
+export { resolveSemanticCall, resolveSemanticInitializer, SemanticModel, semanticHtmlAttributeNames, semanticHtmlAttributeSpec, semanticHtmlTagNames, semanticHtmlTagSpec } from "@vune-ui/core"
 export { mapGeneratedPosition, mapOriginalPosition } from "./source-map.js"
-export type { MuseSourceMapAnchor, MuseSourcePosition } from "./source-map.js"
+export type { VuneSourceMapAnchor, VuneSourcePosition } from "./source-map.js"
 
-export function compileMuseFile(source: string, fileName = "muse-source.muse.ts"): MuseTransformResult {
-  const code = transformMuseSource(source, fileName)
-  return { code, map: createMuseSourceMap(source, code, fileName) }
+export function compileVuneFile(source: string, fileName = "vune-source.vune.ts"): VuneTransformResult {
+  const code = transformVuneSource(source, fileName)
+  return { code, map: createVuneSourceMap(source, code, fileName) }
 }
 
-/** Build the shared Muse + TypeScript semantic model used by compiler clients and IDE tooling. */
-export function createMuseSemanticModel(source: string, fileName = "muse-source.muse.ts"): MuseSemanticModel {
-  return createSemanticModel(source, fileName, transformMuseSource(source, fileName))
+/** Build the shared Vune + TypeScript semantic model used by compiler clients and IDE tooling. */
+export function createVuneSemanticModel(source: string, fileName = "vune-source.vune.ts"): VuneSemanticModel {
+  return createSemanticModel(source, fileName, transformVuneSource(source, fileName))
 }
 
-export function formatMuseSource(source: string): string {
-  return transformMuseSource(source)
+export function formatVuneSource(source: string): string {
+  return transformVuneSource(source)
 }
 
-export function createMuseLanguageService(): MuseLanguageService {
+export function createVuneLanguageService(): VuneLanguageService {
   return {
-    format: formatMuseSource,
-    diagnose: diagnoseMuseSource,
-    transform: compileMuseFile,
+    format: formatVuneSource,
+    diagnose: diagnoseVuneSource,
+    transform: compileVuneFile,
     positionAt(source, offset) {
       const bounded = Math.max(0, Math.min(source.length, offset))
       const before = source.slice(0, bounded)
@@ -95,6 +95,6 @@ export function createMuseLanguageService(): MuseLanguageService {
       const line = Math.max(1, Math.min(lines.length, position.line))
       return lines.slice(0, line - 1).reduce((offset, item) => offset + item.length + 1, 0) + Math.max(0, position.column - 1)
     },
-    semantic: createMuseSemanticModel,
+    semantic: createVuneSemanticModel,
   }
 }

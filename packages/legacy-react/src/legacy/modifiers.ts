@@ -12,7 +12,7 @@ import {
   setLayoutClass,
   setLayoutStyle,
 } from './layout.js'
-import { applyMusePlugins } from './runtime/modifier-pipeline.js'
+import { applyVunePlugins } from './runtime/modifier-pipeline.js'
 import { inheritViewNode, markModifiedViewNode } from './runtime/view-graph.js'
 import type {
   Alignment,
@@ -269,6 +269,6 @@ export function styled(element: ReactElement): StyledElement {
 /** Apply registered experimental plugins once to a newly-created DSL node. */
 export function finalize(element: ReactElement): StyledElement {
   const styledElement = styled(element)
-  const pluginElement = applyMusePlugins(styledElement)
+  const pluginElement = applyVunePlugins(styledElement)
   return styled(pluginElement)
 }

@@ -1,0 +1,20 @@
+{
+  "id": "bc926f1df",
+  "name": "Install renamed workspace",
+  "command": "pnpm install --offline",
+  "description": "Relink workspace dependencies after Vune package renaming",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-68026-68026/bc926f1df.output",
+  "cwd": "/Users/kyooni18/Code/Web/React/Muse",
+  "startTime": 1787476621673,
+  "endTime": 1787476622035,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 71089,
+  "bytesWritten": 555,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

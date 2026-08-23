@@ -1,2 +1,2 @@
-/** Vune UI compatibility facade. Canonical Muse consumers should use @muse/core and @muse/react. */
-export * from "@muse/react/legacy"
+/** Canonical Vune UI authoring entry point. Renderer adapters remain opt-in. */
+export * from "@vune-ui/core"

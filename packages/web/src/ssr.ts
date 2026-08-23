@@ -1,4 +1,4 @@
-import { isForeignComponent, renderViewNode, zeroGeometry, type MuseRenderer, type ViewGraphValue, type ViewHostNode } from "@muse/core"
+import { isForeignComponent, renderViewNode, zeroGeometry, type VuneRenderer, type ViewGraphValue, type ViewHostNode } from "@vune-ui/core"
 import { classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, propsOf, styleAttribute, styleOf, styleText, voidHtmlElements } from "./shared.js"
 
 
@@ -17,12 +17,12 @@ function serializedAttribute(key: string, value: unknown): string | undefined {
   return `${name}="${escapeAttribute(serialized)}"`
 }
 
-const htmlRenderer: MuseRenderer<string> = {
+const htmlRenderer: VuneRenderer<string> = {
   element(type, props, ...children) {
     const foreign = isForeignComponent(type) ? type : undefined
     const tag = typeof type === "string" ? type : "div"
     const effectiveProps = foreign
-      ? { ...foreign.props, ...foreign.events, ...(foreign.ref === undefined ? {} : { ref: foreign.ref }), ...(props ?? {}), "data-muse-foreign": foreign.name }
+      ? { ...foreign.props, ...foreign.events, ...(foreign.ref === undefined ? {} : { ref: foreign.ref }), ...(props ?? {}), "data-vune-foreign": foreign.name }
       : props
     const attributes = Object.entries(effectiveProps ?? {})
       .map(([key, value]) => serializedAttribute(key, value))
@@ -78,7 +78,7 @@ const htmlRenderer: MuseRenderer<string> = {
     return render({ ...node.props, ...state })
   },
   geometry(_node, render) {
-    return `<div data-muse="GeometryReader">${render(zeroGeometry)}</div>`
+    return `<div data-vune="GeometryReader">${render(zeroGeometry)}</div>`
   },
 }
 export function renderToHTML(value: ViewGraphValue): string {

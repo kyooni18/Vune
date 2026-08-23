@@ -1,0 +1,10 @@
+vune-ui@0.1.0: 69 files, 41.7 KiB unpacked
+@vune-ui/core@0.1.0: 77 files, 359.5 KiB unpacked
+@vune-ui/compiler@0.1.0: 41 files, 397.2 KiB unpacked
+@vune-ui/react@0.1.0: 65 files, 39.7 KiB unpacked
+@vune-ui/vue@0.1.0: 5 files, 33.1 KiB unpacked
+@vune-ui/web@0.1.0: 25 files, 107.3 KiB unpacked
+@vune-ui/vite@0.1.0: 5 files, 1.6 KiB unpacked
+@vune-ui/legacy-react@0.1.0: 153 files, 519.5 KiB unpacked
+Clean offline install smoke test passed (root/core/compiler/legacy/react/vue/web/vite/vune)
+Release package verification passed

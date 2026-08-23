@@ -14,11 +14,11 @@ test("presentation primitives keep visibility and navigation state in graph prop
     Alert(Binding(presented), "Notice", "Message"),
     Menu("More", () => Text("Action")),
   ])))
-  assert.match(html, /data-muse="NavigationStack"/)
+  assert.match(html, /data-vune="NavigationStack"/)
   assert.match(html, /href="\/settings".*Settings/)
   assert.match(html, /role="dialog".*Sheet/)
   assert.match(html, /role="alertdialog".*Notice/)
-  assert.match(html, /data-muse="Menu"/)
+  assert.match(html, /data-vune="Menu"/)
   presented.value = false
   assert.equal(renderToStaticMarkup(render(Sheet(Binding(presented), () => Text("Hidden")))), "")
 })
@@ -41,6 +41,6 @@ test("top-level presentation Views reevaluate Binding state through the core Vie
   dom.window.close()
 })
 
-test("@muse/react presentation Views are compatibility aliases of core Views", () => {
+test("@vune-ui/react presentation Views are compatibility aliases of core Views", () => {
   assert.equal(ReactSheet, Sheet)
 })

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 import { Grid, HStack, Text, VStack } from './elements.js'
-import { collectChildren, type MuseBuilder } from './builder.js'
+import { collectChildren, type VuneBuilder } from './builder.js'
 import { layoutChild, layoutChildren, markIntrinsic } from './layout.js'
 import { styled } from './modifiers.js'
 import { resolveValue, useReactiveValue } from './state.js'
@@ -202,8 +202,8 @@ export const LazyVStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyV
 ], ({ args }) => buildLazyVStack(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (options: LazyVStackOptions, ...children: ReactNode[]): StyledElement
-  (builder: MuseBuilder): StyledElement
-  (options: LazyVStackOptions, builder: MuseBuilder): StyledElement
+  (builder: VuneBuilder): StyledElement
+  (options: LazyVStackOptions, builder: VuneBuilder): StyledElement
 }>
 
 function buildLazyHStack(args: readonly unknown[]): ReactNode {
@@ -220,13 +220,13 @@ export const LazyHStack = defineBuiltinView<{ args: readonly unknown[] }>('LazyH
 ], ({ args }) => buildLazyHStack(args)) as unknown as BuiltinViewCallable<{
   (...children: ReactNode[]): StyledElement
   (options: LazyHStackOptions, ...children: ReactNode[]): StyledElement
-  (builder: MuseBuilder): StyledElement
-  (options: LazyHStackOptions, builder: MuseBuilder): StyledElement
+  (builder: VuneBuilder): StyledElement
+  (options: LazyHStackOptions, builder: VuneBuilder): StyledElement
 }>
 
 function buildLazyGrid(args: readonly unknown[]): ReactNode {
-  const columnsOrOptions = (args[0] ?? 1) as number | string | LazyGridOptions | MuseBuilder
-  const children = args.slice(1) as Array<ReactNode | MuseBuilder>
+  const columnsOrOptions = (args[0] ?? 1) as number | string | LazyGridOptions | VuneBuilder
+  const children = args.slice(1) as Array<ReactNode | VuneBuilder>
   const builder = typeof columnsOrOptions === 'function'
   const options: LazyGridOptions = builder ? {} : typeof columnsOrOptions === 'object'
     ? columnsOrOptions
@@ -241,6 +241,6 @@ export const LazyGrid = defineBuiltinView<{ args: readonly unknown[] }>('LazyGri
   initializer('LazyGrid(columns, @ViewBuilder content)', args => args.length === 2 && typeof args[1] === 'function', args => ({ args: [...args] }), [initializerKinds.value(true, 'columns'), initializerKinds.viewBuilder(true, 'content')]),
   initializer('LazyGrid(...children)', noFunction, args => ({ args: [...args] })),
 ], ({ args }) => buildLazyGrid(args)) as unknown as BuiltinViewCallable<{
-  (builder: MuseBuilder): StyledElement
-  (columnsOrOptions: number | string | LazyGridOptions, builder: MuseBuilder): StyledElement
+  (builder: VuneBuilder): StyledElement
+  (columnsOrOptions: number | string | LazyGridOptions, builder: VuneBuilder): StyledElement
 }>
