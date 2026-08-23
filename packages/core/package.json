@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/core",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Renderer-independent Vune View graph and state primitives.",
   "type": "module",
   "files": [
