@@ -151,16 +151,11 @@ export function decorate(node: ViewNode, owned = false): ModifiableViewNode {
   return frozen
 }
 
-export function modifiedContent(content: ViewNode, modifier: ViewModifierNode | readonly ViewModifierNode[]): ModifiableViewNode {
-  const incoming = arrayCheck(modifier) === true ? snapshotArrayValues(modifier as readonly ViewModifierNode[]) : [modifier]
-  const normalizedIncoming = incoming.flatMap(item => {
-    const snapshot = snapshotModifierNode(item)
-    return snapshot ? [snapshot] : []
-  })
+function materializeModifiedContent(content: ViewNode, normalizedIncoming: readonly ViewModifierNode[]): ModifiableViewNode {
   if (normalizedIncoming.length === 0) return decorate(content)
   const normalizedModifiers = Object.freeze(content.kind === "modified"
     ? [...content.modifiers, ...normalizedIncoming]
-    : normalizedIncoming)
+    : [...normalizedIncoming])
   const finalModifier = normalizedModifiers[normalizedModifiers.length - 1]
   return decorate({
     kind: "modified" as const,
@@ -170,6 +165,31 @@ export function modifiedContent(content: ViewNode, modifier: ViewModifierNode | 
     name: finalModifier.name,
     arguments: finalModifier.arguments,
   }, true)
+}
+
+export function modifiedContent(content: ViewNode, modifier: ViewModifierNode | readonly ViewModifierNode[]): ModifiableViewNode {
+  const incoming = arrayCheck(modifier) === true ? snapshotArrayValues(modifier as readonly ViewModifierNode[]) : [modifier]
+  const normalizedIncoming = incoming.flatMap(item => {
+    const snapshot = snapshotModifierNode(item)
+    return snapshot ? [snapshot] : []
+  })
+  return materializeModifiedContent(content, normalizedIncoming)
+}
+
+/**
+ * Trusted compiler fast path for a statically-known modifier chain. The input
+ * uses compact tuples and skips descriptor discovery/shape validation while
+ * retaining argument snapshot semantics for mutable records and style values.
+ */
+export function modifiedContentCompiled(
+  content: ViewNode,
+  modifiers: readonly (readonly [name: string, arguments: readonly unknown[]])[],
+): ModifiableViewNode {
+  const normalizedIncoming = modifiers.map(([name, arguments_]) => Object.freeze({
+    name,
+    arguments: Object.freeze(arguments_.map(item => snapshotModifierArgument(name, item))),
+  }) as ViewModifierNode)
+  return materializeModifiedContent(content, normalizedIncoming)
 }
 
 /** Apply a named modifier without coupling the graph to a renderer. */

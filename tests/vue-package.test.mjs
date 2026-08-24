@@ -8,6 +8,8 @@ import {
   State,
   Text,
   VStack,
+  compiledTemplate,
+  defineCompiledTemplate,
 } from "../packages/core/dist/index.js"
 import { initializersOf, namedArguments } from "../packages/core/dist/index.js"
 import {
@@ -29,6 +31,17 @@ test("@vune-ui/vue renders the renderer-independent graph as Vue VNodes", async 
   assert.match(html, /data-vune="VStack"/)
   const styled = await renderToString(createSSRApp({ render: () => render(Text("Styled").className(["card", false, "active"])) }))
   assert.match(styled, /class="card active"/)
+})
+
+test("@vune-ui/vue materializes compiled templates as native Vue VNodes", async () => {
+  const template = defineCompiledTemplate({
+    kind: "element", type: "div", props: { class: "compiled" }, children: [
+      { kind: "element", type: "span", props: null, children: ["Static"] },
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 1, "element", 0] }] },
+    ],
+  }, 1)
+  const html = await renderToString(createSSRApp({ render: () => render(compiledTemplate(template, ["Vue template"])) }))
+  assert.match(html, /<div class="compiled"><span>Static<\/span><span>Vue template<\/span><\/div>/)
 })
 
 test("Vue components enter Vune before Vue materialization and Vune Views enter Vue SFCs", async () => {

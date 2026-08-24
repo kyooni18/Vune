@@ -79,6 +79,31 @@ export const B = view(() => VStack() { Text(String(second.value)); Text(String(s
   assert.doesNotMatch(output, /^const second = State\(2\)/m)
   assert.match(output, /state: \(\) => \{ const first = State\(1\)/)
   assert.match(output, /state: \(\) => \{ const second = State\(2\)/)
+  assert.match(output, /dependencies: \(\{ first \}\) => \[first\]/)
+  assert.match(output, /dependencies: \(\{ second \}\) => \[second\]/)
+  assert.doesNotMatch(output, /dependenciesComplete: true/)
+  parses(output)
+})
+
+test("top-level State skips runtime dependency discovery only for a compiler-proven closed body", () => {
+  const source = `import { State, Text } from "@vune-ui/core"
+import { view } from "@vune-ui/react"
+const count = State(0)
+export default view(() => Text(String(count.value)))`
+  const output = transformVuneSource(source, "ClosedStateDependencies.vune.ts")
+  assert.match(output, /dependencies: \(\{ count \}\) => \[count\], dependenciesComplete: true/)
+  parses(output)
+})
+
+test("top-level State keeps runtime dependency discovery for unproven member calls", () => {
+  const source = `import { State, Text } from "@vune-ui/core"
+import { view } from "@vune-ui/react"
+const count = State(0)
+const helper = { padding(value: number) { return Text(String(value)) } }
+export default view(() => count.value > 0 ? helper.padding(8) : Text(String(count.value)))`
+  const output = transformVuneSource(source, "OpaqueModifierName.vune.ts")
+  assert.match(output, /dependencies: \(\{ count \}\) => \[count\]/)
+  assert.doesNotMatch(output, /dependenciesComplete: true/)
   parses(output)
 })
 
@@ -189,9 +214,28 @@ test("static specialization cache invalidates when an imported type file changes
     const fileName = join(directory, "main.vune.ts")
     const source = `import { Card } from "./dep"\nconst value = Card("x")\n`
     writeFileSync(dependency, `export declare const Card: { (value: string): unknown; readonly viewType: {} }\n`)
-    assert.match(lowerStaticImportedCalls(source, fileName), /createNodeSpecialized/)
+    assert.match(lowerStaticImportedCalls(source, fileName), /createNodeCompiled/)
     writeFileSync(dependency, `export declare const Card: { (...value: string[]): unknown; readonly viewType: {} }\n`)
-    assert.doesNotMatch(lowerStaticImportedCalls(source, fileName), /createNodeSpecialized/)
+    assert.doesNotMatch(lowerStaticImportedCalls(source, fileName), /createNode(?:Compiled|Specialized)/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("trusted imported specialization rejects callables with unsafe return types", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { lowerStaticImportedCalls } = await import("../packages/compiler/dist/specialization.js")
+  const directory = mkdtempSync(join(tmpdir(), "vune-unsafe-builder-"))
+  try {
+    const dependency = join(directory, "dep.ts")
+    const fileName = join(directory, "main.vune.ts")
+    writeFileSync(dependency, `export declare const Stack: { (content: () => any): unknown; readonly viewType: {} }\n`)
+    const source = `import { Stack } from "./dep"\ndeclare const content: () => any\nconst value = Stack(content)\n`
+    const output = lowerStaticImportedCalls(source, fileName)
+    assert.match(output, /createNodeSpecialized/)
+    assert.doesNotMatch(output, /createNodeCompiled/)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -215,7 +259,7 @@ test("Grid and LazyGrid static specialization indices match runtime initializer 
 Grid({ columns: 3 }) { Text("A") }
 LazyGrid({ columns: 2, estimatedItemSize: 44 }) { Text("B") }`
   const output = transformVuneSource(source, "GridSpecialization.vune.ts")
-  assert.match(output, /Grid\.viewType\.createNodeSpecialized\(0,/)
-  assert.match(output, /LazyGrid\.viewType\.createNodeSpecialized\(0,/)
+  assert.match(output, /Grid\.viewType\.createNodeCompiled\(0,/)
+  assert.match(output, /LazyGrid\.viewType\.createNodeCompiled\(0,/)
   parses(output)
 })

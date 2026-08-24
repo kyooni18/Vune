@@ -17,12 +17,15 @@ import {
   VStack as CoreVStack,
   ViewBuilder,
   classNameOf,
+  collectLogicalViewIdentities,
+  compiledTemplate,
   closureForKind,
   closureKindOf,
   closureVariantsOf,
   createViewNode,
   defineBuiltinView,
   createViewIdentityStore,
+  defineCompiledTemplate,
   defineView,
   edgeInsetsFromCss,
   frameStyle,
@@ -40,11 +43,13 @@ import {
   modifierGraphOf,
   markVuneClosure,
   modifiedContent,
+  modifiedContentCompiled,
   namedArguments,
   overloadClosure,
   registerInitializers,
   renderViewNode,
   resolveBuilderClosure,
+  resolveBuilderInput,
   resolveInitializer,
   resolveSemanticInitializer,
   subscribeState,
@@ -85,6 +90,98 @@ test("@vune-ui/core builds a renderer-independent graph with immutable modifiers
     { name: "padding", arguments: [12] },
   ])
   assert.deepEqual(modifierGraphOf(batched).map(item => item.name), ["font", "padding"])
+})
+
+test("@vune-ui/core trusted compiled paths skip redundant initializer and modifier shape work", () => {
+  const CompiledProbe = defineBuiltinView(
+    "CompiledProbe",
+    [initializer("CompiledProbe(value)", args => args.length === 1 && typeof args[0] === "string", args => ({ value: args[0] }), [initializerKinds.value(true, undefined, undefined, "string")])],
+    ({ value }) => viewElement("span", null, [value]),
+  )
+
+  assert.throws(() => CompiledProbe.viewType.createNodeSpecialized(0, [42]), /No matching initializer/)
+  const compiled = CompiledProbe.viewType.createNodeCompiled(0, [42])
+  assert.equal(compiled.kind, "element")
+  assert.equal(compiled.children[0], 42)
+
+  const children = [CoreText("A"), CoreText("B")]
+  assert.deepEqual(resolveBuilderInput(children), children)
+  assert.deepEqual(resolveBuilderInput(() => children), children)
+
+  const style = { opacity: 0.5 }
+  const modified = modifiedContentCompiled(CoreText("value"), [["style", [style]]])
+  style.opacity = 1
+  assert.deepEqual(modifierGraphOf(modified)[0].arguments[0], { opacity: 0.5 })
+})
+
+test("@vune-ui/core compiled templates preserve generic rendering, native fast paths, immutability, and View identity", () => {
+  const root = {
+    kind: "element",
+    type: "div",
+    props: { className: "card", style: { display: "flex" } },
+    children: [
+      { kind: "element", type: "span", props: null, children: ["Static"] },
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 1, "element", 0] }] },
+    ],
+  }
+  const template = defineCompiledTemplate(root, 1)
+  root.props.className = "changed"
+  root.props.style.display = "block"
+  const value = compiledTemplate(template, ["Dynamic"])
+
+  assert.equal(Object.isFrozen(template), true)
+  assert.equal(Object.isFrozen(template.root), true)
+  assert.equal(Object.isFrozen(template.root.children), true)
+  assert.deepEqual(template.root.props, { className: "card", style: { display: "flex" } })
+  assert.equal(Object.isFrozen(value.slots), true)
+  assert.deepEqual(template.slotIdentities, [["element", 1, "element", 0]])
+  assert.throws(() => compiledTemplate(template, []), /expected 1 slots/i)
+  assert.throws(() => defineCompiledTemplate({
+    kind: "fragment",
+    children: [
+      { kind: "slot", index: 0, identity: ["fragment", 0] },
+      { kind: "slot", index: 0, identity: ["fragment", 1] },
+    ],
+  }, 1), /appears more than once/)
+  assert.throws(() => defineCompiledTemplate({ kind: "fragment", children: [] }, 1), /declared but never referenced/)
+
+  const generic = renderViewNode(value, {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { fragment: children } },
+    modifier(content) { return content },
+    value(value) { return value },
+  })
+  assert.equal(generic.type, "div")
+  assert.equal(generic.children[0].children[0], "Static")
+  assert.equal(generic.children[1].children[0], "Dynamic")
+
+  let staticElementCalls = 0
+  const native = renderViewNode(value, {
+    element() { staticElementCalls += 1; throw new Error("native template path must bypass generic host traversal") },
+    fragment(children) { return children },
+    modifier(content) { return content },
+    value(value) { return value },
+    template(node, renderSlot, identity) {
+      assert.equal(node.template, template)
+      return { identity, slot: renderSlot(0) }
+    },
+  })
+  assert.equal(staticElementCalls, 0)
+  assert.deepEqual(native.identity, ["root"])
+  assert.equal(native.slot, "Dynamic")
+
+  const Child = defineView("TemplateIdentityChild", {
+    initializers: [initializer("TemplateIdentityChild()", args => args.length === 0)],
+    body: () => CoreText("child"),
+  })
+  const normal = viewElement("div", null, [Child()])
+  const identityTemplate = compiledTemplate(defineCompiledTemplate({
+    kind: "element",
+    type: "div",
+    props: null,
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1), [Child()])
+  assert.deepEqual(collectLogicalViewIdentities(identityTemplate), collectLogicalViewIdentities(normal))
 })
 
 test("modifier graphs snapshot mutable style, frame, class, and props inputs", () => {

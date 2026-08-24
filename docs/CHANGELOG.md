@@ -2,6 +2,25 @@
 
 ## Next alpha
 
+- Added the first renderer-neutral compiled template/slot IR. Proven intrinsic
+  host structure is frozen once at module evaluation, dynamic children retain
+  their original graph identity paths as slots, and React/Vue/Web DOM plus Web
+  SSR materialize templates through cached renderer-native factories with a
+  generic core fallback. Slot identity paths are indexed once at template
+  definition, and intrinsic containers can stay templated even when an opaque
+  custom View child remains dynamic.
+- Added proof-driven compiler AOT optimization: `createNodeCompiled` bypasses
+  runtime overload/label/type resolution for proven calls, Swift-style labeled
+  arguments are normalized to runtime slots, simple ViewBuilder closures are
+  elided, static modifier chains use compact compiled descriptors, and immutable
+  View subtrees are hoisted to module scope.
+- Added conservative compile-time State dependency metadata with an explicit
+  completeness bit. React/Vue skip runtime read discovery only for compiler-
+  proven closed bodies and automatically fall back when helpers, shared State,
+  or opaque property access can hide reads.
+- Expanded performance coverage with raw React/raw Vue client baselines for
+  full, single-item, and keyed-reverse updates plus compiled-initializer timing;
+  client ratio budgets are configurable CI regression guards.
 - Added a pnpm 11-native local-development workflow for completely separate projects: `dev:link`, local scaffolding, workspace-file overrides, direct bundler plumbing links, watch mode, portable local tarballs, and `create-vune-ui` release verification.
 - Made the canonical `vune-ui` package renderer-independent at install time: React and the React renderer are optional compatibility peers instead of mandatory dependencies; React, Vue, and Web source-linked consumers now all pass standalone Vite production builds.
 - Removed stale local archives and `.pi`/AppleDouble metadata from source, switched every monorepo-internal dependency to `workspace:*`, and isolated legacy React regression tests under the explicit compatibility entry point.

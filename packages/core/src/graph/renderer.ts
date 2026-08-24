@@ -2,7 +2,7 @@ import { keyedViewIdentity, viewTypeIdentity, type ViewIdentity } from "../ident
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { isForeignComponent, isViewNode } from "./nodes.js"
 import { zeroGeometry } from "./environment.js"
-import type { GeometryProxy, LazyViewRange, VuneRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
+import type { CompiledTemplateValue, GeometryProxy, LazyViewRange, VuneRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
 
 export type { VuneRenderer }
 
@@ -20,6 +20,8 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     }
     case "fragment":
       return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "fragment", index]))
+    case "template":
+      return value.slots.flatMap((slot, index) => collectLogicalViewIdentities(slot, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])]))
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {
@@ -42,6 +44,20 @@ export function renderViewNode<Output>(value: ViewGraphValue, renderer: VuneRend
   return renderViewNodeAt(value, renderer, ["root"])
 }
 
+function renderCompiledTemplateValue<Output>(
+  value: CompiledTemplateValue,
+  renderer: VuneRenderer<Output>,
+  renderSlot: (index: number) => Output,
+): Output {
+  if (value !== null && typeof value === "object") {
+    if (value.kind === "slot") return renderSlot(value.index)
+    if (value.kind === "fragment") return renderer.fragment(value.children.map(child => renderCompiledTemplateValue(child, renderer, renderSlot)))
+    if (value.kind === "element") return renderer.element(value.type, value.props, ...value.children.map(child => renderCompiledTemplateValue(child, renderer, renderSlot)))
+  }
+  if (value === null || value === undefined || typeof value === "boolean") return renderer.value ? renderer.value(null) : null as Output
+  return renderer.value ? renderer.value(value) : value as Output
+}
+
 function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
   if (arrayCheck(value) === true) return renderer.fragment(snapshotArrayValues(value as readonly unknown[]).map((item, index) => renderViewNodeAt(item as ViewGraphValue, renderer, [...identity, "array", index])))
   if (!isViewNode(value)) {
@@ -61,6 +77,12 @@ function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<
     }
     case "fragment":
       return renderer.fragment(snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "fragment", index])))
+    case "template": {
+      const renderSlot = (index: number): Output => renderViewNodeAt(value.slots[index] ?? null, renderer, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])])
+      return renderer.template
+        ? renderer.template(value, renderSlot, identity)
+        : renderCompiledTemplateValue(value.template.root, renderer, renderSlot)
+    }
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {

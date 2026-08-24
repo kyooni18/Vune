@@ -2,7 +2,7 @@ import {
   defineView,
   initializer,
   initializerKinds,
-  resolveBuilderClosure,
+  resolveBuilderInput,
   type ModifiableViewNode,
   type TypedViewConstructor,
   type ViewBuilderClosure,
@@ -16,7 +16,7 @@ import { Text } from "./views.js"
 export interface NavigationStackProps { readonly content: ViewValue[] }
 interface NavigationStackCall { (content: ViewBuilderClosure): ModifiableViewNode }
 export const NavigationStack = defineView<NavigationStackProps>("NavigationStack", {
-  initializers: [initializer("NavigationStack(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")])],
+  initializers: [initializer("NavigationStack(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderInput(args[0]) }), [initializerKinds.viewBuilder(true, "content")])],
   body: ({ content }) => viewElement("main", { "data-vune": "NavigationStack" }, content),
 }) as TypedViewConstructor<NavigationStackProps, NavigationStackCall>
 
@@ -28,7 +28,7 @@ interface NavigationLinkCall {
 export const NavigationLink = defineView<NavigationLinkProps>("NavigationLink", {
   initializers: [
     initializer("NavigationLink(destination, label)", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "string", args => ({ destination: args[0] as string, label: [Text(args[1] as string)] }), [initializerKinds.value(true, "destination", undefined, "string"), initializerKinds.value(true, "label", undefined, "string")]),
-    initializer("NavigationLink(destination, @ViewBuilder label)", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ destination: args[0] as string, label: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "destination", undefined, "string"), initializerKinds.viewBuilder(true, "label")]),
+    initializer("NavigationLink(destination, @ViewBuilder label)", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ destination: args[0] as string, label: resolveBuilderInput(args[1]) }), [initializerKinds.value(true, "destination", undefined, "string"), initializerKinds.viewBuilder(true, "label")]),
   ],
   body: ({ destination, label }) => viewElement("a", { href: destination, "data-vune": "NavigationLink" }, label),
 }) as TypedViewConstructor<NavigationLinkProps, NavigationLinkCall>
@@ -36,7 +36,7 @@ export const NavigationLink = defineView<NavigationLinkProps>("NavigationLink", 
 export interface SheetProps { readonly isPresented: BindingRef<boolean>; readonly content: ViewValue[] }
 interface SheetCall { (isPresented: BindingRef<boolean>, content: ViewBuilderClosure): ModifiableViewNode }
 export const Sheet = defineView<SheetProps>("Sheet", {
-  initializers: [initializer("Sheet(isPresented, @ViewBuilder content)", args => args.length === 2 && isBinding(args[0]) && typeof args[1] === "function", args => ({ isPresented: args[0] as BindingRef<boolean>, content: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.binding(true, "isPresented", "boolean"), initializerKinds.viewBuilder(true, "content")])],
+  initializers: [initializer("Sheet(isPresented, @ViewBuilder content)", args => args.length === 2 && isBinding(args[0]) && typeof args[1] === "function", args => ({ isPresented: args[0] as BindingRef<boolean>, content: resolveBuilderInput(args[1]) }), [initializerKinds.binding(true, "isPresented", "boolean"), initializerKinds.viewBuilder(true, "content")])],
   body: ({ isPresented, content }) => isPresented.value
     ? viewElement("div", { role: "dialog", "data-vune": "Sheet" }, content)
     : viewFragment([]),
@@ -54,6 +54,6 @@ export const Alert = defineView<AlertProps>("Alert", {
 export interface MenuProps { readonly label: string; readonly content: ViewValue[] }
 interface MenuCall { (label: string, content: ViewBuilderClosure): ModifiableViewNode }
 export const Menu = defineView<MenuProps>("Menu", {
-  initializers: [initializer("Menu(label, @ViewBuilder content)", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ label: args[0] as string, content: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "label", undefined, "string"), initializerKinds.viewBuilder(true, "content")])],
+  initializers: [initializer("Menu(label, @ViewBuilder content)", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ label: args[0] as string, content: resolveBuilderInput(args[1]) }), [initializerKinds.value(true, "label", undefined, "string"), initializerKinds.viewBuilder(true, "content")])],
   body: ({ label, content }) => viewElement("details", { "data-vune": "Menu" }, [Text(label), viewElement("div", { role: "menu" }, content)]),
 }) as TypedViewConstructor<MenuProps, MenuCall>

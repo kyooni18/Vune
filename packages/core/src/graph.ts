@@ -8,7 +8,7 @@
 export { vuneForeignComponent, vuneInitializers, vuneNamedArguments, vuneView } from "./graph/symbols.js"
 export * from "./graph/types.js"
 export * from "./graph/environment.js"
-export { modifiedContent, modifier, modifierGraphOf } from "./graph/modifiers.js"
+export { modifiedContent, modifiedContentCompiled, modifier, modifierGraphOf } from "./graph/modifiers.js"
 export * from "./graph/nodes.js"
 export * from "./graph/renderer.js"
 export * from "./graph/initializers.js"

@@ -1,5 +1,6 @@
 import { Fragment, cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { isViewNode, markViewNode, viewGraphChild, type ViewGraphValue, type ViewHostNode, type ViewModifierNode, type ViewNode } from './view-graph.js'
+import type { CompiledTemplateValue } from '@vune-ui/core'
 import { zeroGeometry } from '@vune-ui/core'
 import { arrayCheck, snapshotArrayValues } from './arrays.js'
 
@@ -20,6 +21,19 @@ export interface VuneRenderer<Output = ReactNode> {
   /** Optional hook for renderers that apply graph modifiers during materialization. */
   modifier?(content: RendererChild<Output>, modifier: ViewModifierNode): RendererChild<Output>
   render(value: ViewGraphValue): RendererChild<Output>
+}
+
+function renderCompiledTemplateValue<Output>(
+  value: CompiledTemplateValue,
+  renderer: VuneRenderer<Output>,
+  renderSlot: (index: number) => Output,
+): Output {
+  if (value !== null && typeof value === 'object') {
+    if (value.kind === 'slot') return renderSlot(value.index)
+    if (value.kind === 'fragment') return renderer.fragment(value.children.map(child => renderCompiledTemplateValue(child, renderer, renderSlot)))
+    if (value.kind === 'element') return renderer.element(value.type, value.props, ...value.children.map(child => renderCompiledTemplateValue(child, renderer, renderSlot)))
+  }
+  return renderer.value?.(value) ?? value as Output
 }
 
 /** Traverse a renderer-neutral View graph with the supplied materializer. */
@@ -50,6 +64,9 @@ export function renderViewNode<Output>(
   }
   if (value.kind === 'fragment') {
     return renderer.fragment(snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)))
+  }
+  if (value.kind === 'template') {
+    return renderCompiledTemplateValue(value.template.root, renderer, index => renderViewNode(value.slots[index] ?? null, renderer))
   }
   if (value.kind === 'geometry') {
     return renderViewNode(value.content(zeroGeometry), renderer)

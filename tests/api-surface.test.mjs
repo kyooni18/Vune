@@ -16,11 +16,11 @@ const coreRuntimeExports = [
   "VuneInitializerAmbiguityError", "VuneInitializerError", "NavigationLink", "NavigationStack", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
   "Section", "Sheet", "Slider", "Spacer", "State", "Stepper", "Text", "TextArea", "TextField", "Toggle", "VStack", "ViewBuilder",
   "ViewIdentityStore", "ViewType", "ZStack", "actionClosure", "assertInitializerCall", "classNameOf", "closureForKind", "closureKindOf",
-  "closureVariantsOf", "collectLogicalViewIdentities", "collectStateReads", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineView", "edgeInsetsFromCss",
+  "closureVariantsOf", "collectLogicalViewIdentities", "collectStateReads", "compiledTemplate", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineCompiledTemplate", "defineView", "edgeInsetsFromCss",
   "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
-  "keyedViewIdentity", "layoutLength", "lazyView", "markVuneClosure", "modifiedContent", "modifier", "modifierGraphOf", "vuneClosureKind", "vuneClosureVariants",
+  "keyedViewIdentity", "layoutLength", "lazyView", "markVuneClosure", "modifiedContent", "modifiedContentCompiled", "modifier", "modifierGraphOf", "vuneClosureKind", "vuneClosureVariants",
   "vuneForeignComponent", "vuneInitializers", "vuneNamedArguments", "vuneView", "namedArguments", "overloadClosure", "registerInitializers", "renderViewNode",
-  "resolveBuilderClosure", "resolveInitializer", "resolveSemanticCall", "resolveSemanticInitializer", "resolveValue", "SemanticModel", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure", "viewBuilderSemanticSymbol",
+  "resolveBuilderClosure", "resolveBuilderInput", "resolveInitializer", "resolveSemanticCall", "resolveSemanticInitializer", "resolveValue", "SemanticModel", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "stateVersion", "structView", "subscribeState", "valueClosure", "viewBuilderClosure", "viewBuilderSemanticSymbol",
   "viewElement", "viewFragment", "viewHost", "viewIdentityKey", "viewTypeIdentity", "zeroGeometry",
   "Animation", "Transaction", "animationCSSStyle", "currentRenderTransaction", "currentTransaction", "snapshotTransaction", "stateTransaction",
   "swiftUIAnimatableModifierNames", "swiftUIAnimationFactoryArgumentLabels", "swiftUIApiManifest", "swiftUICanonicalModifierNames",
@@ -28,7 +28,7 @@ const coreRuntimeExports = [
 ].sort()
 
 const coreTypeOnlyExports = [
-  "AlertProps", "BindingRef", "BoxProps", "ClassValue", "EdgeInsets", "ElementViewNode", "FragmentViewNode", "FrameAlignment", "FrameOptions",
+  "AlertProps", "BindingRef", "BoxProps", "ClassValue", "CompiledTemplateDescriptor", "CompiledTemplateElement", "CompiledTemplateFragment", "CompiledTemplateSlot", "CompiledTemplateValue", "CompiledTemplateViewNode", "EdgeInsets", "ElementViewNode", "FragmentViewNode", "FrameAlignment", "FrameOptions",
   "GeometryFrame", "GeometryProxy", "GeometryReaderCall", "GeometryReaderProps", "GeometryViewNode", "GridOptions", "GridProps", "HStackOptions",
   "HStackProps", "ImageOptions", "ImageProps", "InitializerMatch", "InitializerParameter", "InitializerParameterKind", "InitializerResolution",
   "LabelProps", "LazyGridOptions", "LazyGridProps", "LazyHStackOptions", "LazyHStackProps", "LazyOptions", "LazyVStackOptions", "LazyVStackProps", "LazyViewNode", "LazyViewRange", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "VuneClosure", "VuneClosureKind",

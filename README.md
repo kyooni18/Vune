@@ -204,8 +204,26 @@ metadata rather than a hard-coded component-name list; malformed calls produce
 structured compiler diagnostics and `VuneInitializerError` at the runtime
 boundary. When a same-file custom View call has exactly one declaration-defined
 initializer match, or an imported View exposes one unique non-variadic typed
-call signature, the compiler emits a direct initializer-index path; ambiguous
-overloads retain the normal runtime resolver.
+call signature, the compiler emits a direct initializer-index path. Calls that
+the compiler can fully prove now use the trusted `createNodeCompiled` AOT path:
+runtime overload scans, label normalization, and repeated parameter scoring are
+removed. Swift-style labeled arguments are normalized to the runtime
+initializer's positional payload when that mapping is unambiguous, and simple
+`@ViewBuilder` closures are lowered directly to child arrays. Ambiguous,
+variadic, `any`/`unknown`, opaque-call, or otherwise unproven cases retain the
+guarded specialization or normal runtime resolver.
+
+Production lowering also fuses statically typed modifier chains into compact
+`modifiedContentCompiled` descriptors. Proven intrinsic host trees can be
+lowered further into an immutable compiled template plus identity-preserving
+dynamic slots: static host structure is defined once, while React, Vue, Web DOM,
+and Web SSR use cached native template factories and re-enter generic graph
+traversal only for the dynamic slots. Fully static View subtrees are still
+hoisted to module scope. Every template optimization has a generic graph
+fallback, so renderer-independent semantics do not depend on successful AOT
+analysis. State dependency metadata follows the same rule: the compiler may mark
+a dependency set complete only for a deliberately small, proven closed body;
+all other Views continue to use runtime dependency collection.
 
 The same source syntax can be used with built-in and custom Views:
 
@@ -519,6 +537,11 @@ pnpm run test:browser
 pnpm run benchmark:modifiers
 pnpm run benchmark:performance:ci
 ```
+
+The application-style benchmark includes raw React and raw Vue client baselines
+for full-tree, single-item, and keyed-reverse updates alongside the Vune React
+and Vue adapters. Ratio thresholds are regression guards rather than claims
+that a renderer is intrinsically a fixed multiple faster or slower.
 
 `test:browser` is opt-in and uses `VUNE_BROWSER_URL` so it can target a running
 demo server, for example

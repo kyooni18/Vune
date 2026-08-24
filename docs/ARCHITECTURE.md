@@ -7,10 +7,10 @@ boundary is:
 Vune source (.vune.ts)
         |
         v
-@vune-ui/compiler -----> Vune View graph -----> renderer adapter -----> runtime
-                              |                    |
-                              +-----------------> @vune-ui/web -> DOM/HTML
-                              +-----------------> @vune-ui/vue -> Vue VNode/DOM
+@vune-ui/compiler -----> Vune View graph / compiled template IR -----> renderer adapter -----> runtime
+                                        |                                |
+                                        +-----------------------------> @vune-ui/web -> DOM/HTML
+                                        +-----------------------------> @vune-ui/vue -> Vue VNode/DOM
 ```
 
 ## Package responsibilities
@@ -49,7 +49,7 @@ is split into focused, renderer-neutral modules:
 | --- | --- |
 | `graph/types` and `graph/symbols` | Recursive graph types and stable metadata symbols |
 | `graph/environment` | Zero geometry, safe-area normalization, and class value helpers |
-| `graph/nodes` | Element, foreign-component, View host, geometry, and lazy node constructors |
+| `graph/nodes` | Element, compiled-template, foreign-component, View host, geometry, and lazy node constructors |
 | `graph/modifiers` | Immutable modifier decoration, flattening, and modifier graph inspection |
 | `graph/renderer` | Identity-aware graph traversal through `VuneRenderer` |
 | `graph/initializers` | Declaration metadata, overload resolution, ViewBuilder, and View construction |
@@ -66,14 +66,48 @@ source scanner and lowering pipeline. Its internal contracts are:
 | --- | --- |
 | `compiler/scanner` | Quote/comment/regex-safe source scanning, builder/raw-HTML discovery, and top-level delimiter parsing |
 | `compiler/pipeline` | Binding shorthand, closures, builder/struct lowering, HTML expression lowering, and syntax detection |
-| `compiler/specialization` | Type-checker-backed static modifier-chain and imported-View lowering |
+| `compiler/specialization` | Type-checker-backed AOT initializer lowering, compact modifier fusion, compiled template/slot lowering, and static-subtree hoisting |
 | `compiler/diagnostics` | Original-source syntax, TypeScript, and semantic HTML diagnostics |
 | `compiler/vite` | Vue SFC and `.vune.ts` Vite transformation orchestration |
 | `compiler/index` | Public API barrel, source maps, and language-service composition |
 
 If static type resolution is not unique, the specialization pass leaves the
-source for the dynamic runtime resolver. These modules remain renderer-neutral;
-only the Vite adapter knows how to attach the compiler to a host build.
+source for the guarded or dynamic runtime resolver. These modules remain
+renderer-neutral; only the Vite adapter knows how to attach the compiler to a
+host build.
+
+### AOT specialization contract
+
+Compiler optimization is proof-driven rather than optimistic. A call may use
+`ViewType.createNodeCompiled(index, args)` only when the compiler has fixed the
+runtime initializer and can safely provide its normalized argument payload.
+The trusted path deliberately skips overload selection, named-argument
+normalization, closure-role wrapping, and runtime type scoring. Therefore calls
+containing unresolved `any`/`unknown` values, unsafe callable return types,
+variadics, or an initializer mapping the compiler cannot prove must stay on
+`createNodeSpecialized` or the ordinary callable View path.
+
+The same proof boundary applies to other optimizations:
+
+- simple zero-argument `@ViewBuilder` closures become their child arrays, but
+  opaque builders remain closures;
+- compiler-generated labeled-argument carriers are converted to positional
+  runtime slots only when label/property mapping is unique;
+- static modifier chains use compact immutable tuple descriptors, while
+  receiver typing must prove that the chain belongs to a Vune View;
+- proven intrinsic host structure is frozen as a renderer-neutral compiled
+  template; dynamic primitive/custom-View children become identity-preserving
+  slots, and React/Vue/Web can materialize the template without generic host
+  graph traversal;
+- immutable compiled View subtrees with no dynamic reads/calls are hoisted to
+  module scope and reused;
+- declared State dependencies are only marked `dependenciesComplete` when the
+  compiler proves a closed set of reads. Metadata that is not complete is only
+  a seed, and renderers continue runtime dependency discovery.
+
+This keeps development/runtime correctness independent from optimization: every
+optimization has a conservative fallback with the same public semantics. See
+[Compiler optimization](./COMPILER_OPTIMIZATION.md) for the pass-level model.
 
 The Web adapter follows the same boundary: `web/ssr` owns deterministic HTML
 serialization, `web/props` owns DOM attributes/events/refs, `web/hydration`

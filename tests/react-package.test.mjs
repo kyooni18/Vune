@@ -10,6 +10,8 @@ import {
   GeometryReader,
   SafeArea,
   ScrollView,
+  compiledTemplate,
+  defineCompiledTemplate,
   viewElement,
 } from "../packages/core/dist/index.js"
 import { Component, State, createReactView, foreignComponent, fromReactState, reactComponent, render, view } from "../packages/react/dist/index.js"
@@ -24,6 +26,16 @@ test("@vune-ui/react renders the core graph at the React boundary", () => {
   const html = renderToStaticMarkup(render(Text("Hello").padding(8)))
   assert.match(html, /<span style="padding:8px">Hello<\/span>/)
   assert.equal(renderToStaticMarkup(render(Text("Styled").className(["card", false, "active"]))), '<span class="card active">Styled</span>')
+})
+
+test("@vune-ui/react materializes compiled templates through the native template path", () => {
+  const template = defineCompiledTemplate({
+    kind: "element", type: "div", props: { className: "compiled" }, children: [
+      { kind: "element", type: "span", props: null, children: ["Static"] },
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 1, "element", 0] }] },
+    ],
+  }, 1)
+  assert.equal(renderToStaticMarkup(render(compiledTemplate(template, ["React template"]))), '<div class="compiled"><span>Static</span><span>React template</span></div>')
 })
 
 test("@vune-ui/react view keeps props at the renderer boundary", () => {

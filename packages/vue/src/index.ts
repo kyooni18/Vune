@@ -39,6 +39,7 @@ import {
   viewIdentityKey,
   zeroGeometry,
   type Animation,
+  type CompiledTemplateValue,
   type GeometryProxy,
   type BindingRef,
   type ModifiableViewNode,
@@ -54,18 +55,23 @@ import {
 
 const vuneVueSlots = Symbol.for("vune.vue.slots")
 
-export type VuneVueSlot = ViewValue | ((...args: any[]) => ViewValue)
+export type VuneVueSlot = ViewValue | ((props: any, ...args: any[]) => ViewValue)
 export type VueComponentProps<C> = C extends abstract new (...args: any[]) => { $props: infer Props }
   ? Props
   : C extends (props: infer Props, ...args: any[]) => any ? Props : Record<string, unknown>
+type VueComponentEmitProps<C> = C extends { emits?: infer Emits }
+  ? Emits extends Record<string, unknown>
+    ? { [Key in keyof Emits as Key extends string ? `on${Capitalize<Key>}` : never]?: Emits[Key] extends (...args: infer Args) => any ? (...args: Args) => any : (...args: any[]) => any }
+    : {}
+  : {}
 type RequiredVuePropKeys<Props> = {
   [Key in keyof Props]-?: object extends Pick<Props, Key> ? never : Key
 }[keyof Props]
-type VuneVueComponentProps<C> = VueComponentProps<C> & { readonly slots?: Record<string, VuneVueSlot> }
+type VuneVueComponentProps<C> = Omit<VueComponentProps<C>, "slots"> & VueComponentEmitProps<C> & { readonly slots?: Record<string, VuneVueSlot> }
 type VueComponentArguments<C> = [RequiredVuePropKeys<VueComponentProps<C>>] extends [never]
   ? [props?: VuneVueComponentProps<C> | null, ...children: ViewValue[]]
   : [props: VuneVueComponentProps<C>, ...children: ViewValue[]]
-export type VueComponentView<C extends VueComponentType> = ((...args: VueComponentArguments<C>) => ModifiableViewNode) & {
+export type VueComponentView<C extends object> = ((...args: VueComponentArguments<C>) => ModifiableViewNode) & {
   readonly component: C
 }
 
@@ -182,11 +188,35 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
       }
     : rawSlots
     ? {
-        ...Object.fromEntries(Object.entries(rawSlots).map(([name, slot]) => [name, (...args: unknown[]) => render(typeof slot === "function" ? slot(...args) : slot)])),
+        ...Object.fromEntries(Object.entries(rawSlots).map(([name, slot]) => [name, (...args: unknown[]) => render(typeof slot === "function" ? slot(...(args as [any, ...any[]])) : slot)])),
         ...(children.length > 0 && !rawSlots.default ? { default: () => children } : {}),
       }
     : children.length > 0 ? { default: () => children } : undefined
   return h((foreign?.component ?? type) as VueComponentType, normalizedProps, slots)
+}
+
+type VueTemplateFactory = (renderSlot: (index: number) => VNodeChild) => VNodeChild
+const vueTemplateFactories = new WeakMap<object, VueTemplateFactory>()
+
+function compileVueTemplate(value: CompiledTemplateValue): VueTemplateFactory {
+  if (value !== null && typeof value === "object") {
+    if (value.kind === "slot") {
+      const index = value.index
+      return renderSlot => renderSlot(index)
+    }
+    if (value.kind === "fragment") {
+      const children = value.children.map(compileVueTemplate)
+      return renderSlot => h(Fragment, null, children.map(child => child(renderSlot)))
+    }
+    if (value.kind === "element") {
+      const type = value.type
+      const props = value.props
+      const children = value.children.map(compileVueTemplate)
+      return renderSlot => renderVueElement(type, props, children.map(child => child(renderSlot)))
+    }
+  }
+  const staticValue = value === null || value === undefined || value === false || value === true ? null : value as VNodeChild
+  return () => staticValue
 }
 
 const renderer: VuneRenderer<VNodeChild> = {
@@ -198,6 +228,14 @@ const renderer: VuneRenderer<VNodeChild> = {
   },
   value(value) {
     return value === null || value === undefined || value === false ? null : value as VNodeChild
+  },
+  template(node, renderSlot) {
+    let factory = vueTemplateFactories.get(node.template)
+    if (!factory) {
+      factory = compileVueTemplate(node.template.root)
+      vueTemplateFactories.set(node.template, factory)
+    }
+    return factory(renderSlot)
   },
   modifier(content, modifier) {
     if (modifier.name === "frame") {
@@ -227,6 +265,8 @@ const ReactiveVuneValue = defineComponent({
   name: "ReactiveVuneValue",
   props: {
     factory: { type: Function as PropType<() => ViewGraphValue>, required: true },
+    dependencies: { type: Function as PropType<() => readonly StateRef<unknown>[]>, required: false },
+    dependenciesComplete: { type: Boolean, required: false, default: false },
   },
   setup(props) {
     const value = shallowRef<ViewGraphValue>(null)
@@ -235,9 +275,12 @@ const ReactiveVuneValue = defineComponent({
     let pendingTransaction: Transaction | undefined
     watchEffect(onCleanup => {
       void version.value
-      const dependencies = new Set<StateRef<unknown>>()
+      const declaredDependencies = props.dependencies?.()
+      const dependencies = new Set<StateRef<unknown>>(declaredDependencies ?? [])
       transaction.value = pendingTransaction
-      value.value = withRenderTransaction(pendingTransaction, () => collectStateReads(props.factory, dependency => dependencies.add(dependency)))
+      value.value = withRenderTransaction(pendingTransaction, () => declaredDependencies && props.dependenciesComplete
+        ? props.factory()
+        : collectStateReads(props.factory, dependency => dependencies.add(dependency)))
       pendingTransaction = undefined
       const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, nextTransaction => {
         pendingTransaction = nextTransaction
@@ -332,7 +375,14 @@ const VuneViewHost = defineComponent({
   },
   setup(props) {
     const state = props.node.state?.(props.node.props) ?? {}
-    return () => h(ReactiveVuneValue, { factory: () => props.node.render({ ...props.node.props, ...state }) })
+    return () => {
+      const resolvedProps = { ...props.node.props, ...state }
+      return h(ReactiveVuneValue, {
+        factory: () => props.node.render(resolvedProps),
+        ...(props.node.dependencies ? { dependencies: () => props.node.dependencies!(resolvedProps) } : {}),
+        ...(props.node.dependenciesComplete ? { dependenciesComplete: true } : {}),
+      })
+    }
   },
 })
 
@@ -403,7 +453,8 @@ function snapshotComponentProps(value: unknown): {
 }
 
 /** Place a Vue component or native HTML element in the same Vune graph. */
-export function Component<C extends VueComponentType>(type: C, ...args: VueComponentArguments<C>): ModifiableViewNode
+export function Component<C extends object>(type: C, props: Omit<VuneVueComponentProps<NoInfer<C>>, "slots"> & { readonly slots?: Record<string, any> }, ...children: ViewValue[]): ModifiableViewNode
+export function Component<C extends object>(type: C, ...args: VueComponentArguments<NoInfer<C>>): ModifiableViewNode
 export function Component(type: string, props?: Record<string, unknown> | null, ...children: ViewValue[]): ModifiableViewNode
 export function Component(
   type: VueComponentType | string,
@@ -416,8 +467,8 @@ export function Component(
 }
 
 /** Adapt a Vue component definition into a Vune-callable, preserving its Vue prop surface. */
-export function vueComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
-  const name = typeof type === "function" && type.name ? type.name : "VueComponent"
+export function vueComponent<C extends object>(type: C): VueComponentView<C> {
+  const name = typeof type === "function" && (type as { name?: string }).name ? (type as { name: string }).name : "VueComponent"
   const View = defineView(name, {
     initializers: [initializer(
       "VueComponent(props?)",
@@ -432,7 +483,7 @@ export function vueComponent<C extends VueComponentType>(type: C): VueComponentV
 }
 
 /** Generic foreign-component callable layer; Vue is the first host implementation. */
-export function foreignComponent<C extends VueComponentType>(type: C): VueComponentView<C> {
+export function foreignComponent<C extends object>(type: C): VueComponentView<C> {
   return vueComponent(type)
 }
 

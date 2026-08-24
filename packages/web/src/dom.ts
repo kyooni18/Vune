@@ -9,6 +9,7 @@ import {
   withRenderTransaction,
   zeroGeometry,
   type VuneRenderer,
+  type CompiledTemplateValue,
   type GeometryProxy,
   type LazyViewNode,
   type LazyViewRange,
@@ -323,23 +324,52 @@ function appendElementChildren(element: Element, tag: string, children: readonly
 }
 
 function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
+  const renderElement = (type: unknown, props: Record<string, unknown> | null, children: readonly Node[]): Node => {
+    const tag = typeof type === "string" ? type : "div"
+    const element = createTaggedElement(context, tag)
+    applyDomProps(element, props, context)
+    const hasTextAreaValue = element.namespaceURI === HTML_NS
+      && tag.toLowerCase() === "textarea"
+      && props?.value !== undefined
+      && props.value !== null
+    const isRawText = element.namespaceURI === HTML_NS && rawTextHtmlElements.has(tag.toLowerCase())
+    if (isRawText) {
+      element.textContent = rawTextContent(tag, children)
+    } else if (!voidHtmlElements.has(tag.toLowerCase()) && !hasTextAreaValue) {
+      appendElementChildren(element, tag, children, context)
+    }
+    synchronizeDomSelectValue(element, props)
+    return element
+  }
+  type DomTemplateFactory = (renderSlot: (index: number) => Node) => Node
+  const templateFactories = new WeakMap<object, DomTemplateFactory>()
+  const compileTemplate = (value: CompiledTemplateValue): DomTemplateFactory => {
+    if (value !== null && typeof value === "object") {
+      if (value.kind === "slot") {
+        const index = value.index
+        return renderSlot => renderSlot(index)
+      }
+      if (value.kind === "fragment") {
+        const children = value.children.map(compileTemplate)
+        return renderSlot => {
+          const fragment = context.document.createDocumentFragment()
+          children.forEach(child => appendDomChild(fragment, child(renderSlot), context))
+          return fragment
+        }
+      }
+      if (value.kind === "element") {
+        const type = value.type
+        const props = value.props
+        const children = value.children.map(compileTemplate)
+        return renderSlot => renderElement(type, props, children.map(child => child(renderSlot)))
+      }
+    }
+    const text = value === null || value === undefined || value === false || value === true ? "" : String(value)
+    return () => context.document.createTextNode(text)
+  }
   return {
     element(type, props, ...children) {
-      const tag = typeof type === "string" ? type : "div"
-      const element = createTaggedElement(context, tag)
-      applyDomProps(element, props, context)
-      const hasTextAreaValue = element.namespaceURI === HTML_NS
-        && tag.toLowerCase() === "textarea"
-        && props?.value !== undefined
-        && props.value !== null
-      const isRawText = element.namespaceURI === HTML_NS && rawTextHtmlElements.has(tag.toLowerCase())
-      if (isRawText) {
-        element.textContent = rawTextContent(tag, children)
-      } else if (!voidHtmlElements.has(tag.toLowerCase()) && !hasTextAreaValue) {
-        appendElementChildren(element, tag, children, context)
-      }
-      synchronizeDomSelectValue(element, props)
-      return element
+      return renderElement(type, props, children)
     },
     fragment(children) {
       const fragment = context.document.createDocumentFragment()
@@ -348,6 +378,14 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     },
     value(value) {
       return context.document.createTextNode(value === null || value === undefined || value === false ? "" : String(value))
+    },
+    template(node, renderSlot) {
+      let factory = templateFactories.get(node.template)
+      if (!factory) {
+        factory = compileTemplate(node.template.root)
+        templateFactories.set(node.template, factory)
+      }
+      return factory(renderSlot)
     },
     lazy(node, render, identity) {
       const key = viewIdentityKey(identity)

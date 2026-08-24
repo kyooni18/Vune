@@ -1,4 +1,4 @@
-import { isForeignComponent, renderViewNode, zeroGeometry, type VuneRenderer, type ViewGraphValue, type ViewHostNode } from "@vune-ui/core"
+import { isForeignComponent, renderViewNode, zeroGeometry, type CompiledTemplateValue, type VuneRenderer, type ViewGraphValue, type ViewHostNode } from "@vune-ui/core"
 import { assertHtmlName, classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, nativeElementProps, normalizedRawTextValue, normalizedTextAreaValue, propsOf, rawTextHtmlElements, styleAttribute, styleOf, styleText, validTableChildElements, voidHtmlElements } from "./shared.js"
 
 
@@ -106,6 +106,30 @@ function serializeTableChildren(children: readonly string[]): string {
   return result
 }
 
+type HtmlTemplateFactory = (renderSlot: (index: number) => string) => string
+const htmlTemplateFactories = new WeakMap<object, HtmlTemplateFactory>()
+
+function compileHtmlTemplate(value: CompiledTemplateValue): HtmlTemplateFactory {
+  if (value !== null && typeof value === "object") {
+    if (value.kind === "slot") {
+      const index = value.index
+      return renderSlot => renderSlot(index)
+    }
+    if (value.kind === "fragment") {
+      const children = value.children.map(compileHtmlTemplate)
+      return renderSlot => children.map(child => child(renderSlot)).join("")
+    }
+    if (value.kind === "element") {
+      const type = value.type
+      const props = value.props
+      const children = value.children.map(compileHtmlTemplate)
+      return renderSlot => htmlRenderer.element(type, props, ...children.map(child => child(renderSlot)))
+    }
+  }
+  const staticValue = value === null || value === undefined || value === false || value === true ? "" : escape(value)
+  return () => staticValue
+}
+
 const htmlRenderer: VuneRenderer<string> = {
   element(type, props, ...children) {
     const foreign = isForeignComponent(type) ? type : undefined
@@ -140,6 +164,14 @@ const htmlRenderer: VuneRenderer<string> = {
   },
   fragment(children) { return children.join("") },
   value(value) { return value === null || value === undefined || value === false ? "" : escape(value) },
+  template(node, renderSlot) {
+    let factory = htmlTemplateFactories.get(node.template)
+    if (!factory) {
+      factory = compileHtmlTemplate(node.template.root)
+      htmlTemplateFactories.set(node.template, factory)
+    }
+    return factory(renderSlot)
+  },
   modifier(content, modifier) {
     if (modifier.name === "frame") {
       const style = styleText(styleOf(modifier))

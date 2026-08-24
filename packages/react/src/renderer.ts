@@ -28,6 +28,7 @@ import {
   withRenderTransaction,
   zeroGeometry,
   type Animation,
+  type CompiledTemplateValue,
   type GeometryProxy,
   type ModifiableViewNode,
   type VuneRenderer,
@@ -188,7 +189,11 @@ interface ReactiveGraph<T> {
   readonly transaction?: Transaction
 }
 
-function useReactiveGraph<T>(compute: () => T): ReactiveGraph<T> {
+function useReactiveGraph<T>(
+  compute: () => T,
+  staticDependencies?: () => readonly StateRef<unknown>[],
+  staticDependenciesComplete = false,
+): ReactiveGraph<T> {
   const previousVersions = useRef(new Map<StateRef<unknown>, number>())
   let transaction: Transaction | undefined
   for (const [dependency, previousVersion] of previousVersions.current) {
@@ -196,8 +201,11 @@ function useReactiveGraph<T>(compute: () => T): ReactiveGraph<T> {
     const candidate = stateTransaction(dependency)
     if (!transaction || candidate.animation || candidate.disablesAnimations) transaction = candidate
   }
-  const dependencies = new Set<StateRef<unknown>>()
-  const value = withRenderTransaction(transaction, () => collectStateReads(compute, dependency => dependencies.add(dependency)))
+  const declaredDependencies = staticDependencies?.()
+  const dependencies = new Set<StateRef<unknown>>(declaredDependencies ?? [])
+  const value = withRenderTransaction(transaction, () => declaredDependencies && staticDependenciesComplete
+    ? compute()
+    : collectStateReads(compute, dependency => dependencies.add(dependency)))
   previousVersions.current = new Map([...dependencies].map(dependency => [dependency, stateVersion(dependency)]))
   useSyncExternalStore(
     listener => {
@@ -271,8 +279,36 @@ function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNo
 function renderStatefulView({ node, ...forwardedProps }: { node: ViewHostNode } & Record<string, unknown>): ReactNode {
   const [state] = useState(() => node.state?.(node.props) ?? {})
   const resolvedProps = { ...node.props, ...state }
-  const reactive = useReactiveGraph(() => node.render(resolvedProps))
+  const reactive = useReactiveGraph(
+    () => node.render(resolvedProps),
+    node.dependencies ? () => node.dependencies!(resolvedProps) : undefined,
+    node.dependenciesComplete === true,
+  )
   return applyProps(withRenderTransaction(reactive.transaction, () => renderViewNode(reactive.value, renderer)), forwardedProps)
+}
+
+type ReactTemplateFactory = (renderSlot: (index: number) => ReactNode) => ReactNode
+const reactTemplateFactories = new WeakMap<object, ReactTemplateFactory>()
+
+function compileReactTemplate(value: CompiledTemplateValue): ReactTemplateFactory {
+  if (value !== null && typeof value === "object") {
+    if (value.kind === "slot") {
+      const index = value.index
+      return renderSlot => renderSlot(index)
+    }
+    if (value.kind === "fragment") {
+      const children = value.children.map(compileReactTemplate)
+      return renderSlot => createElement(Fragment, null, ...children.map(child => child(renderSlot)))
+    }
+    if (value.kind === "element") {
+      const type = value.type
+      const props = value.props as any
+      const children = value.children.map(compileReactTemplate)
+      return renderSlot => createElement(type, props, ...children.map(child => child(renderSlot)))
+    }
+  }
+  const staticValue = value === null || value === undefined || value === false || value === true ? null : value as ReactNode
+  return () => staticValue
 }
 
 const renderer: VuneRenderer<ReactNode> = {
@@ -285,6 +321,14 @@ const renderer: VuneRenderer<ReactNode> = {
   },
   value(value) {
     return value as ReactNode
+  },
+  template(node, renderSlot) {
+    let factory = reactTemplateFactories.get(node.template)
+    if (!factory) {
+      factory = compileReactTemplate(node.template.root)
+      reactTemplateFactories.set(node.template, factory)
+    }
+    return factory(renderSlot)
   },
   modifier(content, modifier) {
     if (modifier.name === "frame") {
@@ -341,6 +385,10 @@ export function createReactView<Props extends Record<string, unknown> = Record<s
 
 export interface StatefulViewDefinition<State extends object, Props extends object = Record<string, unknown>> {
   readonly state: (props: Props) => State
+  /** Optional compiler-proven State dependencies for the body. */
+  readonly dependencies?: (state: State, props: Props) => readonly StateRef<unknown>[]
+  /** True only for compiler-proven exhaustive dependency lists. */
+  readonly dependenciesComplete?: boolean
   readonly body: (state: State, props: Props) => ViewGraphValue
 }
 
@@ -352,7 +400,11 @@ function StatefulVuneView<State extends object, Props extends object>({
   props: Props
 }): ReactNode {
   const [state] = useState(() => definition.state(props))
-  const reactive = useReactiveGraph(() => definition.body(state, props))
+  const reactive = useReactiveGraph(
+    () => definition.body(state, props),
+    definition.dependencies ? () => definition.dependencies!(state, props) : undefined,
+    definition.dependenciesComplete === true,
+  )
   return withRenderTransaction(reactive.transaction, () => renderViewNode(reactive.value, renderer))
 }
 

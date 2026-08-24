@@ -1,7 +1,10 @@
 import { vuneForeignComponent } from "./symbols.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { decorate, modifiedContent, snapshotRecord } from "./modifiers.js"
+import type { StateRef } from "../state.js"
 import type {
+  CompiledTemplateDescriptor,
+  CompiledTemplateValue,
   ForeignComponentDescriptor,
   ForeignComponentOptions,
   GeometryProxy,
@@ -120,6 +123,57 @@ export function isForeignComponent(value: unknown): value is ForeignComponentDes
   }
 }
 
+
+function snapshotCompiledTemplateValue(
+  value: CompiledTemplateValue,
+  slotCount: number,
+  slotIdentities: Array<readonly (string | number)[] | undefined>,
+): CompiledTemplateValue {
+  if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean" || typeof value === "bigint") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0
+  if (typeof value !== "object") throw new TypeError("Compiled template values must be static primitives, host elements, fragments, or slots")
+  if (value.kind === "slot") {
+    if (!Number.isSafeInteger(value.index) || value.index < 0 || value.index >= slotCount) throw new RangeError(`Compiled template slot ${String(value.index)} is outside 0..<${slotCount}`)
+    if (slotIdentities[value.index] !== undefined) throw new RangeError(`Compiled template slot ${value.index} appears more than once`)
+    const identity = Object.freeze([...value.identity])
+    slotIdentities[value.index] = identity
+    return Object.freeze({ kind: "slot" as const, index: value.index, identity })
+  }
+  if (value.kind === "fragment") {
+    return Object.freeze({ kind: "fragment" as const, children: Object.freeze(value.children.map(child => snapshotCompiledTemplateValue(child, slotCount, slotIdentities))) })
+  }
+  if (value.kind === "element") {
+    if (typeof value.type !== "string" || value.type.length === 0) throw new TypeError("Compiled templates only contain renderer-native host element names")
+    return Object.freeze({
+      kind: "element" as const,
+      type: value.type,
+      props: value.props === null ? null : snapshotRecord(value.props, true) as Record<string, unknown>,
+      children: Object.freeze(value.children.map(child => snapshotCompiledTemplateValue(child, slotCount, slotIdentities))),
+    })
+  }
+  throw new TypeError("Unknown compiled template instruction")
+}
+
+/** Freeze, validate, and index a renderer-neutral AOT template once at module evaluation. */
+export function defineCompiledTemplate(root: CompiledTemplateValue, slotCount: number): CompiledTemplateDescriptor {
+  if (!Number.isSafeInteger(slotCount) || slotCount < 0) throw new RangeError("Compiled template slotCount must be a non-negative safe integer")
+  const slotIdentities: Array<readonly (string | number)[] | undefined> = Array(slotCount).fill(undefined)
+  const snapshot = snapshotCompiledTemplateValue(root, slotCount, slotIdentities)
+  const missing = slotIdentities.findIndex(identity => identity === undefined)
+  if (missing >= 0) throw new RangeError(`Compiled template slot ${missing} is declared but never referenced`)
+  return Object.freeze({
+    root: snapshot,
+    slotCount,
+    slotIdentities: Object.freeze(slotIdentities as readonly (readonly (string | number)[])[]),
+  })
+}
+
+/** Instantiate an immutable compiler template with only the dynamic graph/value slots allocated per evaluation. */
+export function compiledTemplate(template: CompiledTemplateDescriptor, slots: readonly ViewGraphValue[] = []): ModifiableViewNode {
+  if (slots.length !== template.slotCount) throw new RangeError(`Compiled template expected ${template.slotCount} slots but received ${slots.length}`)
+  return decorate({ kind: "template" as const, template, slots: snapshotArrayValues(slots) as readonly ViewGraphValue[] }, true)
+}
+
 export function viewFragment(children: readonly ViewGraphChild[] = []): ModifiableViewNode {
   return decorate({ kind: "fragment" as const, children: snapshotArrayValues(children) as readonly ViewGraphChild[] }, true)
 }
@@ -130,6 +184,8 @@ export function viewHost(
   props: Record<string, unknown>,
   render: (props: Record<string, unknown>) => ViewGraphValue,
   state?: (props: Record<string, unknown>) => Record<string, unknown>,
+  dependencies?: (props: Record<string, unknown>) => readonly StateRef<unknown>[],
+  dependenciesComplete = false,
 ): ModifiableViewNode {
   const normalizedState = state
     ? (props: Record<string, unknown>): Record<string, unknown> => {
@@ -144,7 +200,16 @@ export function viewHost(
         return snapshotRecord(value) as Record<string, unknown>
       }
     : undefined
-  return decorate({ kind: "view" as const, name, host, props: snapshotRecord(props, true) as Record<string, unknown>, render, state: normalizedState }, true)
+  return decorate({
+    kind: "view" as const,
+    name,
+    host,
+    props: snapshotRecord(props, true) as Record<string, unknown>,
+    render,
+    state: normalizedState,
+    ...(dependencies ? { dependencies } : {}),
+    ...(dependenciesComplete ? { dependenciesComplete: true } : {}),
+  }, true)
 }
 
 /** Create a renderer-neutral geometry observation boundary. */
@@ -174,7 +239,7 @@ export function isViewNode(value: unknown): value is ViewNode {
     const descriptor = Object.getOwnPropertyDescriptor(value, "kind")
     if (!descriptor || !("value" in descriptor)) return false
     const kind = descriptor.value
-    return kind === "element" || kind === "fragment" || kind === "view" || kind === "geometry" || kind === "lazy" || kind === "modified"
+    return kind === "element" || kind === "fragment" || kind === "template" || kind === "view" || kind === "geometry" || kind === "lazy" || kind === "modified"
   } catch {
     return false
   }

@@ -3,7 +3,7 @@ import test from "node:test"
 import ts from "typescript"
 import { compileVuneFile, createVuneLanguageService, createVuneSemanticModel, createVuneVitePlugin, diagnoseVuneSource, lowerVuneBuilderAst, mapGeneratedPosition, mapOriginalPosition, parseVuneBuilder, parseVuneStructs, transformVuneSource } from "../packages/compiler/dist/index.js"
 import { vunePlugin } from "../packages/vite/dist/index.js"
-import { Text, VStack, defineView, initializer, modifiedContent, modifierGraphOf, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure } from "../packages/core/dist/index.js"
+import { Text, VStack, compiledTemplate, defineCompiledTemplate, defineView, initializer, modifiedContent, modifiedContentCompiled, modifierGraphOf, namedArguments, overloadClosure, renderViewNode, resolveBuilderClosure, resolveBuilderInput } from "../packages/core/dist/index.js"
 import { readFileSync } from "node:fs"
 
 test("@vune-ui/compiler lowers .vune.ts builders through declaration-neutral syntax", () => {
@@ -387,7 +387,7 @@ test("the Vite adapter caches unchanged modules and leaves CSS to Vite", () => {
   assert.equal(plugin.transform('const App = () => <div className="card" />', "/src/App.tsx"), null)
   const staticModifier = plugin.transform('import { Text } from "@vune-ui/core"\nconst value = Text("Hi").padding(4)', new URL("../StaticModifier.ts", import.meta.url).pathname)
   assert.ok(staticModifier)
-  assert.match(staticModifier.code, /modifiedContent\(/)
+  assert.match(staticModifier.code, /modifiedContentCompiled\(/)
   const scoped = createVuneVitePlugin({ include: /Counter\.vune\.ts/g })
   assert.ok(scoped.transform(source, "/src/Counter.vune.ts"))
   assert.ok(scoped.transform(source, "/src/Counter.vune.ts"))
@@ -466,7 +466,7 @@ Text("Card").className(styles.card)`
   const output = transformVuneSource(source, "Card.vune.ts")
   assert.match(output, /import styles from "\.\/Card\.module\.css"/)
   assert.match(output, /import "\.\/tokens\.scss"/)
-  assert.match(output, /modifiedContent\(/)
+  assert.match(output, /modifiedContentCompiled\(/)
   assert.match(output, /styles\.card/)
 })
 
@@ -494,7 +494,10 @@ test("the checked-in .vune.ts example passes through the compiler pipeline", () 
   const source = readFileSync(new URL("../examples/Counter.vune.ts", import.meta.url), "utf8")
   const output = transformVuneSource(source, "Counter.vune.ts")
   assert.doesNotMatch(output, /VStack\([^\n]*\)\s*\{/)
-  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(1, \[namedArguments\(\{ spacing: 12 \}\), \(\) =>/)
+  assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
+  assert.match(output, /"gap": "12px"/)
+  assert.match(output, /compiledTemplate\(__vuneTemplate0, \[`Count: \${count\.value}`, Button\.viewType\.createNodeCompiled/)
+  assert.doesNotMatch(output, /namedArguments\(/)
   assert.match(output, /from "@vune-ui\/react"/)
   assert.match(output, /view\(\{ state: \(\) => \{ const count = State\(0\)/)
   assert.doesNotMatch(output, /^const count = State/m)
@@ -508,7 +511,7 @@ test("custom generic View structs lower to declaration-defined initializer metad
   assert.match(output, /genericParameters: "Content: View"/)
   assert.match(output, /fields: \[\{ name: "content", kind: "stored"/)
   assert.match(output, /Card\(@ViewBuilder content\)/)
-  assert.match(output, /resolveBuilderClosure\(content\)/)
+  assert.match(output, /resolveBuilderInput\(content\)/)
   assert.match(output, /from "@vune-ui\/react"/)
   assert.equal(ts.createSourceFile("Card.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
@@ -521,7 +524,8 @@ test("compiler specializes unambiguous same-file struct calls from initializer d
 }
 const card = Card(title: "Hello")`
   const output = transformVuneSource(source, "SpecializedCard.vune.ts")
-  assert.match(output, /Card\.viewType\.createNodeSpecialized\(0, \[namedArguments\(\{ title: "Hello" \}\)\]\)/)
+  assert.match(output, /Card\.viewType\.createNodeCompiled\(0, \["Hello"\]\)/)
+  assert.doesNotMatch(output, /namedArguments\(/)
   assert.doesNotMatch(output, /const card = Card\(/)
   assert.equal(ts.createSourceFile("SpecializedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
@@ -530,30 +534,81 @@ test("compiler specializes imported Views from a unique typed call signature", (
   const source = `import { Text } from "@vune-ui/core"
 const value = Text("Hello")`
   const output = transformVuneSource(source, "ImportedText.vune.ts")
-  assert.match(output, /Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\)/)
+  assert.match(output, /Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\)/)
   assert.equal(ts.createSourceFile("ImportedText.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/, "")
   const value = Function("Text", `${generated}; return value`)(Text)
   assert.equal(value.kind, "element")
 })
 
+test("compiler normalizes proven Swift-style labels into the compiled runtime payload", () => {
+  const source = `import { Text, VStack } from "@vune-ui/core"
+const value = VStack(spacing: 12) { Text("Hello") }`
+  const output = transformVuneSource(source, "NamedCompiledStack.vune.ts")
+  assert.match(output, /VStack\.viewType\.createNodeCompiled\(1, \[\{ "spacing": 12 \}, \[/)
+  assert.doesNotMatch(output, /namedArguments\(/)
+  const generated = output.replace(/^import [^\n]+\n/, "")
+  const value = Function("Text", "VStack", `${generated}; return value`)(Text, VStack)
+  assert.equal(value.props.style.gap, "12px")
+  assert.equal(value.children[0].children[0], "Hello")
+})
+
+test("compiler lowers immutable host structure into a compiled template with dynamic slots", () => {
+  const source = `import { Text, VStack } from "@vune-ui/core"
+export function App(name: string) { return VStack() { Text("Static"); Text(name) } }`
+  const output = transformVuneSource(source, "StaticHoist.vune.ts")
+  assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
+  assert.match(output, /children: \["Static"\]/)
+  assert.match(output, /kind: "slot", index: 0, identity: \["element", 1, "element", 0\]/)
+  assert.match(output, /return compiledTemplate\(__vuneTemplate0, \[name\]\)/)
+  assert.doesNotMatch(output, /createNode(?:Compiled|Specialized)\([^\n]*name/)
+  assert.equal(ts.createSourceFile("StaticHoist.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler keeps opaque custom View children as identity-preserving template slots", () => {
+  const source = `import { Text, VStack } from "@vune-ui/core"
+struct Card: View {
+  let title: string
+  var body: some View { Text(title) }
+}
+export function App(title: string) { return VStack() { Card(title: title) } }`
+  const output = transformVuneSource(source, "TemplateCustomChild.vune.ts")
+  assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
+  assert.match(output, /kind: "slot", index: 0, identity: \["element", 0\]/)
+  assert.match(output, /compiledTemplate\(__vuneTemplate0, \[Card\.viewType\.createNodeCompiled\(0, \[title\]\)\]\)/)
+  assert.equal(ts.createSourceFile("TemplateCustomChild.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler emits State dependency metadata and templates dynamic primitive content", () => {
+  const source = `import { Text } from "@vune-ui/core"
+struct Counter: View {
+  @State var count: number = 0
+  var body: some View { Text(String(count.value)) }
+}`
+  const output = transformVuneSource(source, "StaticDependencies.vune.ts")
+  assert.match(output, /dependencies: \(props: any\) => \[props\.count\]/)
+  assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
+  assert.match(output, /compiledTemplate\(__vuneTemplate0, \[String\(count\.value\)\]\)/)
+  assert.equal(ts.createSourceFile("StaticDependencies.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("compiler specializes a resolved imported ViewBuilder overload by declaration order", () => {
   const source = `import { Text, VStack } from "@vune-ui/core"
 const value = VStack() { Text("Hello") }`
   const output = transformVuneSource(source, "ImportedVStack.vune.ts")
-  assert.match(output, /VStack\.viewType\.createNodeSpecialized\(0, \[\(\) =>/)
-  assert.match(output, /Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\)/)
+  assert.match(output, /VStack\.viewType\.createNodeCompiled\(0, \[\[/)
+  assert.match(output, /Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\)/)
 })
 
 test("compiler lowers a statically typed modifier chain into one flat graph construction", () => {
   const source = `import { Text } from "@vune-ui/core"
 const value = Text("Hello").padding(8).background("red").bold()`
   const output = transformVuneSource(source, "StaticModifiers.vune.ts")
-  assert.match(output, /modifiedContent\(Text\.viewType\.createNodeSpecialized\(0, \["Hello"\]\), \[\{ name: "padding", arguments: \[8\] \}, \{ name: "background", arguments: \["red"\] \}, \{ name: "bold", arguments: \[\] \}\]\)/)
+  assert.match(output, /modifiedContentCompiled\(Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\), \[\["padding", \[8\]\], \["background", \["red"\]\], \["bold", \[\]\]\]\)/)
   assert.doesNotMatch(output, /\.padding\(|\.background\(|\.bold\(/)
   assert.equal(ts.createSourceFile("StaticModifiers.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/gm, "")
-  const value = Function("Text", "modifiedContent", `${generated}; return value`)(Text, modifiedContent)
+  const value = Function("Text", "modifiedContentCompiled", `${generated}; return value`)(Text, modifiedContentCompiled)
   assert.deepEqual(modifierGraphOf(value).map(item => [item.name, item.arguments]), [["padding", [8]], ["background", ["red"]], ["bold", []]])
 })
 
@@ -562,7 +617,7 @@ test("compiler preserves dynamic and non-View modifier methods", () => {
 const dynamic = (unknownValue as any).padding(8)
 const ordinary = { padding(value: number) { return value } }.padding(8)`
   const output = transformVuneSource(source, "DynamicModifiers.vune.ts")
-  assert.doesNotMatch(output, /modifiedContent\(/)
+  assert.doesNotMatch(output, /modifiedContent(?:Compiled)?\(/)
   assert.match(output, /unknownValue as any\)\.padding\(8\)/)
   assert.match(output, /const ordinary = .*\.padding\(8\)/)
 })
@@ -577,7 +632,7 @@ test("compiler keeps unresolved declaration calls on the dynamic resolver", () =
 const card = Card(valueFromRuntime)`
   const output = transformVuneSource(source, "DynamicCard.vune.ts")
   assert.match(output, /const card = Card\(valueFromRuntime\)/)
-  assert.doesNotMatch(output, /createNodeSpecialized/)
+  assert.doesNotMatch(output, /createNode(?:Compiled|Specialized)/)
 })
 
 test("compiler rejects ambiguous statically typed declaration overloads", () => {
@@ -608,11 +663,14 @@ struct GenericBox<Content: View>: View {
     "defineView",
     "initializer",
     "resolveBuilderClosure",
+    "resolveBuilderInput",
     "overloadClosure",
+    "compiledTemplate",
+    "defineCompiledTemplate",
     "Text",
     "VStack",
     `${generated}; return GenericBox`,
-  )(defineView, initializer, resolveBuilderClosure, overloadClosure, Text, VStack)
+  )(defineView, initializer, resolveBuilderClosure, resolveBuilderInput, overloadClosure, compiledTemplate, defineCompiledTemplate, Text, VStack)
   assert.doesNotThrow(() => GenericBox(() => Text("valid")))
   assert.throws(() => GenericBox(() => "not a View"), /No matching initializer for GenericBox/)
 })
@@ -631,7 +689,8 @@ test("compiled structs resolve unlabeled values, labeled actions, and trailing b
 }
 const card = MixedCard("Title", action: { save() }) { Text("Body") }`
   const output = transformVuneSource(source, "MixedCard.vune.ts")
-  assert.match(output, /MixedCard\.viewType\.createNodeSpecialized\(0, \["Title", namedArguments\(\{ action:/)
+  assert.match(output, /MixedCard\.viewType\.createNodeCompiled\(0, \["Title", \(\) => \{save\(\)\}, \[Text\("Body"\)\]\]\)/)
+  assert.doesNotMatch(output, /namedArguments\(/)
   assert.doesNotMatch(output, /overloadClosure\(/)
   assert.equal(ts.createSourceFile("MixedCard.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/, "").replace(/: any\b/g, "")
@@ -640,13 +699,14 @@ const card = MixedCard("Title", action: { save() }) { Text("Body") }`
     "defineView",
     "initializer",
     "resolveBuilderClosure",
+    "resolveBuilderInput",
     "namedArguments",
     "overloadClosure",
     "Text",
     "VStack",
     "save",
     `${generated}; return card`,
-  )(defineView, initializer, resolveBuilderClosure, namedArguments, overloadClosure, Text, VStack, () => { saves += 1 })
+  )(defineView, initializer, resolveBuilderClosure, resolveBuilderInput, namedArguments, overloadClosure, Text, VStack, () => { saves += 1 })
   const rendered = renderViewNode(card, {
     element(type, props, ...children) { return { type, props, children } },
     fragment(children) { return { children } },
@@ -666,7 +726,7 @@ test("custom View trailing roles and invalid initializer shapes use compiler met
 const card = ActionCard() { save() }`
   const output = transformVuneSource(valid, "ActionCard.vune.ts")
   assert.doesNotMatch(output, /overloadClosure\(/)
-  assert.match(output, /ActionCard\.viewType\.createNodeSpecialized\(0, \[\(\) => \{ save\(\) \}\]\)/)
+  assert.match(output, /ActionCard\.viewType\.createNodeCompiled\(0, \[\(\) => \{ save\(\) \}\]\)/)
 
   const invalid = `struct LabelCard: View {
   let label: any
@@ -734,7 +794,10 @@ struct Parent: View {
     "defineView",
     "initializer",
     "resolveBuilderClosure",
+    "resolveBuilderInput",
     "overloadClosure",
+    "compiledTemplate",
+    "defineCompiledTemplate",
     "Text",
     "VStack",
     `${generated}; return Parent`,
@@ -742,7 +805,10 @@ struct Parent: View {
     defineView,
     initializer,
     resolveBuilderClosure,
+    resolveBuilderInput,
     overloadClosure,
+    compiledTemplate,
+    defineCompiledTemplate,
     Text,
     VStack,
   )

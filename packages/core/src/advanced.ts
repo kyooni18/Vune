@@ -4,7 +4,7 @@ import {
   initializer,
   initializerKinds,
   lazyView,
-  resolveBuilderClosure,
+  resolveBuilderInput,
   type ModifiableViewNode,
   type TypedViewConstructor,
   type ViewBuilderClosure,
@@ -34,7 +34,7 @@ interface BoxCall {
 export const Box = defineBuiltinView<BoxProps>(
   "Box",
   [
-    initializer("Box(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
+    initializer("Box(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderInput(args[0]) }), [initializerKinds.viewBuilder(true, "content")]),
     initializer("Box(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
   ({ children }) => viewElement("div", { "data-vune": "Box" }, children),
@@ -92,8 +92,8 @@ interface GridCall {
 export const Grid = defineBuiltinView<GridProps>(
   "Grid",
   [
-    initializer("Grid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow"], "Grid") as GridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object"), initializerKinds.viewBuilder(true, "content")]),
-    initializer("Grid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
+    initializer("Grid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow"], "Grid") as GridOptions, children: resolveBuilderInput(args[1]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object"), initializerKinds.viewBuilder(true, "content")]),
+    initializer("Grid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderInput(args[0]) }), [initializerKinds.viewBuilder(true, "content")]),
     initializer("Grid(options, ...children)", args => args.length >= 1 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow"]) !== undefined && staticChildren(args.slice(1)), args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow"], "Grid") as GridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow"], "object", true)]),
     initializer("Grid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],
@@ -220,8 +220,8 @@ interface LazyGridCall {
 export const LazyGrid = defineBuiltinView<LazyGridProps>(
   "LazyGrid",
   [
-    initializer("LazyGrid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "LazyGrid") as LazyGridOptions, children: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object"), initializerKinds.viewBuilder(true, "content")]),
-    initializer("LazyGrid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderClosure(args[0] as () => ViewValue) }), [initializerKinds.viewBuilder(true, "content")]),
+    initializer("LazyGrid(options, @ViewBuilder content)", args => args.length === 2 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"]) !== undefined && typeof args[1] === "function", args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "LazyGrid") as LazyGridOptions, children: resolveBuilderInput(args[1]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object"), initializerKinds.viewBuilder(true, "content")]),
+    initializer("LazyGrid(@ViewBuilder content)", args => args.length === 1 && typeof args[0] === "function", args => ({ children: resolveBuilderInput(args[0]) }), [initializerKinds.viewBuilder(true, "content")]),
     initializer("LazyGrid(options, ...children)", args => args.length >= 1 && snapshotOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"]) !== undefined && staticChildren(args.slice(1)), args => ({ options: requireOptionRecord(args[0], ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "LazyGrid") as LazyGridOptions, children: flattenChildren(args.slice(1) as ViewBuilderContent[]) }), [initializerKinds.value(true, "options", ["columns", "rows", "autoFlow", "estimatedItemSize", "overscan"], "object", true)]),
     initializer("LazyGrid(...children)", staticChildren, args => ({ children: flattenChildren(args as ViewBuilderContent[]) })),
   ],

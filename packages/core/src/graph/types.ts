@@ -1,7 +1,8 @@
 import type { Animation } from "../animation.js"
 import type { FrameOptions } from "../layout.js"
 import type { VuneStyleProperties } from "../html.js"
-import type { ViewIdentity } from "../identity.js"
+import type { ViewIdentity, ViewIdentitySegment } from "../identity.js"
+import type { StateRef } from "../state.js"
 import type { ViewType } from "./initializers.js"
 import type { vuneForeignComponent, vuneInitializers, vuneView } from "./symbols.js"
 
@@ -93,12 +94,54 @@ export interface FragmentViewNode {
   readonly children: readonly ViewGraphChild[]
 }
 
+/** A dynamic child position inside a compiler-generated immutable template. */
+export interface CompiledTemplateSlot {
+  readonly kind: "slot"
+  readonly index: number
+  /** Original graph-identity path from the template root to this dynamic slot. */
+  readonly identity: readonly ViewIdentitySegment[]
+}
+
+/** Static host element emitted by the compiler after evaluating intrinsic View semantics. */
+export interface CompiledTemplateElement {
+  readonly kind: "element"
+  readonly type: string
+  readonly props: Record<string, unknown> | null
+  readonly children: readonly CompiledTemplateValue[]
+}
+
+export interface CompiledTemplateFragment {
+  readonly kind: "fragment"
+  readonly children: readonly CompiledTemplateValue[]
+}
+
+export type CompiledTemplateValue = ViewGraphLeaf | CompiledTemplateSlot | CompiledTemplateElement | CompiledTemplateFragment
+
+/** Immutable static tree plus the number of runtime graph/value slots it consumes. */
+export interface CompiledTemplateDescriptor {
+  readonly root: CompiledTemplateValue
+  readonly slotCount: number
+  /** Prevalidated original graph-identity path for each runtime slot. */
+  readonly slotIdentities: readonly (readonly ViewIdentitySegment[])[]
+}
+
+/** Runtime instance of a compiler template. Only its slot array changes between evaluations. */
+export interface CompiledTemplateViewNode {
+  readonly kind: "template"
+  readonly template: CompiledTemplateDescriptor
+  readonly slots: readonly ViewGraphValue[]
+}
+
 export interface ViewHostNode {
   readonly kind: "view"
   readonly name: string
   readonly host: unknown
   readonly props: Record<string, unknown>
   readonly state?: (props: Record<string, unknown>) => Record<string, unknown>
+  /** Compiler-proven State dependencies. Omitted when runtime discovery is required. */
+  readonly dependencies?: (props: Record<string, unknown>) => readonly StateRef<unknown>[]
+  /** Whether dependencies is a compiler-proven exhaustive set. */
+  readonly dependenciesComplete?: boolean
   readonly render: (props: Record<string, unknown>) => ViewGraphValue
 }
 
@@ -131,7 +174,7 @@ export interface ModifiedContent {
   readonly arguments: readonly unknown[]
 }
 
-export type ViewNode = ElementViewNode | FragmentViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
+export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
 /** Public View value: an immutable graph node with value-semantic modifiers. */
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
@@ -167,6 +210,8 @@ export interface VuneRenderer<Output = unknown> {
   fragment(children: Output[]): Output
   value?(value: unknown): Output
   modifier(content: Output, modifier: ViewModifierNode): Output
+  /** Materialize a compiler-generated static template without generic graph traversal. */
+  template?(node: CompiledTemplateViewNode, renderSlot: (index: number) => Output, identity: ViewIdentity): Output
   /** Render a View host with an optional renderer-owned resolved prop set. */
   view?(node: ViewHostNode, render: (props?: Record<string, unknown>) => Output, identity: ViewIdentity): Output
   /** Materialize a geometry boundary and feed its measured proxy to the body. */

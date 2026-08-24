@@ -11,6 +11,8 @@ import {
   State,
   Text,
   VStack,
+  compiledTemplate,
+  defineCompiledTemplate,
   defineView,
   initializer,
   initializerKinds,
@@ -36,12 +38,15 @@ const budgets = {
   dom: 25,
   heap: 10,
   specialization: 1.25,
+  templateConstruction: Number(process.env.VUNE_BENCH_TEMPLATE_RATIO ?? 1.25),
   state: 50,
   compiler: 1000,
   hydration: 1000,
   keyedDom: 2000,
   reactRerender: 2000,
   vueRerender: 2000,
+  reactClientRatio: Number(process.env.VUNE_BENCH_REACT_CLIENT_RATIO ?? 10),
+  vueClientRatio: Number(process.env.VUNE_BENCH_VUE_CLIENT_RATIO ?? 10),
   deepState: 100,
   burstDom: 1500,
   conditionalDom: 2000,
@@ -128,6 +133,22 @@ const specializationCount = Number(process.env.VUNE_BENCH_SPECIALIZATION_ITEMS ?
 const dynamicInitializer = measure(`dynamic initializer resolution ${specializationCount}`, () => Array.from({ length: specializationCount }, () => PerformanceCard("static")))
 const specializedInitializer = measure(`specialized initializer construction ${specializationCount}`, () => Array.from({ length: specializationCount }, () => PerformanceCard.viewType.createNodeSpecialized(0, ["static"])))
 ratio("specialized initializer construction", specializedInitializer, dynamicInitializer, budgets.specialization)
+const compiledInitializer = measure(`compiled initializer construction ${specializationCount}`, () => Array.from({ length: specializationCount }, () => PerformanceCard.viewType.createNodeCompiled(0, ["static"])))
+ratio("compiled initializer construction", compiledInitializer, specializedInitializer, budgets.specialization)
+
+const templateConstructionCount = Number(process.env.VUNE_BENCH_TEMPLATE_ITEMS ?? (ci ? 1000 : 10000))
+const dynamicTextTemplate = defineCompiledTemplate({
+  kind: "element",
+  type: "div",
+  props: { "data-vune": "VStack", style: { display: "flex", flexDirection: "column" } },
+  children: [
+    { kind: "element", type: "span", props: null, children: ["Static"] },
+    { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 1, "element", 0] }] },
+  ],
+}, 1)
+const ordinaryDynamicGraph = measure(`ordinary dynamic graph construction ${templateConstructionCount}`, () => Array.from({ length: templateConstructionCount }, (_, index) => VStack(Text("Static"), Text(String(index)))))
+const templateDynamicGraph = measure(`compiled template construction ${templateConstructionCount}`, () => Array.from({ length: templateConstructionCount }, (_, index) => compiledTemplate(dynamicTextTemplate, [String(index)])))
+ratio("compiled template construction", templateDynamicGraph, ordinaryDynamicGraph, budgets.templateConstruction)
 
 const compilerSource = `import { Text, VStack } from "vune-ui"
 struct BenchCard: View {
@@ -291,26 +312,41 @@ async function getVueRuntime() {
   return vueBenchmarkRuntime
 }
 
-async function reactRerender(count) {
+function clientItems(count) {
+  return Array.from({ length: count }, (_, index) => ({ id: index, value: String(index) }))
+}
+
+function updateClientItems(items, mode) {
+  if (mode === "reverse") return [...items].reverse()
+  if (mode === "single") {
+    const next = [...items]
+    const index = Math.floor(next.length / 2)
+    if (next[index]) next[index] = { ...next[index], value: `next-${index}` }
+    return next
+  }
+  return items.map((item, index) => ({ ...item, value: `next-${index}` }))
+}
+
+async function rawReactRerender(count, mode = "full") {
   const dom = new JSDOM("<div id=app></div>")
   const restore = installRendererDOM(dom)
   try {
-    const { act } = await import("react")
+    const { act, useState } = await import("react")
     const { createRoot } = await import("react-dom/client")
-    const values = State(Array.from({ length: count }, (_, index) => String(index)))
-    const App = defineView(`ReactPerformanceApp${count}`, {
-      initializers: [initializer(`ReactPerformanceApp${count}()`, args => args.length === 0)],
-      body: () => Element("div", null, values.value.map(value => Element("span", null, value))),
-    })
+    const { flushSync } = await import("react-dom")
+    let setItems
+    function App() {
+      const [items, set] = useState(() => clientItems(count))
+      setItems = set
+      return createElement("div", null, items.map(item => createElement("span", { key: item.id }, item.value)))
+    }
     const root = createRoot(dom.window.document.querySelector("#app"))
-    await act(async () => { root.render(renderReact(App())) })
-    let elapsed = 0
-    await act(async () => {
-      const start = performance.now()
-      values.value = values.value.map((_, index) => `next-${index}`)
-      await Promise.resolve()
-      elapsed = performance.now() - start
+    await act(async () => { root.render(createElement(App)) })
+    const start = performance.now()
+    flushSync(() => {
+      setItems(previous => updateClientItems(previous, mode))
     })
+    const elapsed = performance.now() - start
     await act(async () => { root.unmount() })
     return elapsed
   } finally {
@@ -318,20 +354,67 @@ async function reactRerender(count) {
   }
 }
 
-async function vueRerender(count) {
+async function reactRerender(count, mode = "full") {
+  const dom = new JSDOM("<div id=app></div>")
+  const restore = installRendererDOM(dom)
+  try {
+    const { act } = await import("react")
+    const { createRoot } = await import("react-dom/client")
+    const { flushSync } = await import("react-dom")
+    const items = State(clientItems(count))
+    const App = defineView(`ReactPerformanceApp${count}${mode}`, {
+      initializers: [initializer(`ReactPerformanceApp${count}${mode}()`, args => args.length === 0)],
+      body: () => Element("div", null, items.value.map(item => Element("span", { key: item.id }, item.value))),
+    })
+    const root = createRoot(dom.window.document.querySelector("#app"))
+    await act(async () => { root.render(renderReact(App())) })
+    const start = performance.now()
+    flushSync(() => {
+      items.value = updateClientItems(items.value, mode)
+    })
+    const elapsed = performance.now() - start
+    await act(async () => { root.unmount() })
+    return elapsed
+  } finally {
+    restore()
+  }
+}
+
+async function rawVueRerender(count, mode = "full") {
+  const { dom, runtime: vue } = await getVueRuntime()
+  const container = dom.window.document.querySelector("#vue-benchmark-app")
+  container.replaceChildren()
+  try {
+    const items = vue.ref(clientItems(count))
+    const app = vue.createApp({
+      render: () => vue.h("div", null, items.value.map(item => vue.h("span", { key: item.id }, item.value))),
+    })
+    app.mount(container)
+    const start = performance.now()
+    items.value = updateClientItems(items.value, mode)
+    await vue.nextTick()
+    const elapsed = performance.now() - start
+    app.unmount()
+    return elapsed
+  } finally {
+    container.replaceChildren()
+  }
+}
+
+async function vueRerender(count, mode = "full") {
   const { dom, runtime: vue, vuneRenderer } = await getVueRuntime()
   const container = dom.window.document.querySelector("#vue-benchmark-app")
   container.replaceChildren()
   try {
-    const values = State(Array.from({ length: count }, (_, index) => String(index)))
-    const App = defineView(`VuePerformanceApp${count}`, {
-      initializers: [initializer(`VuePerformanceApp${count}()`, args => args.length === 0)],
-      body: () => Element("div", null, values.value.map(value => Element("span", null, value))),
+    const items = State(clientItems(count))
+    const App = defineView(`VuePerformanceApp${count}${mode}`, {
+      initializers: [initializer(`VuePerformanceApp${count}${mode}()`, args => args.length === 0)],
+      body: () => Element("div", null, items.value.map(item => Element("span", { key: item.id }, item.value))),
     })
     const app = vue.createApp({ render: () => vuneRenderer.render(App()) })
     app.mount(container)
     const start = performance.now()
-    values.value = values.value.map((_, index) => `next-${index}`)
+    items.value = updateClientItems(items.value, mode)
     await vue.nextTick()
     const elapsed = performance.now() - start
     app.unmount()
@@ -475,16 +558,26 @@ for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   console.log(`Vune DOM reconciliation ${count}: ${vune.toFixed(2)} ms`)
   console.log(`Vune keyed DOM update ${count}: ${keyed.toFixed(2)} ms`)
   console.log(`Vune Web hydration ${count}: ${hydration.toFixed(2)} ms`)
-  const reactRerenderTime = await measureRounds(() => reactRerender(count))
-  const vueRerenderTime = await measureRounds(() => vueRerender(count))
-  console.log(`Vune React rerender ${count}: ${reactRerenderTime.toFixed(2)} ms`)
-  console.log(`Vune Vue rerender ${count}: ${vueRerenderTime.toFixed(2)} ms`)
   ratio(`DOM reconciliation ${count}`, vune, raw, budgets.dom)
-  if (!Number.isFinite(keyed) || !Number.isFinite(hydration) || !Number.isFinite(reactRerenderTime) || !Number.isFinite(vueRerenderTime)) throw new Error(`DOM, renderer rerender, or hydration benchmark produced a non-finite measurement for ${count}`)
+  if (!Number.isFinite(keyed) || !Number.isFinite(hydration)) throw new Error(`DOM or hydration benchmark produced a non-finite measurement for ${count}`)
   if (ci && keyed > budgets.keyedDom) throw new Error(`Keyed DOM update exceeded ${budgets.keyedDom} ms for ${count}: ${keyed.toFixed(2)} ms`)
   if (ci && hydration > budgets.hydration) throw new Error(`Hydration exceeded ${budgets.hydration} ms for ${count}: ${hydration.toFixed(2)} ms`)
-  if (ci && reactRerenderTime > budgets.reactRerender) throw new Error(`React rerender exceeded ${budgets.reactRerender} ms for ${count}: ${reactRerenderTime.toFixed(2)} ms`)
-  if (ci && vueRerenderTime > budgets.vueRerender) throw new Error(`Vue rerender exceeded ${budgets.vueRerender} ms for ${count}: ${vueRerenderTime.toFixed(2)} ms`)
+
+  for (const mode of ["full", "single", "reverse"]) {
+    const rawReactRerenderTime = await measureRounds(() => rawReactRerender(count, mode))
+    const reactRerenderTime = await measureRounds(() => reactRerender(count, mode))
+    const rawVueRerenderTime = await measureRounds(() => rawVueRerender(count, mode))
+    const vueRerenderTime = await measureRounds(() => vueRerender(count, mode))
+    console.log(`raw React ${mode} rerender ${count}: ${rawReactRerenderTime.toFixed(2)} ms`)
+    console.log(`Vune React ${mode} rerender ${count}: ${reactRerenderTime.toFixed(2)} ms`)
+    console.log(`raw Vue ${mode} rerender ${count}: ${rawVueRerenderTime.toFixed(2)} ms`)
+    console.log(`Vune Vue ${mode} rerender ${count}: ${vueRerenderTime.toFixed(2)} ms`)
+    ratio(`React client ${mode} ${count}`, reactRerenderTime, rawReactRerenderTime, budgets.reactClientRatio)
+    ratio(`Vue client ${mode} ${count}`, vueRerenderTime, rawVueRerenderTime, budgets.vueClientRatio)
+    if (![rawReactRerenderTime, reactRerenderTime, rawVueRerenderTime, vueRerenderTime].every(Number.isFinite)) throw new Error(`Renderer rerender benchmark produced a non-finite measurement for ${count}/${mode}`)
+    if (ci && reactRerenderTime > budgets.reactRerender) throw new Error(`React rerender exceeded ${budgets.reactRerender} ms for ${count}/${mode}: ${reactRerenderTime.toFixed(2)} ms`)
+    if (ci && vueRerenderTime > budgets.vueRerender) throw new Error(`Vue rerender exceeded ${budgets.vueRerender} ms for ${count}/${mode}: ${vueRerenderTime.toFixed(2)} ms`)
+  }
 }
 
 const burstDom = await measureRounds(() => burstDomUpdate(ci ? 50 : 100, ci ? 100 : 250))

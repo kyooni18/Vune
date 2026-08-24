@@ -7,7 +7,7 @@ import {
   isViewNode,
   lazyView,
   modifier,
-  resolveBuilderClosure,
+  resolveBuilderInput,
   type NamedArguments,
   type ViewValue,
   type ViewBuilderClosure,
@@ -74,7 +74,7 @@ function stackInitializers(name: string, optionsParameter: ReturnType<typeof ini
     initializer(
       "@ViewBuilder content",
       args => args.length === 1 && typeof args[0] === "function",
-      args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }),
+      args => ({ content: resolveBuilderInput(args[0]) }),
       [genericStackContent],
     ),
     initializer(
@@ -82,7 +82,7 @@ function stackInitializers(name: string, optionsParameter: ReturnType<typeof ini
       args => args.length === 2 && snapshotOptionRecord(args[0], optionKeys) !== undefined && typeof args[1] === "function",
       args => ({
         ...(args[0] === undefined ? {} : { options: requireOptionRecord(args[0], optionKeys, name) }),
-        content: resolveBuilderClosure(args[1] as () => ViewValue),
+        content: resolveBuilderInput(args[1]),
       }),
       [optionsParameter, genericStackContent],
     ),
@@ -164,8 +164,8 @@ function zStackPlaceItems(alignment: ZStackOptions["alignment"]): string {
 export const ZStack = defineBuiltinView<ZStackProps>(
   "ZStack",
   [
-    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [genericStackContent]),
-    initializer("options, @ViewBuilder content", args => args.length === 2 && snapshotOptionRecord(args[0], ["alignment"]) !== undefined && typeof args[1] === "function", args => ({ ...(args[0] === undefined ? {} : { options: requireOptionRecord(args[0], ["alignment"], "ZStack") }), content: resolveBuilderClosure(args[1] as () => ViewValue) }), [zStackOptions, genericStackContent]),
+    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderInput(args[0]) }), [genericStackContent]),
+    initializer("options, @ViewBuilder content", args => args.length === 2 && snapshotOptionRecord(args[0], ["alignment"]) !== undefined && typeof args[1] === "function", args => ({ ...(args[0] === undefined ? {} : { options: requireOptionRecord(args[0], ["alignment"], "ZStack") }), content: resolveBuilderInput(args[1]) }), [zStackOptions, genericStackContent]),
     initializer("options, ...children", args => args.length >= 1 && snapshotOptionRecord(args[0], ["alignment"]) !== undefined && args.slice(1).every(value => typeof value !== "function"), args => ({ options: requireOptionRecord(args[0], ["alignment"], "ZStack"), content: args.slice(1).flatMap(stackChildren) }), [zStackVariadicOptions]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
@@ -204,13 +204,13 @@ export const ScrollView = defineBuiltinView<ScrollViewProps>(
     initializer(
       "ScrollView(@ViewBuilder content)",
       args => args.length === 1 && typeof args[0] === "function",
-      args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }),
+      args => ({ content: resolveBuilderInput(args[0]) }),
       [scrollContent],
     ),
     initializer(
       "ScrollView(axis, @ViewBuilder content)",
       args => args.length === 2 && isScrollAxis(args[0]) && typeof args[1] === "function",
-      args => ({ axis: args[0] as ScrollAxis, content: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      args => ({ axis: args[0] as ScrollAxis, content: resolveBuilderInput(args[1]) }),
       [initializerKinds.value(true, "axis", undefined, scrollAxisType), scrollContent],
     ),
     initializer(
@@ -276,13 +276,13 @@ export const SafeArea = defineBuiltinView<SafeAreaProps>(
     initializer(
       "SafeArea(@ViewBuilder content)",
       args => args.length === 1 && typeof args[0] === "function",
-      args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }),
+      args => ({ content: resolveBuilderInput(args[0]) }),
       [safeAreaContent],
     ),
     initializer(
       "SafeArea(edges, @ViewBuilder content)",
       args => args.length === 2 && snapshotSafeAreaEdges(args[0]) !== undefined && typeof args[1] === "function",
-      args => ({ edges: requireSafeAreaEdges(args[0]), content: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      args => ({ edges: requireSafeAreaEdges(args[0]), content: resolveBuilderInput(args[1]) }),
       [initializerKinds.value(true, "edges"), safeAreaContent],
     ),
   ],
@@ -324,7 +324,7 @@ export const Divider = defineBuiltinView("Divider", [initializer("Divider()", ar
 export const Group = defineBuiltinView<{ content: ViewValue[] }>(
   "Group",
   [
-    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [stackContent]),
+    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderInput(args[0]) }), [stackContent]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
   ({ content }) => viewFragment(content),
@@ -370,7 +370,7 @@ export const Button = defineBuiltinView<ButtonProps>(
     initializer(
       "Button(@Action action, @ViewBuilder label)",
       args => args.length === 2 && typeof args[0] === "function" && typeof args[1] === "function",
-      args => ({ action: args[0] as () => unknown, label: resolveBuilderClosure(args[1] as () => ViewValue) }),
+      args => ({ action: args[0] as () => unknown, label: resolveBuilderInput(args[1]) }),
       [
         { ...labeledActionParameter, labelRequired: true },
         { ...labeledLabelParameter, labelRequired: true },
@@ -574,8 +574,8 @@ export const ForEach = ForEachType as unknown as ForEachCall & typeof ForEachTyp
 export const Section = defineBuiltinView<{ title?: string; content: ViewValue[] }>(
   "Section",
   [
-    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [stackContent]),
-    initializer("title, @ViewBuilder content", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ title: args[0] as string, content: resolveBuilderClosure(args[1] as () => ViewValue) }), [initializerKinds.value(true, "title", undefined, "string"), stackContent]),
+    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderInput(args[0]) }), [stackContent]),
+    initializer("title, @ViewBuilder content", args => args.length === 2 && typeof args[0] === "string" && typeof args[1] === "function", args => ({ title: args[0] as string, content: resolveBuilderInput(args[1]) }), [initializerKinds.value(true, "title", undefined, "string"), stackContent]),
   ],
   ({ title, content }) => viewElement("section", { "data-vune": "Section" }, [
     ...(title === undefined ? [] : [Text(title)]),
@@ -586,7 +586,7 @@ export const Section = defineBuiltinView<{ title?: string; content: ViewValue[] 
 export const List = defineBuiltinView<{ content: ViewValue[] }>(
   "List",
   [
-    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderClosure(args[0] as () => ViewValue) }), [stackContent]),
+    initializer("@ViewBuilder content", args => args.length === 1 && typeof args[0] === "function", args => ({ content: resolveBuilderInput(args[0]) }), [stackContent]),
     initializer("...children", args => args.every(value => typeof value !== "function"), args => ({ content: args.flatMap(stackChildren) })),
   ],
   ({ content }) => viewElement("ul", { "data-vune": "List", style: { listStyle: "none", padding: 0, margin: 0 } }, content),

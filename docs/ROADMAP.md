@@ -24,8 +24,17 @@ The first workspace architecture slice is now implemented:
   environment helpers, and initializer semantics; the public graph barrel stays
   unchanged and focused modules are covered by boundary tests.
 - Type-checker-backed compiler specialization is isolated in its own internal
-  pass for static modifier chains and imported View calls, while unresolved or
-  ambiguous calls retain the dynamic fallback contract.
+  pass. Proven calls use a trusted AOT initializer path, compiler-generated
+  labeled arguments are normalized to runtime slots, simple ViewBuilders are
+  materialized directly, modifier chains use compact fused descriptors, and
+  immutable subtrees are hoisted. Proven intrinsic host trees are additionally
+  lowered into a renderer-neutral compiled template plus identity-preserving
+  dynamic slots; React, Vue, Web DOM, and Web SSR have native template
+  materializers. Unresolved or ambiguous calls retain the guarded/dynamic
+  fallback contract.
+- State dependency metadata can bypass first-render dependency discovery only
+  when a conservative closed-body proof succeeds; opaque helpers and shared
+  State automatically retain runtime collection.
 - The Web renderer is split into shared serialization/DOM contracts, SSR,
   DOM props, hydration, and live DOM reconciliation modules; its public barrel
   remains unchanged and the existing lazy, GeometryReader, hydration, and
@@ -137,14 +146,17 @@ regressions.
 Some useful systems remain explicit experiments until their integration contract
 is settled:
 
-- Declaration-driven specialization now emits a direct initializer-index call
-  for unambiguous same-file `struct ...: View` uses and imported Views with a
-  unique non-variadic TypeScript call signature. Overloaded calls whose choice
-  needs runtime values remain on the dynamic resolver. The runtime also uses a
-  single-declaration fast path and caches safe metadata-driven call shapes,
-  while predicate-only legacy initializers remain dynamic. Statically typed
-  modifier chains are also lowered to one flat `modifiedContent` construction;
-  unknown or non-View receivers retain their original method calls.
+- The first renderer-neutral template/slot IR is implemented for proven host
+  element/fragment structure. Static props/styles/leaves are frozen once and
+  dynamic primitive or custom-View children are slots; renderer-native template
+  hooks bypass generic host traversal while preserving core identity. The next
+  frontier is dynamic host-prop/event slots, keyed `ForEach` templates, and more
+  direct Web patch locations rather than a second renderer-specific language.
+- Declaration-driven specialization already emits trusted initializer-index
+  calls for proven same-file and imported Views, direct arrays for simple
+  ViewBuilders, compact modifier payloads, and module-level static subtrees.
+  Predicate-only legacy initializers, unknown/non-View receivers, unsafe
+  callable types, and ambiguous overloads remain dynamic by design.
 - Legacy layout-engine, coordinate-runtime, observer, builder, and plugin
   facilities remain available from `vune-ui/experimental`; canonical
   `GeometryReader` now owns the cross-renderer measured-host contract while the
@@ -155,7 +167,8 @@ is settled:
 - Modifier performance is benchmarked against raw React styles at 100, 1,000,
   and 10,000 elements with chain depths of 1, 5, 10, and 20. The performance
   suite also measures compiler transforms, State propagation, keyed DOM updates,
-  React/Vue rerenders, SSR, hydration, and retained heap. CI runs the 100/1,000
+  raw React/Vue and Vune adapter rerenders (full, single-item, and keyed reverse),
+  SSR, hydration, and retained heap. CI runs the 100/1,000
   matrix with depth-aware and absolute regression guards; large lists and deeply
   modified trees still establish a measurable need before Vune changes its
   materialization strategy.

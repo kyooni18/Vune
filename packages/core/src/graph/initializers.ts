@@ -5,7 +5,7 @@ import {
   markVuneClosure,
   type VuneClosureKind,
 } from "../closures.js"
-import { isBinding, isStateRef } from "../state.js"
+import { isBinding, isStateRef, type StateRef } from "../state.js"
 import {
   resolveSemanticInitializer,
   type SemanticArgument,
@@ -157,6 +157,10 @@ export interface ViewDefinition<Props extends object = Record<string, unknown>> 
   readonly fields?: readonly ViewFieldDefinition[]
   readonly initializers: readonly InitializerMatch[]
   readonly state?: (props: Props) => Partial<Props>
+  /** Optional compiler-proven dependency list used to bypass runtime State-read discovery. */
+  readonly dependencies?: (props: Props) => readonly StateRef<unknown>[]
+  /** True only when the compiler has proven the dependency list is exhaustive. */
+  readonly dependenciesComplete?: boolean
   readonly intrinsic?: boolean
   readonly body: (props: Props) => ViewValue
 }
@@ -673,6 +677,18 @@ export function resolveBuilderClosure(closure: () => ViewBuilderResult): ViewVal
   return ViewBuilder.buildBlock(markVuneClosure(closure, "viewBuilder")())
 }
 
+/**
+ * Normalize compiler-lowered ViewBuilder input. Optimized compiler output can
+ * pass the already-evaluated builder value directly, avoiding allocation and
+ * immediate execution of a throwaway closure. Dynamic/runtime calls retain
+ * the closure path and therefore the same validation semantics as before.
+ */
+export function resolveBuilderInput(value: unknown): ViewValue[] {
+  return typeof value === "function"
+    ? resolveBuilderClosure(value as () => ViewBuilderResult)
+    : ViewBuilder.buildBlock(value as ViewBuilderResult)
+}
+
 export class ViewType<Props extends object = Record<string, unknown>> {
   readonly name: string
   readonly genericParameters?: string
@@ -722,14 +738,41 @@ export class ViewType<Props extends object = Record<string, unknown>> {
     return this.createNodeFromResolution(resolveSingleDeclaredInitializer(this.target, candidate, args, this.genericParameters, false))
   }
 
-  private createNodeFromResolution(resolution: InitializerResolution): ModifiableViewNode {
-    const props = (resolution.initializer.build?.(resolution.args) ?? {}) as Props
-    validateGenericViewBuilders(this.target, resolution, props as Record<string, unknown>)
+  /**
+   * Trusted AOT fast path. The compiler emits this only after TypeScript and
+   * Vune semantic resolution have selected a concrete initializer and proven
+   * that the argument positions are already normalized. No overload scan,
+   * label normalization, closure-role wrapping, or runtime type scoring is
+   * repeated here. Uncertain calls deliberately stay on createNodeSpecialized.
+   */
+  createNodeCompiled(initializerIndex: number, args: readonly unknown[]): ModifiableViewNode {
+    if (!this.target) throw new TypeError(`View type ${this.name} is not bound to a constructor`)
+    const candidate = this.initializers[initializerIndex]
+    if (!candidate?.parameters) return this.createNode(args)
+    const props = (candidate.build?.(args) ?? {}) as Props
+    return this.materializeProps(props)
+  }
+
+  private materializeProps(props: Props): ModifiableViewNode {
     if (this.definition.intrinsic) {
       const value = this.definition.body(props)
       return isViewNode(value) ? decorate(value) : viewFragment([value as ViewGraphChild])
     }
-    return viewHost(this.name, this, props as Record<string, unknown>, next => this.definition.body(next as Props), this.definition.state as ((props: Record<string, unknown>) => Record<string, unknown>) | undefined)
+    return viewHost(
+      this.name,
+      this,
+      props as Record<string, unknown>,
+      next => this.definition.body(next as Props),
+      this.definition.state as ((props: Record<string, unknown>) => Record<string, unknown>) | undefined,
+      this.definition.dependencies as ((props: Record<string, unknown>) => readonly StateRef<unknown>[]) | undefined,
+      this.definition.dependenciesComplete,
+    )
+  }
+
+  private createNodeFromResolution(resolution: InitializerResolution): ModifiableViewNode {
+    const props = (resolution.initializer.build?.(resolution.args) ?? {}) as Props
+    validateGenericViewBuilders(this.target, resolution, props as Record<string, unknown>)
+    return this.materializeProps(props)
   }
 }
 

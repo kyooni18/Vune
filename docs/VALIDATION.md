@@ -54,6 +54,18 @@ View/ForEach construction, State propagation, Web DOM reconciliation, keyed
 updates, hydration, React/Vue rerenders, conditional subtrees, burst updates,
 and LazyVStack scrolling.
 
+Client renderer measurements include matching raw React and raw Vue fixtures
+for three update shapes: a full-tree value change, a single-item change, and a
+keyed reverse. Vune adapter timings are reported beside those baselines and CI
+can enforce `VUNE_BENCH_REACT_CLIENT_RATIO` and
+`VUNE_BENCH_VUE_CLIENT_RATIO`. The suite also compares the guarded initializer
+path with the trusted compiler-resolved `createNodeCompiled` path so a future
+semantic change cannot silently reintroduce runtime overload work. It also
+compares ordinary dynamic host-graph construction with compiled template
+instantiation, while core/compiler tests verify template immutability, generic
+fallback rendering, native renderer-hook dispatch, custom-View slot fallback,
+and identity parity.
+
 DOM benchmark rounds run sequentially so independent JSDOM instances do not
 contend for the same event loop, microtask queue, and garbage collector. In the
 final CI-mode validation the 1,000-node Web reconciliation ratio remained around

@@ -9,6 +9,8 @@ import * as initializers from "../packages/core/dist/graph/initializers.js"
 
 test("the graph barrel preserves focused node, modifier, renderer, and initializer boundaries", () => {
   assert.strictEqual(core.viewElement, nodes.viewElement)
+  assert.strictEqual(core.compiledTemplate, nodes.compiledTemplate)
+  assert.strictEqual(core.defineCompiledTemplate, nodes.defineCompiledTemplate)
   assert.strictEqual(core.ForeignComponent, nodes.ForeignComponent)
   assert.strictEqual(core.modifiedContent, modifiers.modifiedContent)
   assert.strictEqual(core.modifier, modifiers.modifier)

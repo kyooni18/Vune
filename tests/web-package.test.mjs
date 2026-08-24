@@ -13,6 +13,8 @@ import {
   SafeArea,
   ScrollView,
   State,
+  compiledTemplate,
+  defineCompiledTemplate,
   viewElement,
 } from "../packages/core/dist/index.js"
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
@@ -26,6 +28,25 @@ const Text = defineBuiltinView(
 test("@vune-ui/web renders the same core graph without React", () => {
   assert.equal(renderToHTML(Text("Hello").padding(4)), '<span style="padding:4px">Hello</span>')
   assert.equal(renderToHTML(Text("Styled").className(["card", false, "active"])), '<span class="card active">Styled</span>')
+})
+
+test("@vune-ui/web materializes compiled templates in SSR and DOM modes", () => {
+  const template = defineCompiledTemplate({
+    kind: "element", type: "div", props: { class: "compiled" }, children: [
+      { kind: "element", type: "span", props: null, children: ["Static"] },
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 1, "element", 0] }] },
+    ],
+  }, 1)
+  const value = compiledTemplate(template, ["Web template"])
+  assert.equal(renderToHTML(value), '<div class="compiled"><span>Static</span><span>Web template</span></div>')
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(value, container)
+  assert.equal(container.innerHTML, '<div class="compiled"><span>Static</span><span>Web template</span></div>')
+  unmount()
+  dom.window.close()
 })
 
 test("@vune-ui/web preserves raw HTML attributes and object styles", () => {
