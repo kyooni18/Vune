@@ -3,6 +3,7 @@ import {
   cloneElement,
   createElement,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -189,6 +190,18 @@ interface ReactiveGraph<T> {
   readonly transaction?: Transaction
 }
 
+let nextStateDependencyId = 1
+const stateDependencyIds = new WeakMap<StateRef<unknown>, number>()
+
+function stateDependencyId(state: StateRef<unknown>): number {
+  let id = stateDependencyIds.get(state)
+  if (id === undefined) {
+    id = nextStateDependencyId++
+    stateDependencyIds.set(state, id)
+  }
+  return id
+}
+
 function useReactiveGraph<T>(
   compute: () => T,
   staticDependencies?: () => readonly StateRef<unknown>[],
@@ -207,11 +220,20 @@ function useReactiveGraph<T>(
     ? compute()
     : collectStateReads(compute, dependency => dependencies.add(dependency)))
   previousVersions.current = new Map([...dependencies].map(dependency => [dependency, stateVersion(dependency)]))
-  useSyncExternalStore(
-    listener => {
+  // Subscribe keyed by the dependency-set identity so useSyncExternalStore
+  // only re-subscribes when the set actually changes instead of every commit.
+  const dependencyKey = [...dependencies].map(stateDependencyId).sort((left, right) => left - right).join(",")
+  const subscribe = useMemo(
+    () => (listener: () => void) => {
       const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => listener()))
       return () => unsubscribers.forEach(unsubscribe => unsubscribe())
     },
+    // `dependencies` is rebuilt whenever the discovered set changes, which is
+    // exactly captured by dependencyKey.
+    [dependencyKey],
+  )
+  useSyncExternalStore(
+    subscribe,
     () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
     () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
   )

@@ -558,11 +558,19 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       activeRefs = next
     }
     const updateGeometry = () => {
-      if (stopped || context.geometryIndex === 0) return
+      if (stopped || context.geometryIndex === 0) {
+        // GeometryReaders removed since the last pass must not leave stale
+        // frames behind: a recycled render-order index would otherwise
+        // inherit the removed reader's measurements.
+        if (context.geometries.size > 0) context.geometries.clear()
+        return
+      }
       let changed = false
+      const seen = new Set<number>()
       container.querySelectorAll<HTMLElement>('[data-vune="GeometryReader"][data-vune-geometry]').forEach(element => {
         const index = Number(element.dataset.vuneGeometry)
         if (!Number.isInteger(index)) return
+        seen.add(index)
         const next = geometryFromElement(element)
         const previous = context.geometries.get(index)
         if (!previous || !sameGeometry(previous, next)) {
@@ -570,6 +578,12 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           changed = true
         }
       })
+      for (const index of [...context.geometries.keys()]) {
+        if (!seen.has(index)) {
+          context.geometries.delete(index)
+          changed = true
+        }
+      }
       if (changed && !geometryScheduled) {
         geometryScheduled = true
         queueMicrotask(() => {
@@ -608,7 +622,6 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
     }
     const observeLazyViewport = () => {
-      if (context.lazyNodes.size === 0) return
       const targets: EventTarget[] = []
       const window = document.defaultView
       if (window) targets.push(window)
@@ -619,15 +632,31 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         const parent = node ? lazyScrollParent(element, node.axis) : null
         if (parent) targets.push(parent)
       })
+      // Detached or replaced scroll parents keep handler references alive
+      // until unmount unless pruned on every pass.
+      const listener = scheduleLazyMeasure as EventListener
+      for (const target of [...lazyViewportTargets]) {
+        if (targets.includes(target)) continue
+        lazyViewportTargets.delete(target)
+        target.removeEventListener("scroll", listener)
+        target.removeEventListener("resize", listener)
+      }
       for (const target of targets) {
         if (lazyViewportTargets.has(target)) continue
-        const listener = scheduleLazyMeasure as EventListener
         target.addEventListener("scroll", listener, { passive: true })
         target.addEventListener("resize", listener)
         lazyViewportTargets.add(target)
+      }
+      // The cleanup list mirrors the live target set; the shared listener is
+      // removed per remaining target when the mount is disposed.
+      lazyViewportCleanups.length = 0
+      if (lazyViewportTargets.size > 0) {
         lazyViewportCleanups.push(() => {
-          target.removeEventListener("scroll", listener)
-          target.removeEventListener("resize", listener)
+          for (const target of lazyViewportTargets) {
+            target.removeEventListener("scroll", listener)
+            target.removeEventListener("resize", listener)
+          }
+          lazyViewportTargets.clear()
         })
       }
     }

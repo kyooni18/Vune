@@ -59,6 +59,12 @@ export function markVuneClosure<T extends (...args: any[]) => any>(closure: T, k
   if (current !== undefined) {
     const wrapped = ((...args: any[]) => closure(...args)) as VuneClosure<T>
     Object.defineProperty(wrapped, vuneClosureKind, { configurable: false, enumerable: false, value: kind })
+    // Preserve overload variants across re-marking so closureForKind and
+    // initializer scoring keep working on the wrapped closure.
+    const variants = ownDataValue(closure, vuneClosureVariants)
+    if (variants !== undefined && typeof variants === "object" && variants !== null) {
+      Object.defineProperty(wrapped, vuneClosureVariants, { configurable: false, enumerable: false, value: variants })
+    }
     return wrapped
   }
   try {

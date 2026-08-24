@@ -201,7 +201,9 @@ export function withRenderTransaction<Result>(transaction: Transaction | undefin
   try {
     return body()
   } finally {
-    renderTransactionStack.pop()
+    // Only pop our own frame; a body that left a foreign frame on the stack
+    // must not have it silently discarded.
+    if (renderTransactionStack.at(-1) === transaction) renderTransactionStack.pop()
   }
 }
 
@@ -212,7 +214,15 @@ export interface AnimationCSSStyle {
   readonly transitionDelay: string
 }
 
-/** Initial web-wrapper timing translation. This is intentionally not the long-term animation engine. */
+/**
+ * Initial web-wrapper timing translation. This is intentionally not the
+ * long-term animation engine.
+ *
+ * Known limitation: CSS transitions cannot express iteration, so descriptor
+ * `repeatCount`/`autoreverses` (including `repeatForever`) have no effect in
+ * this translation and repeating animations render once until Vune ships its
+ * own clock/interpolator backend.
+ */
 export function animationCSSStyle(animation: Animation | null | undefined): AnimationCSSStyle | undefined {
   if (!animation) return undefined
   const descriptor = animation.descriptor

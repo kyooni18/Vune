@@ -26,6 +26,11 @@ import type {
 
 const initializerSpecializations = new WeakMap<object, Map<string, InitializerMatch>>()
 const initializerSpecializationEligibility = new WeakMap<object, boolean>()
+// Cache keys embed argument shapes, including short string values, so distinct
+// dynamic inputs (e.g. Text(userInput)) would otherwise retain one entry per
+// distinct string for the process lifetime. Evicting everything above the cap
+// keeps the hot path allocation-free while bounding memory.
+const maximumSpecializationsPerTarget = 512
 
 function ownPropertyDescriptor(value: object, key: PropertyKey): PropertyDescriptor | undefined {
   try {
@@ -633,9 +638,9 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
       tied.map(candidate => candidate.candidate.signature),
     )
   }
-  if (cacheKey && cacheTarget && canSpecialize(candidates)) {
-    initializerSpecializationEligibility.set(cacheTarget, true)
+  if (cacheKey && cacheTarget) {
     const cache = initializerSpecializations.get(cacheTarget) ?? new Map<string, InitializerMatch>()
+    if (cache.size >= maximumSpecializationsPerTarget) cache.clear()
     cache.set(cacheKey, match.candidate)
     initializerSpecializations.set(cacheTarget, cache)
   }

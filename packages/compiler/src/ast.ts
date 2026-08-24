@@ -109,7 +109,16 @@ function skipComment(source: string, index: number): number {
 function regexCanStart(source: string, index: number): boolean {
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (/\s/.test(source[cursor])) continue
-    return "([{=,:;!?&|+-*%^~<>".includes(source[cursor])
+    if ("([{=,:;!?&|+-*%^~<>".includes(source[cursor])) return true
+    if (/[A-Za-z_$]/.test(source[cursor])) {
+      const end = cursor + 1
+      while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
+      const word = source.slice(cursor + 1, end)
+      // Same keyword set as the scanner: a regex literal may follow an
+      // expression keyword, but not an identifier or property access.
+      return new Set(["case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw", "typeof", "void", "yield", "await"]).has(word)
+    }
+    return false
   }
   return true
 }

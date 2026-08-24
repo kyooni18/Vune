@@ -325,10 +325,14 @@ async function main() {
   }
 
   assertGitClean()
+
+  // Validate before mutating manifests: a failed check must not leave the
+  // working tree dirty at bumped versions, which would block a resumable
+  // rerun behind the assertGitClean gate above.
+  runChecks()
   if (options.bump || options.version) syncVersions(version)
   printPlan(version, tag)
 
-  runChecks()
   const tarballs = packAll()
 
   for (const target of releaseTargets) {

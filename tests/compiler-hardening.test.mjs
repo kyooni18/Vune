@@ -263,3 +263,83 @@ LazyGrid({ columns: 2, estimatedItemSize: 44 }) { Text("B") }`
   assert.match(output, /LazyGrid\.viewType\.createNodeCompiled\(0,/)
   parses(output)
 })
+
+test("implicit member arguments survive static modifier chain specialization", () => {
+  // `.red` is not valid TypeScript, so the checker recovers with a zero-width
+  // base; the emitted argument must still be the lowered string literal.
+  const source = `import { Text } from "vune-ui"\nconst view = Text("x").foregroundStyle(.red)`
+  const output = transformVuneSource(source, "ImplicitMemberModifier.vune.ts")
+  assert.match(output, /\[\["foregroundStyle", \["red"\]\]\]/)
+  assert.doesNotMatch(output, /\[red\]/)
+  parses(output)
+})
+
+test("ternary implicit members lower in labeled arguments and keep optional chaining intact", () => {
+  const output = transformVuneSource(
+    'VStack(alignment: flag ? .center : .leading) { Text("a") }',
+    "TernaryMember.vune.ts",
+  )
+  assert.match(output, /alignment: flag \? "center" : "leading"/)
+  parses(output)
+
+  const chaining = transformVuneSource('const name = obj?.value?.name ?? "fallback"', "OptionalChaining.ts")
+  assert.equal(chaining, 'const name = obj?.value?.name ?? "fallback"')
+})
+
+test("single-line struct initializer bodies produce valid field assignments", () => {
+  const source = `struct Gauge: View {
+  var v: number
+  init(v: number) { if (v < 0) { self.v = 0 } else { self.v = v } }
+  var body: some View { Text(String(v)) }
+}`
+  const output = transformVuneSource(source, "SingleLineInit.vune.ts")
+  // The closing braces of the single-line body must not be swallowed into
+  // the field expression; the final assignment wins.
+  assert.match(output, /return \{ v: v \} \}/)
+  parses(output)
+})
+
+test("mixed State and view declarators hoist without corrupting sibling edits", () => {
+  const source = `import { State } from "vune-ui"
+import { view } from "@vune-ui/react"
+const count = State(0), app = view(() => Text(String(count.value)))`
+  const output = transformVuneSource(source, "MixedDeclarators.vune.ts")
+  // The State declaration is removed and the view call gains its state body
+  // without leaving fragments of the original statement behind.
+  assert.match(output, /const\s+app = view\(\{\s*state:/)
+  assert.doesNotMatch(output, /\)\)tate\(0\)/)
+  assert.doesNotMatch(output, /view\([^)]*\)[a-zA-Z]/)
+  assert.doesNotMatch(output, /^const count = State\(0\)/m)
+  parses(output)
+})
+
+test("spread arguments and member access survive static modifier specialization", () => {
+  const source = `import { Text } from "vune-ui"\nconst values = [8]\nconst view = Text("x").padding(...values)`
+  const output = transformVuneSource(source, "SpreadModifier.vune.ts")
+  assert.match(output, /\[\["padding", \[\.\.\.values\]\]\]/)
+  assert.doesNotMatch(output, /\["values"\]/)
+  parses(output)
+})
+
+test("implicit-member lowering never rewrites string or comment content", () => {
+  const source = `import { Text } from "vune-ui"
+// return .red inside a comment
+const view = Text("Press return .red to confirm")`
+  const output = transformVuneSource(source, "ProseMember.vune.ts")
+  // The prose keeps its literal `.red`; only authored implicit members lower.
+  assert.match(output, /Press return \.red to confirm/)
+  assert.match(output, /return \.red inside a comment/)
+  assert.doesNotMatch(output, /"red" to confirm/)
+  parses(output)
+})
+
+test("struct field assignments continue across operator-terminated lines", () => {
+  const source = `struct Banner: View {
+  var title: string
+  init(prefix: string) { self.title = prefix +\n  " World" }
+  var body: some View { Text(title) }
+}`
+  const output = transformVuneSource(source, "MultilineInit.vune.ts")
+  assert.match(output, /title: prefix \+\s+" World"/)
+  parses(output)
+})

@@ -1307,3 +1307,19 @@ test("the shared semantic resolver applies labels, roles, types, and ambiguity a
   assert.equal(ambiguous.ok, false)
   assert.equal(!ambiguous.ok && ambiguous.failure.kind, "ambiguous")
 })
+
+test("re-marking an overloaded closure preserves its dispatch variants", () => {
+  const builder = () => CoreText("builder")
+  const action = () => undefined
+  const overloaded = overloadClosure(builder, action)
+  // Initializer resolution re-marks closures when a candidate parameter kind
+  // differs from the closure's current role; the wrapper must keep the
+  // variant table so overloadClosure dispatch and scoring keep working.
+  const reMarked = markVuneClosure(overloaded, "viewBuilder")
+  const variants = closureVariantsOf(reMarked)
+  assert.ok(variants)
+  assert.equal(variants.viewBuilder, builder)
+  assert.equal(variants.action, action)
+  assert.equal(closureForKind(reMarked, "action"), action)
+  assert.equal(closureKindOf(reMarked), "viewBuilder")
+})

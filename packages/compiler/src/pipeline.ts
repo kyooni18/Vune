@@ -17,12 +17,9 @@ import {
   type BuilderCall,
 } from "./scanner.js"
 import * as Core from "@vune-ui/core"
-import { resolveSemanticCall, swiftUIAnimationFactoryArgumentLabels, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
+import { resolveSemanticCall, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
+import { lowerImplicitMemberShorthand, lowerNamedAnimationFactoryCalls, lowerShorthand } from "./shorthand.js"
 import { hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
-
-const nonBindingDollarNames = new Set([
-  "attrs", "data", "emit", "el", "forceUpdate", "nextTick", "options", "parent", "props", "refs", "root", "slots", "watch",
-])
 
 /** Compiler-facing view metadata is read from the same ViewType as runtime. */
 const canonicalInitializerSymbols = new Map<string, readonly SemanticInitializerSymbol[]>()
@@ -176,134 +173,6 @@ function closureRoleForKnownCall(
   let positional = 0
   for (const argument of call.arguments.slice(0, index)) if (!argument.label) positional += 1
   return role(parameters[positional]?.kind)
-}
-
-function isIdentifierDeclaration(node: ts.Identifier): boolean {
-  const parent = node.parent
-  if (ts.isVariableDeclaration(parent) && parent.name === node) return true
-  if (ts.isParameter(parent) && parent.name === node) return true
-  if (ts.isBindingElement(parent) && parent.name === node) return true
-  if (ts.isFunctionDeclaration(parent) && parent.name === node) return true
-  if (ts.isClassDeclaration(parent) && parent.name === node) return true
-  if (ts.isImportClause(parent) && parent.name === node) return true
-  if (ts.isImportSpecifier(parent) && parent.name === node) return true
-  if (ts.isNamespaceImport(parent) && parent.name === node) return true
-  if (ts.isExportSpecifier(parent) && parent.name === node) return true
-  return false
-}
-
-function isBindingShorthandIdentifier(node: ts.Identifier): boolean {
-  if (!node.text.startsWith("$") || node.text.length === 1) return false
-  if (nonBindingDollarNames.has(node.text.slice(1)) || isIdentifierDeclaration(node)) return false
-  const parent = node.parent
-  if (ts.isPropertyAccessExpression(parent) && (parent.expression === node || parent.name === node)) return false
-  if (ts.isElementAccessExpression(parent) && parent.expression === node) return false
-  if (ts.isPropertyAssignment(parent) && parent.name === node) return false
-  if (ts.isMethodDeclaration(parent) && parent.name === node) return false
-  if (ts.isPropertyDeclaration(parent) && parent.name === node) return false
-  if (ts.isMethodSignature(parent) && parent.name === node) return false
-  if (ts.isPropertySignature(parent) && parent.name === node) return false
-  if (ts.isShorthandPropertyAssignment(parent)) return false
-  return true
-}
-
-/**
- * Lower only actual identifier nodes. The source is intentionally edited by
- * span so the rest of Vune's syntax lowering keeps its original formatting.
- * This prevents member properties, declarations, strings, comments, regexes,
- * and identifiers containing `$` from being mistaken for projections.
- */
-function lowerShorthand(source: string): string {
-  const file = ts.createSourceFile("vune-shorthand.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const edits: Array<{ start: number; end: number; replacement: string }> = []
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && isBindingShorthandIdentifier(node)) {
-      edits.push({ start: node.getStart(file), end: node.end, replacement: `Binding(${node.text.slice(1)})` })
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(file)
-  let result = source
-  for (const edit of edits.sort((left, right) => right.start - left.start)) {
-    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
-  }
-  return result
-}
-
-/**
- * Lower Swift-style implicit member expressions used by the Vune authoring
- * language. Bare enum-like cases become inert string values, matching the
- * existing Alignment/Edge-style runtime representation. Animation factories
- * keep their value semantics and are qualified with Animation instead.
- */
-function lowerImplicitMemberShorthand(source: string): string {
-  const animationFactories = new Set(["linear", "easeIn", "easeOut", "easeInOut", "spring", "interactiveSpring", "smooth", "snappy", "bouncy"])
-  const animationProperties = new Set(["default"])
-  let result = source.replace(
-    /(^|[(:,=]\s*)\.([A-Za-z_$][A-Za-z0-9_$]*)\s*(?=\()/g,
-    (match, prefix: string, name: string) => animationFactories.has(name) ? `${prefix}Animation.${name}` : match,
-  )
-  result = lowerNamedAnimationFactoryCalls(result)
-  result = result.replace(
-    /(^|[(:,=]\s*)\.([A-Za-z_$][A-Za-z0-9_$]*)(?!\s*\()/g,
-    (_match, prefix: string, name: string) => {
-      if (animationProperties.has(name)) return `${prefix}Animation.${name}`
-      // SwiftUI exposes common timing curves as static Animation values as
-      // well as duration-taking factories. The JavaScript runtime keeps only
-      // the factory form, so an implicit member value lowers to its zero-arg
-      // equivalent without changing Vune authoring syntax.
-      if (animationFactories.has(name)) return `${prefix}Animation.${name}()`
-      return `${prefix}${JSON.stringify(name)}`
-    },
-  )
-  return result
-}
-
-function lowerNamedAnimationFactoryCalls(source: string): string {
-  let output = source
-  let iterations = 0
-  while (true) {
-    if (++iterations > output.length + 1) throw syntaxError("Animation argument lowering did not advance", 0)
-    let candidate: { readonly name: string; readonly open: number; readonly close: number; readonly labels: readonly string[] } | undefined
-    for (let cursor = 0; cursor < output.length; cursor += 1) {
-      const index = output.indexOf("Animation.", cursor)
-      if (index < 0) break
-      const name = identifierAt(output, index + "Animation.".length)
-      if (!name) { cursor = index + 9; continue }
-      const labels = swiftUIAnimationFactoryArgumentLabels(name.name)
-      const open = skipTrivia(output, name.end)
-      if (!labels || output[open] !== "(") { cursor = name.end; continue }
-      const close = matching(output, open, "(", ")")
-      const argumentsSource = output.slice(open + 1, close)
-      if (splitTopLevel(argumentsSource).some(argument => topLevelColon(argument) >= 0)) candidate = { name: name.name, open, close, labels }
-      cursor = close
-    }
-    if (!candidate) return output
-
-    const entries = splitTopLevel(output.slice(candidate.open + 1, candidate.close)).map(value => {
-      const colon = topLevelColon(value)
-      const possibleLabel = colon < 0 ? undefined : value.slice(skipTrivia(value, 0), colon).trim()
-      const label = possibleLabel && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(possibleLabel) ? possibleLabel : undefined
-      return { label, value: (label ? value.slice(colon + 1) : value).trim() }
-    })
-    const slots: Array<string | undefined> = []
-    let positionalIndex = 0
-    for (const entry of entries) {
-      if (!entry.label) {
-        if (positionalIndex >= candidate.labels.length) throw syntaxError(`Too many arguments for Animation.${candidate.name}(...)`, candidate.open)
-        slots[positionalIndex++] = entry.value
-        continue
-      }
-      const index = candidate.labels.indexOf(entry.label)
-      if (index < 0) throw syntaxError(`Unknown labeled argument ${entry.label}: in Animation.${candidate.name}(...)`, candidate.open)
-      if (slots[index] !== undefined) throw syntaxError(`Duplicate argument ${entry.label}: in Animation.${candidate.name}(...)`, candidate.open)
-      slots[index] = entry.value
-    }
-    let end = slots.length
-    while (end > 0 && slots[end - 1] === undefined) end -= 1
-    const lowered = Array.from({ length: end }, (_value, index) => slots[index] ?? "undefined").join(", ")
-    output = output.slice(0, candidate.open + 1) + lowered + output.slice(candidate.close)
-  }
 }
 
 function containsAwaitKeyword(source: string): boolean {
@@ -667,13 +536,65 @@ function structInitializerPlan(parameterSource: string, bodySource: string): Str
     trailing: index === parsedParameters.length - 1 && (parameter.kind === "viewBuilder" || parameter.kind === "action"),
     labelRequired: parameter.label !== undefined && !(index === parsedParameters.length - 1 && (parameter.kind === "viewBuilder" || parameter.kind === "action")),
   }))
-  const assignments = new Map<string, string>()
-  for (const match of bodySource.matchAll(/self\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)) assignments.set(match[1], match[2].trim())
+  const assignments = structFieldAssignments(bodySource)
   const delegationMatch = /\bself\.init\s*\(/.exec(bodySource)
   if (!delegationMatch) return { parameters, assignments }
   const open = bodySource.indexOf("(", delegationMatch.index)
   const close = matching(bodySource, open, "(", ")")
   return { parameters, assignments, delegation: splitTopLevel(bodySource.slice(open + 1, close)).filter(Boolean) }
+}
+
+/**
+ * Collect `self.<field> = <value>` assignments from an initializer body with
+ * quote-, comment-, and nesting-aware value boundaries. A naive
+ * line-oriented capture corrupts single-line bodies such as
+ * `{ if (v < 0) { self.v = 0 } else { self.v = v } }` by swallowing the
+ * closing braces into the field expression.
+ */
+function structFieldAssignments(bodySource: string): ReadonlyMap<string, string> {
+  const assignments = new Map<string, string>()
+  let cursor = 0
+  while (cursor < bodySource.length) {
+    const character = bodySource[cursor]
+    if (character === '"' || character === "'" || character === "`") { cursor = skipString(bodySource, cursor); continue }
+    if (character === "/" && (bodySource[cursor + 1] === "/" || bodySource[cursor + 1] === "*")) { cursor = skipComment(bodySource, cursor); continue }
+    if (character !== "s") { cursor += 1; continue }
+    const header = /^self\.[A-Za-z_$][A-Za-z0-9_$]*\s*=(?![=>])/.exec(bodySource.slice(cursor))
+    if (!header || (cursor > 0 && /[\w$.]/.test(bodySource[cursor - 1]))) { cursor += 1; continue }
+    const name = /^self\.([A-Za-z_$][A-Za-z0-9_$]*)/.exec(header.input)?.[1]
+    if (!name) { cursor += 1; continue }
+    let valueStart = cursor + header[0].length
+    while (valueStart < bodySource.length && /\s/.test(bodySource[valueStart])) valueStart += 1
+    let parens = 0
+    let brackets = 0
+    let braces = 0
+    let end = valueStart
+    while (end < bodySource.length) {
+      const valueCharacter = bodySource[end]
+      if (valueCharacter === '"' || valueCharacter === "'" || valueCharacter === "`") { end = skipString(bodySource, end); continue }
+      if (valueCharacter === "/" && (bodySource[end + 1] === "/" || bodySource[end + 1] === "*")) { end = skipComment(bodySource, end); continue }
+      if (valueCharacter === "(") { parens += 1 }
+      else if (valueCharacter === "[") { brackets += 1 }
+      else if (valueCharacter === "{") { braces += 1 }
+      else if (valueCharacter === ")") { if (parens === 0) break; parens -= 1 }
+      else if (valueCharacter === "]") { if (brackets === 0) break; brackets -= 1 }
+      else if (valueCharacter === "}") { if (braces === 0) break; braces -= 1 }
+      else if ((valueCharacter === ";" || valueCharacter === "\n") && parens === 0 && brackets === 0 && braces === 0) {
+        if (valueCharacter !== "\n") break
+        // Continue multi-line expressions whose current line ends with a
+        // binary operator or an open assignment (`self.title = "Hello" +\n"`).
+        if (!/[+\-*/%&|^<>?:=]$/.test(bodySource.slice(valueStart, end).trimEnd())) break
+        let next = end + 1
+        while (next < bodySource.length && /\s/.test(bodySource[next])) next += 1
+        end = next
+        continue
+      }
+      end += 1
+    }
+    assignments.set(name, bodySource.slice(valueStart, end).trim())
+    cursor = Math.max(end, cursor + header[0].length)
+  }
+  return assignments
 }
 
 function structArgument(source: string): { readonly label?: string; readonly value: string } {
@@ -1280,55 +1201,79 @@ function lowerTopLevelState(source: string): string {
   if (statesByView.size === 0) return source
 
   const hoisted = new Set([...statesByView.values()].flat().map(state => state.declaration))
-  const edits: Array<{ start: number; end: number; replacement: string }> = []
+  const hoistedSpans: Array<{ readonly start: number; readonly end: number }> = []
+  const removalEdits: Array<{ start: number; end: number; replacement: string }> = []
 
-  // Remove only declarations that were actually assigned to one View. Mixed
-  // declarations retain their non-State siblings.
+  // Remove each hoisted declarator individually instead of rewriting the whole
+  // variable statement from original source text. A whole-statement rewrite
+  // clobbers any nested view() replacement inside a preserved sibling
+  // declarator (e.g. `const count = State(0), app = view(() => Text(count))`).
   for (const statement of file.statements) {
     if (!ts.isVariableStatement(statement)) continue
-    const removed = statement.declarationList.declarations.filter(declaration => hoisted.has(declaration))
-    if (removed.length === 0) continue
-    const preserved = statement.declarationList.declarations.filter(declaration => !hoisted.has(declaration))
-    if (preserved.length === 0) {
-      edits.push({ start: statement.getStart(file), end: statement.end, replacement: "" })
+    const declarations = statement.declarationList.declarations
+    const removedIndexes = declarations.map((declaration, index) => hoisted.has(declaration) ? index : -1).filter(index => index >= 0)
+    if (removedIndexes.length === 0) continue
+    const hasPreserved = declarations.some(declaration => !hoisted.has(declaration))
+    if (!hasPreserved) {
+      removalEdits.push({ start: statement.getStart(file), end: statement.end, replacement: "" })
+      for (const declaration of declarations) {
+        if (!hoisted.has(declaration)) continue
+        hoistedSpans.push({ start: declaration.getStart(file), end: declaration.end })
+      }
       continue
     }
-    const keyword = (statement.declarationList.flags & ts.NodeFlags.Let) !== 0 ? "let" : (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 ? "const" : "var"
-    const prefix = source.slice(statement.getStart(file), statement.declarationList.getStart(file))
-    const semicolon = source.slice(statement.getStart(file), statement.end).trimEnd().endsWith(";") ? ";" : ""
-    edits.push({
-      start: statement.getStart(file),
-      end: statement.end,
-      replacement: `${prefix}${keyword} ${preserved.map(declaration => declaration.getText(file)).join(", ")}${semicolon}`,
+    for (const index of removedIndexes) {
+      const declaration = declarations[index]
+      let start = declaration.getStart(file)
+      let end = declaration.end
+      const trailingSeparator = /^\s*,/.exec(source.slice(end))
+      if (trailingSeparator) end += trailingSeparator[0].length
+      else {
+        const leadingSeparator = /,\s*$/.exec(source.slice(0, start))
+        if (leadingSeparator) start -= leadingSeparator[0].length
+      }
+      removalEdits.push({ start, end, replacement: "" })
+      hoistedSpans.push({ start: declaration.getStart(file), end: declaration.end })
+    }
+  }
+
+  // A view replacement lexically inside a removed State declarator cannot be
+  // applied safely alongside the removal; leave that call on the runtime path.
+  const viewEdits = [...statesByView]
+    .flatMap(([viewIndex]) => {
+      const call = views[viewIndex]
+      if (!call) return []
+      if (hoistedSpans.some(span => call.getStart(file) < span.end && span.start < call.end)) return []
+      return [viewIndex]
     })
-  }
+    .map(viewIndex => {
+      const call = views[viewIndex]
+      const argument = call.arguments[0]
+      if (!argument || call.arguments.length !== 1) return undefined
+      const callee = call.expression.getText(file)
+      const body = argument.getText(file)
+      const unwrapped = unwrapTsExpression(argument)
+      const functionBody = ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)
+      const hasProps = functionBody && unwrapped.parameters.length > 0
+      const names = statesByView.get(viewIndex)!.map(state => state.name!)
+      const declarations = statesByView.get(viewIndex)!
+        .sort((left, right) => left.declaration.getStart(file) - right.declaration.getStart(file))
+        .map(state => `const ${state.name} = ${state.initializer.getText(file)};`)
+        .join(" ")
+      const renderedBody = functionBody ? `((${body})(${hasProps ? "props" : ""}))` : `(${body})`
+      const bodyParameters = hasProps ? `({ ${names.join(", ")} }, props)` : `({ ${names.join(", ")} })`
+      const dependencyParameters = `({ ${names.join(", ")} })`
+      const ownedNames = new Set(names)
+      const dependenciesComplete = !hasProps && hasCompleteStaticStateDependencies(argument, ownedNames, allNames, vuneValues.values, vuneValues.namespaces)
+      const completeness = dependenciesComplete ? `, dependenciesComplete: true` : ""
+      const replacement = `${callee}({ state: () => { ${declarations} return { ${names.join(", ")} } }, dependencies: ${dependencyParameters} => [${names.join(", ")}]${completeness}, body: ${bodyParameters} => ${renderedBody} })`
+      return { start: call.getStart(file), end: call.end, replacement }
+    })
+    .filter((edit): edit is { start: number; end: number; replacement: string } => edit !== undefined)
 
-  for (const [viewIndex, ownedStates] of statesByView) {
-    const call = views[viewIndex]
-    const argument = call.arguments[0]
-    if (!argument || call.arguments.length !== 1) continue
-    const callee = call.expression.getText(file)
-    const body = argument.getText(file)
-    const unwrapped = unwrapTsExpression(argument)
-    const functionBody = ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)
-    const hasProps = functionBody && unwrapped.parameters.length > 0
-    const names = ownedStates.map(state => state.name!)
-    const declarations = ownedStates
-      .sort((left, right) => left.declaration.getStart(file) - right.declaration.getStart(file))
-      .map(state => `const ${state.name} = ${state.initializer.getText(file)};`)
-      .join(" ")
-    const renderedBody = functionBody ? `((${body})(${hasProps ? "props" : ""}))` : `(${body})`
-    const bodyParameters = hasProps ? `({ ${names.join(", ")} }, props)` : `({ ${names.join(", ")} })`
-    const dependencyParameters = `({ ${names.join(", ")} })`
-    const ownedNames = new Set(names)
-    const dependenciesComplete = !hasProps && hasCompleteStaticStateDependencies(argument, ownedNames, allNames, vuneValues.values, vuneValues.namespaces)
-    const completeness = dependenciesComplete ? `, dependenciesComplete: true` : ""
-    const replacement = `${callee}({ state: () => { ${declarations} return { ${names.join(", ")} } }, dependencies: ${dependencyParameters} => [${names.join(", ")}]${completeness}, body: ${bodyParameters} => ${renderedBody} })`
-    edits.push({ start: call.getStart(file), end: call.end, replacement })
-  }
-
+  const edits = [...removalEdits, ...viewEdits].sort((left, right) => right.start - left.start)
   let result = source
-  for (const edit of edits.sort((left, right) => right.start - left.start)) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+  for (const edit of edits) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
   return result
 }
 

@@ -31,30 +31,37 @@ function takeValue(argument, index, longName) {
   return undefined
 }
 
-for (let index = 1; index < argv.length; index += 1) {
-  const argument = argv[index]
-  if (argument === '--force') options.force = true
-  else if (argument === '--no-install' || argument === '--skip-install') options.noInstall = true
-  else if (argument === '--local') options.local = true
-  else if (argument === '--help' || argument === '-h') options.help = true
-  else {
-    const packageManager = takeValue(argument, index, '--package-manager') ?? takeValue(argument, index, '--pm')
-    const localRoot = takeValue(argument, index, '--local-root')
-    const renderer = takeValue(argument, index, '--renderer')
-    if (packageManager) {
-      options.packageManager = packageManager.value
-      index += packageManager.consumed
-    } else if (localRoot) {
-      options.local = true
-      options.localRoot = localRoot.value
-      index += localRoot.consumed
-    } else if (renderer) {
-      options.renderer = renderer.value
-      index += renderer.consumed
-    } else {
-      positionals.push(argument)
+try {
+  for (let index = 1; index < argv.length; index += 1) {
+    const argument = argv[index]
+    if (argument === '--force') options.force = true
+    else if (argument === '--no-install' || argument === '--skip-install') options.noInstall = true
+    else if (argument === '--local') options.local = true
+    else if (argument === '--help' || argument === '-h') options.help = true
+    else {
+      const packageManager = takeValue(argument, index, '--package-manager') ?? takeValue(argument, index, '--pm')
+      const localRoot = takeValue(argument, index, '--local-root')
+      const renderer = takeValue(argument, index, '--renderer')
+      if (packageManager) {
+        options.packageManager = packageManager.value
+        index += packageManager.consumed
+      } else if (localRoot) {
+        options.local = true
+        options.localRoot = localRoot.value
+        index += localRoot.consumed
+      } else if (renderer) {
+        options.renderer = renderer.value
+        index += renderer.consumed
+      } else {
+        positionals.push(argument)
+      }
     }
   }
+} catch (error) {
+  console.error(`Vune ${command ?? 'command'} failed: ${error instanceof Error ? error.message : String(error)}`)
+  printHelp()
+  process.exitCode = 1
+  process.exit(process.exitCode)
 }
 
 const projectFiles = [

@@ -111,3 +111,18 @@ test("@vune-ui/react controls are compatibility aliases of core controls", () =>
   assert.equal(ReactImage, Image)
   assert.equal(ReactToggle, Toggle)
 })
+
+test("Slider rejects non-numeric input and clamps to the configured range", () => {
+  const volume = State(0.5)
+  const sliderElement = render(Slider(Binding(volume), { min: 0, max: 1 }))
+  sliderElement.props.onInput({ target: { value: "" } })
+  assert.equal(volume.value, 0)
+  sliderElement.props.onInput({ target: { value: "not-a-number" } })
+  assert.equal(volume.value, 0)
+  sliderElement.props.onInput({ target: { value: "5" } })
+  assert.equal(volume.value, 1)
+  sliderElement.props.onInput({ target: { value: "-3" } })
+  assert.equal(volume.value, 0)
+  sliderElement.props.onInput({ target: {} })
+  assert.equal(volume.value, 0)
+})

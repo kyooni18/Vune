@@ -88,7 +88,13 @@ export const Slider = defineBuiltinView<SliderProps>(
       min: normalizedMin,
       max: normalizedMax,
       step: normalizedStep,
-      onInput(event: { target?: { value?: string } }) { value.value = Number(event.target && event.target.value !== undefined ? event.target.value : normalizedMin) },
+      onInput(event: { target?: { value?: string } }) {
+        const raw = event.target && event.target.value !== undefined ? Number(event.target.value) : Number.NaN
+        // An empty input parses as 0 and would silently bypass the range, so
+        // reject non-finite values and clamp to the configured bounds.
+        const parsed = Number.isFinite(raw) ? raw : normalizedMin
+        value.value = Math.min(normalizedMax, Math.max(normalizedMin, parsed))
+      },
     })
   },
 ) as TypedViewConstructor<SliderProps, SliderCall>

@@ -1,6 +1,7 @@
 import * as ts from "typescript"
 import * as Core from "@vune-ui/core"
 import { initializersOf, swiftUIStaticModifierNames, type InitializerParameter } from "@vune-ui/core"
+import { lowerImplicitMemberShorthand, lowerShorthand } from "./shorthand.js"
 
 function compilerRootFileName(fileName: string): string {
   const resolvePath = (ts.sys as typeof ts.sys & { resolvePath?: (value: string) => string }).resolvePath
@@ -143,10 +144,27 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
 
   const edits = candidates.map(({ node, chain }) => {
     const base = source.slice(chain.base.getStart(program.sourceFile), chain.base.end)
+    // Argument expressions keep Vune authoring syntax (`$binding`, `.member`),
+    // so they must pass through the same lowering as labeled modifier
+    // arguments before being emitted into generated code.
     const modifiers = chain.calls.map(({ name, node: call }) => {
       const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
         ? "0"
-        : call.arguments.map(argument => source.slice(argument.getStart(program.sourceFile), argument.end)).join(", ")
+        : call.arguments.map(argument => {
+          // An implicit member argument (`.red`) is not valid TypeScript, so
+          // the parser recovers with a zero-width base and the node's start
+          // lands after the dot. Re-attach a directly-preceding dot (unless
+          // it belongs to a real member access like `theme.red`) so the
+          // shorthand lowering sees the authored form.
+          let start = argument.getStart(program.sourceFile)
+          let cursor = start - 1
+          while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
+          // The dot must not belong to a real member access (`theme.red`,
+          // `arr[0].red`, `"str".red`) or to spread punctuation (`...values`).
+          if (source[cursor] === "." && !(cursor > 0 && /[A-Za-z0-9_$.)"'\]]/.test(source[cursor - 1]))) start = cursor
+          const raw = source.slice(start, argument.end)
+          return lowerImplicitMemberShorthand(lowerShorthand(raw))
+        }).join(", ")
       return `[${JSON.stringify(name)}, [${argumentsSource}]]`
     }).join(", ")
     return {

@@ -388,9 +388,13 @@ const noPrimitiveCollectionKey = Symbol("noPrimitiveCollectionKey")
 const noOwnDataProperty = Symbol("noOwnDataProperty")
 
 const warnedForEachIdentity = new Set<string>()
+// Duplicate-key warnings interpolate runtime values, so the dedup set would
+// otherwise grow without bound on adversarial or churning collections.
+const maximumWarnedForEachIdentities = 256
 
 function warnForEachIdentity(message: string): void {
   if (warnedForEachIdentity.has(message)) return
+  if (warnedForEachIdentity.size >= maximumWarnedForEachIdentities) warnedForEachIdentity.clear()
   warnedForEachIdentity.add(message)
   const runtime = globalThis as unknown as { readonly console?: { readonly warn?: (message: string) => void } }
   runtime.console?.warn?.(`[Vune] ${message}`)

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, extname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
-const root = resolve(new URL("..", import.meta.url).pathname)
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const markdownFiles = [resolve(root, "README.md")]
 
 function collect(dir) {

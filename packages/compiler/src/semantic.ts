@@ -715,7 +715,7 @@ function typescriptSnapshot(fileName: string, source: string): {
   host.fileExists = requested => normalize(requested) === requestedRoot || originalFileExists(requested)
   host.readFile = requested => normalize(requested) === requestedRoot ? source : originalReadFile(requested)
   host.getSourceFile = (requested, languageVersion, onError, shouldCreateNewSourceFile) => normalize(requested) === requestedRoot
-    ? ts.createSourceFile(requested, source, languageVersion, true, /\.tsx?$/i.test(fileName) ? ts.ScriptKind.TS : ts.ScriptKind.TS)
+    ? ts.createSourceFile(requested, source, languageVersion, true, /\.tsx$/i.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
     : originalGetSourceFile(requested, languageVersion, onError, shouldCreateNewSourceFile)
   const program = ts.createProgram([fileName], options, host)
   const sourceFile = program.getSourceFile(fileName) ?? ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)

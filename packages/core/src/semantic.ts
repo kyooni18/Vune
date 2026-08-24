@@ -341,15 +341,6 @@ export type SemanticInitializerResolutionResult =
   | { readonly ok: true; readonly resolution: SemanticInitializerResolution }
   | { readonly ok: false; readonly failure: SemanticInitializerResolutionFailure }
 
-function runtimeKind(value: unknown): SemanticArgumentKind | undefined {
-  if (value && typeof value === "object") {
-    const descriptor = Object.getOwnPropertyDescriptor(value, "value")
-    if (descriptor?.get || descriptor?.set) return "binding"
-    if ((value as { kind?: unknown }).kind === "element" || (value as { kind?: unknown }).kind === "view") return "value"
-  }
-  return typeof value === "function" ? undefined : "value"
-}
-
 function runtimeType(value: unknown): string | undefined {
   if (value === undefined) return "undefined"
   if (value === null) return "null"

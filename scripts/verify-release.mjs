@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { resolve, relative, sep } from "node:path"
+import { resolve, relative, sep, dirname } from "node:path"
 import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 
-const root = resolve(new URL("..", import.meta.url).pathname)
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const canonicalPackages = ["core", "compiler", "react", "vue", "web", "vite"]
 const compatibilityPackages = ["legacy-react"]
 const releaseTargets = [
