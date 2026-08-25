@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { JSDOM } from "jsdom"
 import {
   Animation,
+  Element,
   State,
   Text,
   Transaction,
@@ -15,8 +17,39 @@ import {
   withAnimation,
   withRenderTransaction,
   withTransaction,
+  defineView,
+  initializer,
 } from "../packages/core/dist/index.js"
-import { renderToHTML } from "../packages/web/dist/index.js"
+import { mount, renderToHTML } from "../packages/web/dist/index.js"
+import { animateDomStyle, motionSpecForAnimation } from "../packages/web/dist/motion.js"
+
+test("Web DOM animation adapter executes o0o0o timing and spring specs", async () => {
+  const dom = new JSDOM('<div style="opacity:0"></div>')
+  const element = dom.window.document.querySelector("div")
+  assert.ok(element)
+  assert.equal(motionSpecForAnimation(Animation.spring(0.2, 0.8)).kind, "spring")
+  assert.equal(animateDomStyle(element, "opacity", "0", 1, Animation.linear(0.01)), true)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(element.style.opacity, "1")
+  dom.window.close()
+})
+
+test("Web mount routes animated State patches through o0o0o", async () => {
+  const dom = new JSDOM('<div id="app"></div>')
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const opacity = State(0)
+  const App = defineView("AnimatedState", {
+    initializers: [initializer("AnimatedState()", args => args.length === 0)],
+    body: () => Element("div", { style: { opacity: opacity.value } }, "Motion"),
+  })
+  const unmount = mount(App(), container)
+  withAnimation(Animation.linear(0.01), () => { opacity.value = 1 })
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(container.firstElementChild?.style.opacity, "1")
+  unmount()
+  dom.window.close()
+})
 
 test("SwiftUI API manifest is the canonical compiler/runtime seed", () => {
   const vstack = swiftUIInitializerSymbols("VStack")

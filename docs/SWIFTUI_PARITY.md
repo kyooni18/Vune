@@ -103,9 +103,9 @@ View invalidation / graph evaluation
     v
 renderer transaction
     |
-    +--> current wrapper timing (CSS/web transition)
+    +--> @vune-ui/web -> o0o0o numeric/color/transform interpolation
     |
-    `--> future Vune clock + interpolator + spring solver
+    `--> @vune-ui/react / @vune-ui/vue -> renderer-native style transition fallback
 ```
 
 `Animation`, `Transaction`, `withAnimation`, and `withTransaction` live in core.
@@ -113,17 +113,18 @@ State writes snapshot the active mutation transaction, so asynchronous renderer
 updates do not lose the animation selected at mutation time. React, Vue, and DOM
 renderers consume the same render transaction.
 
-The first wrapper supports timing for animatable values including `opacity`,
-`scaleEffect`, `rotationEffect`, and `offset`, and composes transform modifiers
-instead of letting the last transform overwrite the previous one. Explicit
-`.animation(_:value:)` also uses the wrapper timing path.
+The DOM renderer now uses `o0o0o@0.2` for numeric, color, and transform values.
+Spring updates keep the current value and velocity when a state update retargets
+an element, and a per-element/property control cancels the previous motion.
+The first render remains synchronous for SSR and hydration safety. React and Vue
+continue to expose the same transaction contract and use their native style
+transition path until they have an equivalent host-commit adapter. Explicit
+`.animation(_:value:)` remains available through the existing wrapper path.
 
-The wrapper is intentionally incomplete. Spring is currently approximated by a
-web timing curve, repeat metadata is stored but not yet executed by a dedicated
-timeline, and layout/transition retention is not yet a full SwiftUI-compatible
-animation engine. The public `Animation`/`Transaction` values are kept
-renderer-independent so these implementation details can be replaced without
-changing authoring syntax.
+Repeat metadata is stored but not yet executed by a dedicated timeline, and
+layout/transition retention is not yet a full SwiftUI-compatible animation
+engine. The public `Animation`/`Transaction` values remain renderer-independent
+so these implementation details can evolve without changing authoring syntax.
 
 ## Expansion order
 

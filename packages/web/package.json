@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/web",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "DOM and HTML renderers for the renderer-independent Vune core.",
   "type": "module",
   "files": [
@@ -20,7 +20,8 @@
     "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "dependencies": {
-    "@vune-ui/core": "workspace:*"
+    "@vune-ui/core": "workspace:*",
+    "o0o0o": "^0.2.0"
   },
   "sideEffects": false,
   "publishConfig": {

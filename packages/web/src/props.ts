@@ -1,5 +1,6 @@
 import { classNameOf } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, normalizedTextAreaValue, type DomRenderContext } from "./shared.js"
+import { animateDomStyle } from "./motion.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"
 const XML_NS = "http://www.w3.org/XML/1998/namespace"
@@ -356,7 +357,15 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
               continue
             }
             if (Object.is(before[styleKey], styleValue)) continue
-            style.setProperty(cssPropertyName(styleKey), String(styleValue))
+            const cssName = cssPropertyName(styleKey)
+            const animation = context.activeTransaction?.animation
+            const currentValue = style.getPropertyValue(cssName) || before[styleKey]
+            const animated = animation
+              && !context.activeTransaction?.disablesAnimations
+              && currentValue !== undefined
+              && currentValue !== null
+              && animateDomStyle(element, cssName, currentValue, styleValue, animation)
+            if (!animated) style.setProperty(cssName, String(styleValue))
           }
         }
       } else if (!Object.is(previousStyle, value)) {

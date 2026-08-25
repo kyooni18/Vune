@@ -22,6 +22,7 @@ import {
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
 import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue } from "./props.js"
+import { cancelDomAnimations } from "./motion.js"
 import { domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
 
 interface DomViewBoundary {
@@ -400,14 +401,10 @@ function reconcilePureKeyedPermutation(
 }
 
 function releaseDomSubtree(node: Node, context: DomRenderContext): void {
-  // If no live element in this mount owns a native listener, there is nothing
-  // to tear down in the subtree. This is the overwhelmingly common path for
-  // large presentational branches and avoids walking every descendant merely
-  // to query an empty WeakMap.
-  if (context.eventTargetCount === 0) return
   if (node.nodeType === 1) {
     const element = node as Element
-    clearDomEvents(element, context)
+    cancelDomAnimations(element)
+    if (context.eventTargetCount > 0) clearDomEvents(element, context)
     for (const child of domContentContainer(element).childNodes) releaseDomSubtree(child, context)
     return
   }
@@ -1184,6 +1181,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       hydrating: false,
       stagingEvents: true,
       stagingProps: true,
+      activeTransaction: undefined,
     }
     const viewRuntime: DomViewRuntime = {
       boundaries: new Map(),
@@ -1451,6 +1449,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         return
       }
       const renderTransaction = boundary.pendingTransaction
+      context.activeTransaction = renderTransaction
       beginViewPass(boundary.key)
       context.hasRefs = false
       const materialize = viewRuntime.materializeView
@@ -1470,6 +1469,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       reconcileDomRange(parent, currentNodes, outputNodes(output), context)
       commitViewPass(false)
       commitRefs()
+      context.activeTransaction = undefined
     }
 
     update = () => {
@@ -1487,6 +1487,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       context.hydrating = Boolean(options.hydrate && !hasMounted)
       const renderTransaction = pendingTransaction
       pendingTransaction = undefined
+      context.activeTransaction = renderTransaction
       let output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
       const preservedStatePrefixes = [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
       for (const key of context.states.keys()) {
@@ -1558,6 +1559,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       // otherwise the top View could be reused and the changed range would
       // never be materialized.
       if (!scheduled) viewRuntime.forceAll = false
+      context.activeTransaction = undefined
     }
     update()
     return () => {

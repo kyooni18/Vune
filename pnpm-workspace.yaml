@@ -13,3 +13,4 @@ minimumReleaseAgeExclude:
   - '@vune-ui/vite@0.1.1'
   - '@vune-ui/vue@0.1.1'
   - '@vune-ui/web@0.1.1'
+  - o0o0o@0.2.0

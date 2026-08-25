@@ -1,4 +1,4 @@
-import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
+import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type Transaction, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
 const htmlAttributeAliases: Readonly<Record<string, string>> = Object.freeze({
@@ -235,4 +235,5 @@ export interface DomRenderContext {
   hydrating: boolean
   stagingEvents: boolean
   stagingProps: boolean
+  activeTransaction?: Transaction
 }
