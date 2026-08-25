@@ -17,6 +17,17 @@ test("@vune-ui/compiler lowers .vune.ts builders through declaration-neutral syn
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("@vune-ui/compiler keeps Vue imports separate when ensuring core imports", () => {
+  const source = `import { VuneView } from "@vune-ui/vue"
+import { Element } from "@vune-ui/core"
+const App = VuneView(() => Element("section", null, "Hi"))`
+  const output = transformVuneSource(source, "VueImports.vune.ts")
+  assert.match(output, /import \{ VuneView \} from "@vune-ui\/vue"/)
+  assert.match(output, /import \{ Element \} from "@vune-ui\/core"/)
+  assert.doesNotMatch(output, /Element,\s*Element/)
+  assert.equal(ts.createSourceFile("VueImports.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("@vune-ui/compiler keeps TypeScript lexical syntax separate from Vune HTML and blocks", () => {
   const source = `type Bar = number
 declare const foo: <T>(value: T) => T
@@ -363,6 +374,14 @@ test("@vune-ui/compiler exposes source maps, diagnostics, language service, and 
   assert.equal(vitePlugin.name, "vune-compiler")
   const dependencyScan = vitePlugin.config().optimizeDeps.rolldownOptions.plugins[0]
   assert.match(dependencyScan.transform("VStack() { Text(\"Hi\") }", "virtual-module:/src/Counter.vue?id=0")?.code ?? "", /VStack\(\(\) =>/)
+})
+
+test("the Vite adapter compiles native .vune modules and resolves their extension", () => {
+  const plugin = createVuneVitePlugin()
+  const transformed = plugin.transform('VStack() { Text("Hi") }', "/src/App.vune")
+  assert.ok(transformed)
+  assert.match(transformed.code, /VStack\(\(\) =>/)
+  assert.deepEqual(plugin.config?.().resolve.extensions.slice(0, 3), [".vune", ".vune.ts", ".vune.tsx"])
 })
 
 test("compiler source maps keep real tokens anchored after synthesized imports", () => {

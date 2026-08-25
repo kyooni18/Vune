@@ -114,6 +114,9 @@ export interface VuneStyleProperties {
   readonly marginLeft?: VuneStylePropertyValue
   readonly marginRight?: VuneStylePropertyValue
   readonly marginTop?: VuneStylePropertyValue
+  readonly mask?: VuneStylePropertyValue
+  readonly maskImage?: VuneStylePropertyValue
+  readonly maskSize?: VuneStylePropertyValue
   readonly maxHeight?: VuneStylePropertyValue
   readonly maxWidth?: VuneStylePropertyValue
   readonly minHeight?: VuneStylePropertyValue
@@ -151,6 +154,9 @@ export interface VuneStyleProperties {
   readonly userSelect?: VuneStylePropertyValue
   readonly verticalAlign?: VuneStylePropertyValue
   readonly visibility?: VuneStylePropertyValue
+  readonly WebkitMask?: VuneStylePropertyValue
+  readonly WebkitMaskImage?: VuneStylePropertyValue
+  readonly WebkitMaskSize?: VuneStylePropertyValue
   readonly whiteSpace?: VuneStylePropertyValue
   readonly width?: VuneStylePropertyValue
   readonly wordBreak?: VuneStylePropertyValue

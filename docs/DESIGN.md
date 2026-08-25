@@ -115,7 +115,7 @@ does not enter `@vune-ui/core`.
 
 The canonical function-DSL entry points are `vune-ui`, `@vune-ui/core`, and
 `@vune-ui/react`. The explicit `vune-ui/legacy` subpath retains the legacy React
-compatibility surface, implemented by `@vune-ui/legacy-react`. The automatic JSX
+compatibility surface, implemented inside `@vune-ui/react`. The automatic JSX
 runtimes and `vune-ui/vite` remain supported integration entry points.
 Coordinate spaces expose `CoordinateNode` values, while the proposal-based
 measurement experiment exposes `LayoutNode` values; keeping those concepts

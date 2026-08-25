@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/react",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "description": "React renderer for the renderer-independent Vune core.",
   "type": "module",
   "files": [
@@ -57,14 +57,15 @@
   },
   "dependencies": {
     "@vune-ui/core": "workspace:*",
-    "@vune-ui/legacy-react": "workspace:*"
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "react": ">=18 <20",
     "react-dom": ">=18 <20"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
   },
   "sideEffects": false,
   "publishConfig": {

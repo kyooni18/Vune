@@ -207,7 +207,7 @@ function declarations(document) {
 async function workspaceVuneDocuments(document) {
   const documents = openVuneDocuments(document)
   if (typeof vscode.workspace.findFiles !== 'function' || typeof vscode.workspace.openTextDocument !== 'function') return documents
-  const uris = await vscode.workspace.findFiles('**/*.{vune.ts,vue}', '**/{node_modules,dist,.git}/**', 200)
+  const uris = await vscode.workspace.findFiles('**/*.{vune,vune.ts,vue}', '**/{node_modules,dist,.git}/**', 200)
   for (const uri of uris) {
     if (documents.some(candidate => String(candidate.uri) === String(uri))) continue
     try { documents.push(await vscode.workspace.openTextDocument(uri)) } catch { /* Ignore unreadable workspace files. */ }

@@ -5,15 +5,18 @@
   "version": "0.1.0",
   "private": true,
   "publisher": "vune-ui",
+  "repository": { "type": "git", "url": "https://github.com/kyooni18/vune-ui" },
+  "license": "MIT",
+  "files": ["extension.cjs", "language-configuration.json", "syntaxes", "package.json"],
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:vune", "onLanguage:vue"],
+  "activationEvents": ["onLanguage:vune-ui", "onLanguage:vue"],
   "main": "./extension.cjs",
   "contributes": {
     "languages": [{
       "id": "vune-ui",
-      "aliases": ["Vune", "vune.ts"],
-      "extensions": [".vune.ts"],
+      "aliases": ["Vune", "vune", "vune.ts"],
+      "extensions": [".vune", ".vune.ts"],
       "configuration": "./language-configuration.json"
     }],
     "grammars": [{

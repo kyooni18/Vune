@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Binding, Image, Link, Slider, State, TextField, Toggle } from "../packages/core/dist/index.js"
-import { Image as ReactImage, Toggle as ReactToggle, render } from "../packages/react/dist/index.js"
+import { Binding, Image, Link, namedArguments, Slider, State, Switch, TextField, Toggle } from "../packages/core/dist/index.js"
+import { Image as ReactImage, Switch as ReactSwitch, Toggle as ReactToggle, render } from "../packages/react/dist/index.js"
 
 test("migrated controls expose native semantics and writable bindings", () => {
   const wifi = State(false)
@@ -110,6 +110,83 @@ test("Image and Link stay graph values until rendered", () => {
 test("@vune-ui/react controls are compatibility aliases of core controls", () => {
   assert.equal(ReactImage, Image)
   assert.equal(ReactToggle, Toggle)
+  assert.equal(ReactSwitch, Switch)
+})
+
+test("Switch binds a boolean and toggles it on click", () => {
+  const wifi = State(false)
+  const html = renderToStaticMarkup(render(Switch(Binding(wifi))))
+  assert.match(html, /role="switch"/)
+  assert.match(html, /aria-checked="false"/)
+  assert.match(html, /data-vune="Switch"/)
+
+  const element = render(Switch(Binding(wifi)))
+  element.props.onClick()
+  assert.equal(wifi.value, true)
+  assert.match(renderToStaticMarkup(render(Switch(Binding(wifi)))), /aria-checked="true"/)
+  element.props.onClick()
+  assert.equal(wifi.value, false)
+})
+
+test("Switch options customize tint, off state, size, and label", () => {
+  const enabled = State(true)
+  const html = renderToStaticMarkup(render(Switch(Binding(enabled), {
+    tint: "#ff375f",
+    offTint: "#333333",
+    size: 40,
+    label: "Notifications",
+  })))
+  assert.match(html, /background:#ff375f|background: rgb\(255, 55, 95\)/)
+  assert.match(html, /aria-label="Notifications"/)
+  assert.match(html, /height:40px/)
+  assert.doesNotMatch(html, /NaN/)
+
+  // Non-finite or non-positive sizes fall back to the default instead of emitting invalid CSS.
+  const fallback = renderToStaticMarkup(render(Switch(Binding(enabled), { size: Number.NaN })))
+  assert.doesNotMatch(fallback, /NaN/)
+})
+
+test("Switch supports SwiftUI-style labeled and positional title initializers", () => {
+  const wifi = State(false)
+
+  // Labeled form: lowered from `Switch("Wi-Fi", isOn: $wifi)` in .vune source.
+  const labeled = render(Switch("Wi-Fi", namedArguments({ isOn: Binding(wifi) })))
+  assert.match(renderToStaticMarkup(labeled), /Wi-Fi.*role="switch"/s)
+  labeled.props.children[1].props.onClick()
+  assert.equal(wifi.value, true)
+
+  // Plain positional form.
+  wifi.value = false
+  const positional = renderToStaticMarkup(render(Switch("Wi-Fi", Binding(wifi))))
+  assert.match(positional, /Wi-Fi.*aria-checked="false"/s)
+
+  // Labeled carrier without a title still resolves to the unlabeled initializer.
+  const unlabeled = renderToStaticMarkup(render(Switch(namedArguments({ isOn: Binding(wifi) }))))
+  assert.match(unlabeled, /role="switch"/)
+  assert.doesNotMatch(unlabeled, /Wi-Fi/)
+})
+
+test("Switch composes with view modifiers", () => {
+  const enabled = State(true)
+  const html = renderToStaticMarkup(render(
+    Switch(Binding(enabled), { tint: "#ff375f" }).style({ margin: 4 }).padding(8),
+  ))
+  assert.match(html, /margin: ?4px|margin-top: ?8px/)
+  assert.match(html, /padding: ?8px/)
+  assert.match(html, /role="switch"/)
+})
+
+test("Switch rejects option records that are not data-only", () => {
+  let getterCalls = 0
+  const hostile = {}
+  Object.defineProperty(hostile, "tint", {
+    get() {
+      getterCalls += 1
+      throw new Error("unknown Switch options must not be read")
+    },
+  })
+  assert.throws(() => Switch(Binding(State(true)), hostile), /Switch options must be a data-only record/)
+  assert.equal(getterCalls, 0)
 })
 
 test("Slider rejects non-numeric input and clamps to the configured range", () => {

@@ -11,12 +11,12 @@ The first workspace architecture slice is now implemented:
 
 - `@vune-ui/core` is React-free and owns graph nodes, initializer metadata,
   `ViewBuilder`, immutable modifiers, `State`, `Binding`, and closure roles.
-- `@vune-ui/compiler` and `@vune-ui/vite` handle `.vune.ts` builder/struct lowering.
+- `@vune-ui/compiler` and `@vune-ui/vite` handle `.vune` and `.vune.ts` builder/struct lowering.
 - `@vune-ui/react`, `@vune-ui/vue`, and `@vune-ui/web` consume the same graph through
   renderer interfaces, with layout primitives and native controls migrated first.
 - Core-owned `Text`, stacks, layout, collection, presentation, native control,
   `Element`, and custom View definitions are available without React.
-  `.vune.ts` raw HTML lowers to those graph `Element` nodes, including
+  `.vune` and `.vune.ts` raw HTML lower to those graph `Element` nodes, including
   typed standard attributes/events and extensible `aria-*`, `data-*`, and
   custom-element attributes.
 - The core graph concentration point is split behind stable internal modules
@@ -39,9 +39,12 @@ The first workspace architecture slice is now implemented:
   DOM props, hydration, and live DOM reconciliation modules; its public barrel
   remains unchanged and the existing lazy, GeometryReader, hydration, and
   identity tests cover the split.
-- `editors/vscode` provides `.vune.ts` Vune/HTML highlighting, diagnostics,
+- `editors/vscode` provides `.vune` and `.vune.ts` Vune/HTML highlighting, diagnostics,
   formatting, completion, hover, definition, rename, and optional `.vue`
-  provider coverage.
+  provider coverage. The bundled stdio LSP server and `vune-ui editor install`
+  command generate integrations for Vim, Neovim, VS Code, Zed, Helix, and
+  generic LSP clients; `vune-ui editor export vscode` produces an installable
+  VSIX.
 
 The first View-system slice is implemented and covered by `tests/view-system.test.mjs`:
 
@@ -60,10 +63,10 @@ The first View-system slice is implemented and covered by `tests/view-system.tes
   registry.
 
 Collection, presentation, and native control implementations are owned by
-`@vune-ui/core`; `@vune-ui/react` keeps reference-identical compatibility re-exports.
-The old root entry points are implemented by the separate `@vune-ui/legacy-react`
-package and preserved as `@vune-ui/react/legacy` compatibility proxy exports; new
-work should target the canonical graph and renderer APIs instead of extending
+`@vune-ui/core`; `@vune-ui/react` owns the integrated legacy compatibility
+implementation as well. The separate `@vune-ui/legacy-react` package remains a
+compatibility distribution, while `@vune-ui/react/legacy` is the source of truth;
+new work should target the canonical graph and renderer APIs instead of extending
 that legacy surface.
 
 ## Correctness release

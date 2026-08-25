@@ -21,11 +21,354 @@ import {
 } from "@vune-ui/core"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
-import { applyDomProps, clearDomEvents, patchDomProps, setDomRef, synchronizeDomSelectValue } from "./props.js"
+import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomEvent, setDomRef, synchronizeDomSelectValue } from "./props.js"
 import { domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
+
+interface DomViewBoundary {
+  readonly key: string
+  identity: readonly (string | number)[]
+  host: unknown
+  node: ViewHostNode
+  render: (props?: Record<string, unknown>) => Node
+  resolvedProps: Record<string, unknown>
+  dependencies: Set<StateRef<unknown>>
+  readonly subscriptions: Map<StateRef<unknown>, () => void>
+  readonly children: Set<string>
+  readonly nextChildren: Set<string>
+  currentNodes: Node[]
+  nextNodes: Node[]
+  outerModifiers: ViewModifierNode[]
+  parentKey?: string
+  pendingTransaction?: Transaction
+  scheduled: boolean
+  mounted: boolean
+  localSafe: boolean
+  renderedBody: boolean
+}
+
+interface DomViewRuntime {
+  readonly boundaries: Map<string, DomViewBoundary>
+  readonly nodeKeys: WeakMap<Node, Set<string>>
+  readonly reuseCandidates: WeakMap<Node, Node>
+  readonly stack: string[]
+  renderedKeys: Set<string>
+  passVisitedStates: Set<string>
+  readonly rootChildren: Set<string>
+  readonly rootNextChildren: Set<string>
+  forceAll: boolean
+  replayingModifiers: boolean
+  boundaryRootKey?: string
+  materializeView?: (
+    node: ViewHostNode,
+    render: (props?: Record<string, unknown>) => Node,
+    identity: readonly (string | number)[],
+    force?: boolean,
+  ) => Node
+}
+
+const domViewRuntimes = new WeakMap<DomRenderContext, DomViewRuntime>()
+
+function runtimeFor(context: DomRenderContext): DomViewRuntime | undefined {
+  return domViewRuntimes.get(context)
+}
+
+function shallowRecordEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  if (left === right) return true
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) return false
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key) || !Object.is(left[key], right[key])) return false
+  }
+  return true
+}
+
+function outputNodes(output: Node): Node[] {
+  return output.nodeType === 11 ? [...output.childNodes] : [output]
+}
+
+function addBoundaryKey(node: Node, key: string, runtime: DomViewRuntime): void {
+  const keys = runtime.nodeKeys.get(node) ?? new Set<string>()
+  keys.add(key)
+  runtime.nodeKeys.set(node, keys)
+}
+
+function markBoundaryOutput(output: Node, key: string, runtime: DomViewRuntime): void {
+  outputNodes(output).forEach(node => addBoundaryKey(node, key, runtime))
+}
+
+function bindCandidateNode(candidate: Node, live: Node, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  const candidateKeys = runtime.nodeKeys.get(candidate)
+  if (!candidateKeys || candidateKeys.size === 0) return
+  const liveKeys = runtime.nodeKeys.get(live) ?? new Set<string>()
+  for (const key of candidateKeys) {
+    liveKeys.add(key)
+    const boundary = runtime.boundaries.get(key)
+    if (boundary && !boundary.nextNodes.includes(live)) boundary.nextNodes.push(live)
+  }
+  runtime.nodeKeys.set(live, liveKeys)
+}
+
+function commitStagedSubtree(node: Node, context: DomRenderContext): void {
+  if (node.nodeType === 1) commitStagedDomProps(node as Element, context)
+  const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
+  for (const child of [...content.childNodes]) commitStagedSubtree(child, context)
+  if (node.nodeType === 1) synchronizeDomSelectValue(node as Element, context.domProps.get(node as Element))
+}
+
+function bindInsertedSubtree(node: Node, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  const reusable = runtime?.reuseCandidates.get(node)
+  if (reusable && reusable !== node && node.parentNode) {
+    // A reused View may be carried through a newly-created ancestor. Patch any
+    // staged outer modifiers onto the original root, then move that live node
+    // into the candidate position instead of committing a clone/placeholder.
+    if (node.nodeType === 1 && reusable.nodeType === 1) {
+      reconcileDomNode(reusable.parentNode ?? node.parentNode, reusable, node, context)
+    }
+    const parent = node.parentNode
+    parent.replaceChild(reusable, node)
+    bindCandidateNode(node, reusable, context)
+    bindInsertedSubtree(reusable, context)
+    return
+  }
+  bindCandidateNode(node, node, context)
+  if (node.nodeType === 1) {
+    const element = node as Element
+    const props = context.domProps.get(element)
+    for (const [key, value] of Object.entries(props ?? {})) {
+      if (/^on[A-Za-z]/.test(key) && typeof value === "function") {
+        // Candidate trees intentionally stage event props without native
+        // listeners. Attach only when a node actually becomes live.
+        setDomEvent(element, key, value, context, true)
+      }
+    }
+  }
+  const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
+  for (const child of [...content.childNodes]) bindInsertedSubtree(child, context)
+}
+
+function bindHydratedSubtree(candidate: Node, live: Node, context: DomRenderContext): void {
+  bindCandidateNode(candidate, live, context)
+  const candidateContent = candidate.nodeType === 1 ? domContentContainer(candidate as Element) : candidate
+  const liveContent = live.nodeType === 1 ? domContentContainer(live as Element) : live
+  const count = Math.min(candidateContent.childNodes.length, liveContent.childNodes.length)
+  for (let index = 0; index < count; index += 1) {
+    bindHydratedSubtree(candidateContent.childNodes[index], liveContent.childNodes[index], context)
+  }
+}
+
+function copyCandidateMetadata(source: Node, target: Node, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  const props = source.nodeType === 1 ? context.domProps.get(source as Element) : undefined
+  if (props && target.nodeType === 1) {
+    context.domProps.set(target as Element, {
+      ...props,
+      ...(props.style && typeof props.style === "object" ? { style: { ...(props.style as Record<string, unknown>) } } : {}),
+    })
+  }
+  const key = context.domKeys.get(source)
+  if (key !== undefined) context.domKeys.set(target, key)
+  if (source.nodeType === 1 && target.nodeType === 1) {
+    const tag = context.domTags.get(source as Element)
+    if (tag !== undefined) context.domTags.set(target as Element, tag)
+    const lazyKey = context.lazyKeys.get(source)
+    if (lazyKey !== undefined) context.lazyKeys.set(target, lazyKey)
+  }
+  if (runtime) {
+    const boundaryKeys = runtime.nodeKeys.get(source)
+    if (boundaryKeys) runtime.nodeKeys.set(target, new Set(boundaryKeys))
+    runtime.reuseCandidates.set(target, source)
+  }
+}
+
+function reusableBoundaryCandidate(current: Node, context: DomRenderContext): Node {
+  // Unchanged View boundaries only need an identity carrier while their parent
+  // is staged. A comment avoids cloning real DOM nodes and their attributes.
+  const candidate = context.document.createComment("vune-reuse")
+  copyCandidateMetadata(current, candidate, context)
+  return candidate
+}
+
+function reusableBoundaryOutput(boundary: DomViewBoundary, context: DomRenderContext): Node {
+  if (boundary.currentNodes.length === 1) return reusableBoundaryCandidate(boundary.currentNodes[0], context)
+  const fragment = context.document.createDocumentFragment()
+  for (const current of boundary.currentNodes) fragment.appendChild(reusableBoundaryCandidate(current, context))
+  return fragment
+}
+
+function promoteReusableCandidate(candidate: Node, context: DomRenderContext): Node {
+  const live = runtimeFor(context)?.reuseCandidates.get(candidate)
+  if (candidate.nodeType !== 8 || !live || live.nodeType !== 1) return candidate
+  const element = live as Element
+  const promoted = context.document.createElementNS(element.namespaceURI, element.localName)
+  copyCandidateMetadata(live, promoted, context)
+  if (candidate.parentNode) candidate.parentNode.replaceChild(promoted, candidate)
+  return promoted
+}
+
+function promoteReusableContent(content: Node, context: DomRenderContext): Node {
+  if (content.nodeType === 8) return promoteReusableCandidate(content, context)
+  if (content.nodeType !== 11) return content
+  for (const child of [...content.childNodes]) promoteReusableCandidate(child, context)
+  return content
+}
+
+function markUnsafeViewAncestors(context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  for (const key of runtime.stack) {
+    const boundary = runtime.boundaries.get(key)
+    if (boundary) boundary.localSafe = false
+  }
+}
+
+function retainBoundaryStateTree(key: string, context: DomRenderContext, runtime: DomViewRuntime): void {
+  const boundary = runtime.boundaries.get(key)
+  if (!boundary) return
+  context.visitedStateIdentities.add(key)
+  runtime.passVisitedStates.add(key)
+  for (const child of boundary.children) retainBoundaryStateTree(child, context, runtime)
+}
 
 function nodeKey(node: Node, context: DomRenderContext): string | number | undefined {
   return context.domKeys.get(node)
+}
+
+function longestIncreasingSubsequenceIndices(values: readonly number[]): Set<number> {
+  if (values.length === 0) return new Set()
+  const predecessors = new Array<number>(values.length).fill(-1)
+  const tails: number[] = []
+  for (let index = 0; index < values.length; index += 1) {
+    let low = 0
+    let high = tails.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (values[tails[middle]] < values[index]) low = middle + 1
+      else high = middle
+    }
+    if (low > 0) predecessors[index] = tails[low - 1]
+    tails[low] = index
+  }
+  const indices = new Set<number>()
+  let cursor = tails[tails.length - 1]
+  while (cursor !== undefined && cursor >= 0) {
+    indices.add(cursor)
+    cursor = predecessors[cursor]
+  }
+  return indices
+}
+
+function appendNodeBatch(parent: Node, nodes: readonly Node[]): void {
+  if (nodes.length === 0) return
+  const append = (parent as Node & { append?: (...nodes: Node[]) => void }).append
+  if (typeof append === "function") {
+    const chunkSize = 4096
+    for (let index = 0; index < nodes.length; index += chunkSize) {
+      append.call(parent, ...nodes.slice(index, index + chunkSize))
+    }
+    return
+  }
+  const fragment = parent.ownerDocument?.createDocumentFragment()
+  if (!fragment) {
+    for (const node of nodes) parent.appendChild(node)
+    return
+  }
+  for (const node of nodes) fragment.appendChild(node)
+  parent.appendChild(fragment)
+}
+
+function reconcileTailAppend(
+  parent: Node,
+  currentChildren: readonly Node[],
+  nextChildren: readonly Node[],
+  context: DomRenderContext,
+): boolean {
+  if (currentChildren.length === 0 || nextChildren.length <= currentChildren.length) return false
+  const runtime = runtimeFor(context)
+  const currentKeys = new Set<string | number>()
+  for (let index = 0; index < currentChildren.length; index += 1) {
+    const current = currentChildren[index]
+    const next = nextChildren[index]
+    const currentKey = nodeKey(current, context)
+    const nextKey = nodeKey(next, context)
+    const reusable = runtime?.reuseCandidates.get(next)
+    if (currentKey !== undefined) currentKeys.add(currentKey)
+    if (reusable && reusable !== current) return false
+    if ((currentKey !== undefined || nextKey !== undefined) && currentKey !== nextKey) return false
+  }
+  for (let index = currentChildren.length; index < nextChildren.length; index += 1) {
+    const next = nextChildren[index]
+    const reusable = runtime?.reuseCandidates.get(next)
+    if (reusable?.parentNode) return false
+    const key = nodeKey(next, context)
+    if (key !== undefined && currentKeys.has(key)) return false
+  }
+  for (let index = 0; index < currentChildren.length; index += 1) {
+    reconcileDomNode(parent, currentChildren[index], nextChildren[index], context)
+  }
+  const additions = nextChildren.slice(currentChildren.length)
+  for (const addition of additions) commitStagedSubtree(addition, context)
+  appendNodeBatch(parent, additions)
+  for (const addition of additions) bindInsertedSubtree(addition, context)
+  return true
+}
+
+function reconcilePureKeyedPermutation(
+  parent: Node,
+  currentChildren: readonly Node[],
+  nextChildren: readonly Node[],
+  context: DomRenderContext,
+): boolean {
+  if (currentChildren.length < 2 || currentChildren.length !== nextChildren.length) return false
+  const keyed = new Map<string | number, Node>()
+  const oldIndex = new Map<Node, number>()
+  for (let index = 0; index < currentChildren.length; index += 1) {
+    const child = currentChildren[index]
+    const key = nodeKey(child, context)
+    if (key === undefined || keyed.has(key)) return false
+    keyed.set(key, child)
+    oldIndex.set(child, index)
+  }
+  const desired: Node[] = []
+  const indices: number[] = []
+  const seen = new Set<string | number>()
+  for (const next of nextChildren) {
+    const key = nodeKey(next, context)
+    if (key === undefined || seen.has(key)) return false
+    seen.add(key)
+    const live = runtimeFor(context)?.reuseCandidates.get(next) ?? keyed.get(key)
+    if (!live || live.parentNode !== parent || nodeKey(live, context) !== key) return false
+    const index = oldIndex.get(live)
+    if (index === undefined) return false
+    desired.push(live)
+    indices.push(index)
+  }
+
+  const stable = longestIncreasingSubsequenceIndices(indices)
+  const moveCount = desired.length - stable.size
+  for (let index = 0; index < nextChildren.length; index += 1) {
+    reconcileDomNode(parent, desired[index], nextChildren[index], context)
+  }
+  if (moveCount === 0) return true
+
+  // When most rows move, repeatedly editing the live child list can become
+  // quadratic in DOM implementations. Move the permutation through a detached
+  // fragment so style/layout work is deferred until a single final insertion.
+  if (desired.length >= 64 && moveCount * 2 >= desired.length) {
+    appendNodeBatch(parent, desired)
+    return true
+  }
+
+  // Otherwise keep the LIS in place and move only the minimal set of nodes.
+  for (let index = desired.length - 1; index >= 0; index -= 1) {
+    if (stable.has(index)) continue
+    const anchor = index + 1 < desired.length ? desired[index + 1] : null
+    if (desired[index].nextSibling !== anchor) parent.insertBefore(desired[index], anchor)
+  }
+  return true
 }
 
 function releaseDomSubtree(node: Node, context: DomRenderContext): void {
@@ -57,7 +400,9 @@ function collectDomElements(root: Node): Element[] {
 
 function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
   releaseDomSubtree(current, context)
+  commitStagedSubtree(next, context)
   parent.replaceChild(next, current)
+  bindInsertedSubtree(next, context)
   return next
 }
 
@@ -80,6 +425,8 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   }
   const currentChildren = [...currentNodes]
   const nextArray = Array.from(nextChildren)
+  if (reconcileTailAppend(parent, currentChildren, nextArray, context)) return
+  if (reconcilePureKeyedPermutation(parent, currentChildren, nextArray, context)) return
   const keyed = new Map<string | number, Node>()
   const used = new Set<Node>()
   for (const child of currentChildren) {
@@ -92,11 +439,14 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   for (let index = 0; index < nextArray.length; index += 1) {
     const next = nextArray[index]
     const key = nodeKey(next, context)
-    let current = key === undefined ? unkeyed[nextUnkeyed++] : keyed.get(key)
+    const reusable = runtimeFor(context)?.reuseCandidates.get(next)
+    let current = reusable && reusable.parentNode ? reusable : key === undefined ? unkeyed[nextUnkeyed++] : keyed.get(key)
     if (current) used.add(current)
     if (!current) {
+      commitStagedSubtree(next, context)
       parent.insertBefore(next, parent.childNodes[index] ?? null)
       current = next
+      bindInsertedSubtree(next, context)
     } else {
       const anchor = parent.childNodes[index]
       if (anchor !== current) parent.insertBefore(current, anchor ?? null)
@@ -113,9 +463,15 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
 }
 
 function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
+  const stagedReuse = runtimeFor(context)?.reuseCandidates.get(next)
+  if (stagedReuse === current && next.nodeType === 8) {
+    bindCandidateNode(next, current, context)
+    return current
+  }
   if (current.nodeType !== next.nodeType) return replaceDomNode(parent, current, next, context)
   if (current.nodeType === 3 && next.nodeType === 3) {
     if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue
+    bindCandidateNode(next, current, context)
     return current
   }
   if (current.nodeType !== 1 || next.nodeType !== 1) return current
@@ -124,15 +480,60 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   if (currentElement.namespaceURI !== nextElement.namespaceURI || currentElement.tagName !== nextElement.tagName) {
     return replaceDomNode(parent, current, next, context)
   }
+  const reusable = runtimeFor(context)?.reuseCandidates.get(next)
   const lazyKey = context.lazyKeys.get(nextElement)
   if (lazyKey) context.lazyKeys.set(currentElement, lazyKey)
   patchDomProps(currentElement, context.domProps.get(nextElement), context)
   const nextKey = nodeKey(nextElement, context)
   if (nextKey !== undefined) context.domKeys.set(currentElement, nextKey)
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
-  reconcileDomChildren(domContentContainer(currentElement), domContentContainer(nextElement).childNodes, context)
+  bindCandidateNode(next, current, context)
+  if (reusable !== current) reconcileDomChildren(domContentContainer(currentElement), domContentContainer(nextElement).childNodes, context)
   synchronizeDomSelectValue(currentElement, context.domProps.get(nextElement))
   return current
+}
+
+function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNodes: readonly Node[], context: DomRenderContext): void {
+  const current = currentNodes.filter(node => node.parentNode === parent)
+  if (current.length === 0) {
+    for (const next of nextNodes) {
+      commitStagedSubtree(next, context)
+      parent.appendChild(next)
+      bindInsertedSubtree(next, context)
+    }
+    return
+  }
+  const after = current[current.length - 1].nextSibling
+  const keyed = new Map<string | number, Node>()
+  const used = new Set<Node>()
+  const unkeyed = current.filter(node => nodeKey(node, context) === undefined)
+  for (const node of current) {
+    const key = nodeKey(node, context)
+    if (key !== undefined) keyed.set(key, node)
+  }
+  let unkeyedIndex = 0
+  let cursor: Node | null = current[0] ?? after
+  for (const next of nextNodes) {
+    const reusable = runtimeFor(context)?.reuseCandidates.get(next)
+    const key = nodeKey(next, context)
+    let live = reusable && reusable.parentNode ? reusable : key === undefined ? unkeyed[unkeyedIndex++] : keyed.get(key)
+    if (live) used.add(live)
+    if (!live) {
+      commitStagedSubtree(next, context)
+      parent.insertBefore(next, cursor ?? after)
+      live = next
+      bindInsertedSubtree(next, context)
+    } else {
+      if (live !== cursor) parent.insertBefore(live, cursor ?? after)
+      reconcileDomNode(parent, live, next, context)
+    }
+    cursor = live.nextSibling
+  }
+  for (const node of current) {
+    if (used.has(node) || node.parentNode !== parent) continue
+    releaseDomSubtree(node, context)
+    parent.removeChild(node)
+  }
 }
 
 function lazyEstimate(node: LazyViewNode): number {
@@ -259,6 +660,13 @@ function normalizeChildNamespace(child: Element, parent: Element, context: DomRe
 
 function appendDomChild(parent: Node, child: Node, context: DomRenderContext): void {
   if (child.nodeType === 11) {
+    // DocumentFragment insertion already moves all of its children in one DOM
+    // operation. Flatten only when an SVG parent needs per-element namespace
+    // normalization; ordinary HTML/fragment parents can take the fragment as-is.
+    if (parent.nodeType !== 1 || childNamespace(parent as Element) === HTML_NS) {
+      parent.appendChild(child)
+      return
+    }
     for (const nested of [...child.childNodes]) appendDomChild(parent, nested, context)
     return
   }
@@ -332,6 +740,9 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       && tag.toLowerCase() === "textarea"
       && props?.value !== undefined
       && props.value !== null
+    if (hasTextAreaValue && context.stagingProps && !context.hydrating) {
+      element.textContent = String(props?.value).replace(/\r\n?/g, "\n")
+    }
     const isRawText = element.namespaceURI === HTML_NS && rawTextHtmlElements.has(tag.toLowerCase())
     if (isRawText) {
       element.textContent = rawTextContent(tag, children)
@@ -367,7 +778,186 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     const text = value === null || value === undefined || value === false || value === true ? "" : String(value)
     return () => context.document.createTextNode(text)
   }
-  return {
+  const runtime = runtimeFor(context)
+  let renderer!: VuneRenderer<Node>
+
+  const recordDirectModifiers = (content: Node, modifier: ViewModifierNode): void => {
+    if (!runtime || runtime.replayingModifiers || modifier.name === "frame") return
+    const seen = new Set<string>()
+    for (const node of outputNodes(content)) {
+      const keys = runtime.nodeKeys.get(node)
+      if (!keys) continue
+      for (const key of keys) {
+        if (seen.has(key)) continue
+        seen.add(key)
+        const boundary = runtime.boundaries.get(key)
+        if (boundary) boundary.outerModifiers.push(modifier)
+      }
+    }
+  }
+
+  const applyModifier = (content: Node, modifier: ViewModifierNode): Node => {
+    recordDirectModifiers(content, modifier)
+    if (modifier.name === "keyed") {
+      const key = typeof modifier.arguments[0] === "string" || typeof modifier.arguments[0] === "number"
+        ? modifier.arguments[0]
+        : undefined
+      if (key === undefined) return content
+      for (const node of outputNodes(content)) context.domKeys.set(node, key)
+      return content
+    }
+    if (modifier.name === "frame") {
+      const wrapper = context.document.createElement("div")
+      applyDomProps(wrapper, { style: frameStyle(modifier.arguments[0] && typeof modifier.arguments[0] === "object" ? modifier.arguments[0] : {}) }, context)
+      appendDomChild(wrapper, content, context)
+      return wrapper
+    }
+    const extraStyle = styleOf(modifier)
+    const extraProps = propsOf(modifier)
+    if (Object.keys(extraProps).length === 0 && Object.keys(extraStyle).length === 0) return content
+    const baseStyle = Object.keys(extraStyle).length > 0 || extraProps.style
+      ? { ...extraStyle, ...(extraProps.style && typeof extraProps.style === "object" ? extraProps.style : {}) }
+      : undefined
+    if (Object.keys(extraProps).length > 0 || baseStyle) content = promoteReusableContent(content, context)
+    const nodes = outputNodes(content)
+    nodes.forEach(node => {
+      if (node.nodeType !== 1) return
+      const element = node as Element
+      const style = baseStyle ? { ...baseStyle } as Record<string, unknown> : undefined
+      if (style && typeof style.transform === "string") {
+        const remembered = context.domProps.get(element)?.style
+        const currentTransform = remembered && typeof remembered === "object"
+          ? (remembered as Record<string, unknown>).transform
+          : (element as Element & { readonly style?: CSSStyleDeclaration }).style?.transform
+        if (typeof currentTransform === "string" && currentTransform) style.transform = `${currentTransform} ${style.transform}`
+      }
+      const props = { ...extraProps, ...(style ? { style } : {}) }
+      const appliedProps = element.localName.includes("-") ? props : nativeElementProps(props)
+      if (Object.keys(appliedProps).length > 0) applyDomProps(element, appliedProps, context)
+    })
+    return content
+  }
+
+  const materializeView = (
+    node: ViewHostNode,
+    render: (props?: Record<string, unknown>) => Node,
+    identity: readonly (string | number)[],
+    force = false,
+  ): Node => {
+    const key = viewIdentityKey(identity)
+    context.visitedStateIdentities.add(key)
+    runtime?.passVisitedStates.add(key)
+    let entry = context.states.get(key)
+    if (!entry || entry.host !== node.host) {
+      entry = { host: node.host, value: node.state?.(node.props) ?? {} }
+      context.states.set(key, entry)
+    }
+    const resolvedProps = { ...node.props, ...entry.value }
+    if (!runtime) return render(resolvedProps)
+
+    const parentKey = runtime.stack.at(-1)
+    if (!force || runtime.boundaryRootKey !== key) {
+      if (parentKey) runtime.boundaries.get(parentKey)?.nextChildren.add(key)
+      else runtime.rootNextChildren.add(key)
+    }
+
+    let boundary = runtime.boundaries.get(key)
+    if (!boundary || boundary.host !== node.host) {
+      if (boundary) {
+        boundary.subscriptions.forEach(unsubscribe => unsubscribe())
+        boundary.subscriptions.clear()
+      }
+      boundary = {
+        key,
+        identity: [...identity],
+        host: node.host,
+        node,
+        render,
+        resolvedProps,
+        dependencies: new Set(),
+        subscriptions: new Map(),
+        children: new Set(),
+        nextChildren: new Set(),
+        currentNodes: [],
+        nextNodes: [],
+        outerModifiers: [],
+        parentKey,
+        scheduled: false,
+        mounted: false,
+        localSafe: true,
+        renderedBody: true,
+      }
+      runtime.boundaries.set(key, boundary)
+    }
+
+    const canReuse = !force
+      && !runtime.forceAll
+      && boundary.mounted
+      && !boundary.scheduled
+      && boundary.host === node.host
+      && shallowRecordEqual(boundary.resolvedProps, resolvedProps)
+      && boundary.currentNodes.length > 0
+      && boundary.currentNodes.every(current => current.parentNode !== null)
+
+    boundary.host = node.host
+    boundary.identity = [...identity]
+    boundary.node = node
+    boundary.render = render
+    boundary.resolvedProps = resolvedProps
+    boundary.parentKey = parentKey
+    boundary.nextNodes = []
+    boundary.nextChildren.clear()
+    runtime.renderedKeys.add(key)
+
+    if (canReuse) {
+      boundary.renderedBody = false
+      boundary.children.forEach(child => boundary!.nextChildren.add(child))
+      boundary.children.forEach(child => retainBoundaryStateTree(child, context, runtime))
+      boundary.outerModifiers = []
+      const output = reusableBoundaryOutput(boundary, context)
+      markBoundaryOutput(output, key, runtime)
+      return output
+    }
+
+    const previousOuterModifiers = force ? [...boundary.outerModifiers] : []
+    if (!force) boundary.outerModifiers = []
+    boundary.renderedBody = true
+    boundary.localSafe = true
+    const declared = node.dependencies
+      ? collectStateReads(() => node.dependencies!(resolvedProps), () => undefined)
+      : undefined
+    const dependencies = new Set<StateRef<unknown>>(declared ?? [])
+    runtime.stack.push(key)
+    let output: Node
+    try {
+      output = withRenderTransaction(boundary.pendingTransaction, () => collectStateReads(
+        () => render(resolvedProps),
+        dependency => { if (!(declared && node.dependenciesComplete === true)) dependencies.add(dependency) },
+      ))
+    } finally {
+      runtime.stack.pop()
+    }
+    boundary.dependencies = dependencies
+    boundary.scheduled = false
+    boundary.pendingTransaction = undefined
+    markBoundaryOutput(output, key, runtime)
+
+    if (force && previousOuterModifiers.length > 0) {
+      runtime.replayingModifiers = true
+      try {
+        for (const modifier of previousOuterModifiers) output = applyModifier(output, modifier)
+      } finally {
+        runtime.replayingModifiers = false
+      }
+      boundary.outerModifiers = previousOuterModifiers
+      markBoundaryOutput(output, key, runtime)
+    }
+    return output
+  }
+
+  runtime && Object.assign(runtime, { materializeView })
+
+  renderer = {
     element(type, props, ...children) {
       return renderElement(type, props, children)
     },
@@ -388,6 +978,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       return factory(renderSlot)
     },
     lazy(node, render, identity) {
+      markUnsafeViewAncestors(context)
       const key = viewIdentityKey(identity)
       context.visitedLazyIdentities.add(key)
       context.lazyNodes.set(key, node)
@@ -415,48 +1006,13 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       return element
     },
     modifier(content, modifier) {
-      if (modifier.name === "frame") {
-        const wrapper = context.document.createElement("div")
-        applyDomProps(wrapper, { style: frameStyle(modifier.arguments[0] && typeof modifier.arguments[0] === "object" ? modifier.arguments[0] : {}) }, context)
-        appendDomChild(wrapper, content, context)
-        return wrapper
-      }
-      const extraStyle = styleOf(modifier)
-      const extraProps = propsOf(modifier)
-      const key = modifier.name === "keyed" && (typeof modifier.arguments[0] === "string" || typeof modifier.arguments[0] === "number")
-        ? modifier.arguments[0]
-        : undefined
-      if (Object.keys(extraProps).length === 0 && Object.keys(extraStyle).length === 0 && key === undefined) return content
-      const baseStyle = Object.keys(extraStyle).length > 0 || extraProps.style
-        ? { ...extraStyle, ...(extraProps.style && typeof extraProps.style === "object" ? extraProps.style : {}) }
-        : undefined
-      const nodes = content.nodeType === 11 ? [...content.childNodes] : [content]
-      nodes.forEach(node => {
-        if (node.nodeType !== 1) return
-        if (key !== undefined) context.domKeys.set(node, key)
-        const element = node as Element
-        const style = baseStyle ? { ...baseStyle } as Record<string, unknown> : undefined
-        if (style && typeof style.transform === "string") {
-          const currentTransform = (element as Element & { readonly style?: CSSStyleDeclaration }).style?.transform
-          if (currentTransform) style.transform = `${currentTransform} ${style.transform}`
-        }
-        const props = { ...extraProps, ...(style ? { style } : {}) }
-        const appliedProps = element.localName.includes("-") ? props : nativeElementProps(props)
-        if (Object.keys(appliedProps).length > 0) applyDomProps(element, appliedProps, context)
-      })
-      return content
+      return applyModifier(content, modifier)
     },
     view(node, render, identity) {
-      const key = viewIdentityKey(identity)
-      context.visitedStateIdentities.add(key)
-      let entry = context.states.get(key)
-      if (!entry || entry.host !== node.host) {
-        entry = { host: node.host, value: node.state?.(node.props) ?? {} }
-        context.states.set(key, entry)
-      }
-      return render({ ...node.props, ...entry.value })
+      return materializeView(node, render, identity)
     },
     geometry(_node, render) {
+      markUnsafeViewAncestors(context)
       const index = context.geometryIndex++
       const wrapper = context.document.createElement("div")
       wrapper.dataset.vune = "GeometryReader"
@@ -467,6 +1023,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       return wrapper
     },
   }
+  return renderer
 }
 
 function geometryFromElement(element: Element): GeometryProxy {
@@ -503,7 +1060,18 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
   let stopped = false
   let scheduled = false
   let pendingTransaction: Transaction | undefined
-  let unsubscribers: Array<() => void> = []
+  const subscriptions = new Map<StateRef<unknown>, () => void>()
+  const syncSubscriptions = (dependencies: Set<StateRef<unknown>>, schedule: (transaction: Transaction) => void) => {
+    for (const [dependency, unsubscribe] of subscriptions) {
+      if (dependencies.has(dependency)) continue
+      unsubscribe()
+      subscriptions.delete(dependency)
+    }
+    for (const dependency of dependencies) {
+      if (subscriptions.has(dependency)) continue
+      subscriptions.set(dependency, subscribeState(dependency, schedule))
+    }
+  }
   const document = container.ownerDocument
   const canMaterializeDOM = typeof document?.createElement === "function" && typeof (container as Element & { replaceChildren?: unknown }).replaceChildren === "function"
 
@@ -527,7 +1095,22 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       geometryIndex: 0,
       hasRefs: false,
       hydrating: false,
+      stagingEvents: true,
+      stagingProps: true,
     }
+    const viewRuntime: DomViewRuntime = {
+      boundaries: new Map(),
+      nodeKeys: new WeakMap(),
+      reuseCandidates: new WeakMap(),
+      stack: [],
+      renderedKeys: new Set(),
+      passVisitedStates: new Set(),
+      rootChildren: new Set(),
+      rootNextChildren: new Set(),
+      forceAll: false,
+      replayingModifiers: false,
+    }
+    domViewRuntimes.set(context, viewRuntime)
     const renderer = createDomRenderer(context)
     let activeRefs = new Map<Element, { readonly reference: unknown; readonly cleanup: () => void }>()
     let geometryScheduled = false
@@ -535,6 +1118,101 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const lazyViewportTargets = new Set<EventTarget>()
     const lazyViewportCleanups: Array<() => void> = []
     let hasMounted = false
+    let update: () => void
+
+    const preservedStatePrefixes = () => [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
+    const isPreservedStateKey = (key: string): boolean => preservedStatePrefixes().some(prefix => key === prefix || key.startsWith(`${prefix}|`))
+    const disposeBoundary = (key: string, preserveState = false): void => {
+      const boundary = viewRuntime.boundaries.get(key)
+      if (!boundary) {
+        if (!preserveState) context.states.delete(key)
+        return
+      }
+      for (const child of [...boundary.children]) disposeBoundary(child, preserveState || isPreservedStateKey(child))
+      boundary.subscriptions.forEach(unsubscribe => unsubscribe())
+      boundary.subscriptions.clear()
+      boundary.scheduled = false
+      boundary.currentNodes = []
+      viewRuntime.boundaries.delete(key)
+      if (!preserveState) context.states.delete(key)
+    }
+    const beginViewPass = (boundaryRootKey?: string): void => {
+      viewRuntime.renderedKeys = new Set()
+      viewRuntime.passVisitedStates = new Set()
+      viewRuntime.boundaryRootKey = boundaryRootKey
+      if (!boundaryRootKey) viewRuntime.rootNextChildren.clear()
+    }
+    const requestRootUpdate = (transaction?: Transaction, forceAll = true): void => {
+      if (transaction) pendingTransaction = transaction
+      if (forceAll) viewRuntime.forceAll = true
+      if (scheduled || stopped) return
+      scheduled = true
+      queueMicrotask(() => update())
+    }
+    const syncBoundarySubscriptions = (boundary: DomViewBoundary): void => {
+      for (const [dependency, unsubscribe] of boundary.subscriptions) {
+        if (boundary.dependencies.has(dependency)) continue
+        unsubscribe()
+        boundary.subscriptions.delete(dependency)
+      }
+      for (const dependency of boundary.dependencies) {
+        if (boundary.subscriptions.has(dependency)) continue
+        boundary.subscriptions.set(dependency, subscribeState(dependency, transaction => {
+          boundary.pendingTransaction = transaction
+          if (boundary.scheduled || stopped) return
+          boundary.scheduled = true
+          if (!boundary.mounted || boundary.currentNodes.length === 0) {
+            // A View that currently renders no DOM has no stable local range
+            // to patch. Schedule the root pass immediately so a single state
+            // microtask can materialize the newly-visible branch. Force the
+            // pass because an unchanged mounted ancestor could otherwise be
+            // reused before traversal reaches this empty descendant.
+            requestRootUpdate(transaction, true)
+            return
+          }
+          if (!boundary.localSafe) {
+            // The owning boundary itself must be re-evaluated at the root so
+            // geometry/lazy indexes stay globally coherent, but unaffected
+            // child View boundaries can still be reused.
+            requestRootUpdate(transaction, false)
+            return
+          }
+          queueMicrotask(() => updateBoundary(boundary))
+        }))
+      }
+    }
+    const commitViewPass = (rootPass: boolean): void => {
+      for (const key of viewRuntime.renderedKeys) {
+        const boundary = viewRuntime.boundaries.get(key)
+        if (!boundary) continue
+        // Reused boundaries keep the same live node range, dependency set, and
+        // child boundary graph. Their parent/key metadata was already updated
+        // during materialization, so rebuilding Sets and resyncing subscribers
+        // here is pure list-size-proportional bookkeeping.
+        if (!boundary.renderedBody) continue
+        const uniqueNodes = [...new Set(boundary.nextNodes)]
+        boundary.currentNodes = uniqueNodes
+        boundary.mounted = boundary.currentNodes.length > 0 && boundary.currentNodes.some(node => node.parentNode !== null)
+        syncBoundarySubscriptions(boundary)
+        if (boundary.renderedBody) {
+          for (const child of [...boundary.children]) {
+            if (boundary.nextChildren.has(child)) continue
+            disposeBoundary(child, isPreservedStateKey(child))
+          }
+          boundary.children.clear()
+          boundary.nextChildren.forEach(child => boundary.children.add(child))
+        }
+      }
+      if (rootPass) {
+        for (const child of [...viewRuntime.rootChildren]) {
+          if (viewRuntime.rootNextChildren.has(child)) continue
+          disposeBoundary(child, isPreservedStateKey(child))
+        }
+        viewRuntime.rootChildren.clear()
+        viewRuntime.rootNextChildren.forEach(child => viewRuntime.rootChildren.add(child))
+      }
+      viewRuntime.boundaryRootKey = undefined
+    }
     const commitRefs = () => {
       if (!context.hasRefs && activeRefs.size === 0) return
       const desired = new Map<Element, unknown>()
@@ -588,7 +1266,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         geometryScheduled = true
         queueMicrotask(() => {
           geometryScheduled = false
-          update()
+          requestRootUpdate(undefined, true)
         })
       }
     }
@@ -617,8 +1295,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       queueMicrotask(() => {
         lazyMeasureScheduled = false
         if (stopped || !refreshLazyRanges() || scheduled) return
-        scheduled = true
-        queueMicrotask(update)
+        requestRootUpdate(undefined, true)
       })
     }
     const observeLazyViewport = () => {
@@ -671,17 +1348,54 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
       return positions
     }
-    const update = () => {
+    const updateBoundary = (boundary: DomViewBoundary): void => {
+      if (stopped || viewRuntime.boundaries.get(boundary.key) !== boundary || !boundary.scheduled) return
+      let parentKey = boundary.parentKey
+      while (parentKey) {
+        const parentBoundary = viewRuntime.boundaries.get(parentKey)
+        if (parentBoundary?.scheduled) return
+        parentKey = parentBoundary?.parentKey
+      }
+      const currentNodes = [...boundary.currentNodes]
+      const parent = currentNodes[0]?.parentNode
+      if (!parent || currentNodes.some(node => node.parentNode !== parent)) {
+        boundary.scheduled = false
+        requestRootUpdate(boundary.pendingTransaction, true)
+        return
+      }
+      const renderTransaction = boundary.pendingTransaction
+      beginViewPass(boundary.key)
+      context.hasRefs = false
+      const materialize = viewRuntime.materializeView
+      if (!materialize) {
+        boundary.scheduled = false
+        requestRootUpdate(renderTransaction, true)
+        return
+      }
+      const output = materialize(boundary.node, boundary.render, boundary.identity, true)
+      if (!boundary.localSafe) {
+        // A branch introduced GeometryReader/Lazy content that was not present
+        // when this boundary was classified. Do not commit with local indexes;
+        // rerun it through the root transaction instead.
+        requestRootUpdate(renderTransaction, false)
+        return
+      }
+      reconcileDomRange(parent, currentNodes, outputNodes(output), context)
+      commitViewPass(false)
+      commitRefs()
+    }
+
+    update = () => {
       if (stopped) return
       scheduled = false
       const scrollPositions = captureLazyScrollPositions()
-      unsubscribers.forEach(unsubscribe => unsubscribe())
       context.geometryIndex = 0
       context.hasRefs = false
       context.visitedStateIdentities.clear()
       context.visitedLazyIdentities.clear()
       context.lazyNodes.clear()
       context.preservedLazyStatePrefixes.clear()
+      beginViewPass()
       const dependencies = new Set<StateRef<unknown>>()
       context.hydrating = Boolean(options.hydrate && !hasMounted)
       const renderTransaction = pendingTransaction
@@ -695,23 +1409,31 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
       let outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
       const existingChildren = [...container.childNodes]
-      const hydrated = context.hydrating
+      const attemptedHydration = context.hydrating
+      const hydrated = attemptedHydration
         && existingChildren.length === outputChildren.length
         && outputChildren.every((child, index) => hydrateNode(child, existingChildren[index], context))
+      if (hydrated) {
+        outputChildren.forEach((child, index) => bindHydratedSubtree(child, existingChildren[index], context))
+      }
       if (!hydrated) {
         context.hydrating = false
-        // A failed structural match may already have activated refs/listeners
-        // on the prefix that matched. Release those bindings before replacing
-        // or reconciling the server tree, then materialize a fresh client tree
-        // with normal DOM prop activation enabled.
-        context.geometryIndex = 0
-        context.hasRefs = false
-        context.visitedLazyIdentities.clear()
-        context.lazyNodes.clear()
-        output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
-        outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
+        // Ordinary client rendering can reconcile the first candidate tree
+        // directly. A failed hydration attempt is the exception: its
+        // candidate intentionally skipped event activation, and the partial
+        // hydration walk may already have touched live nodes, so materialize
+        // one clean client candidate only for that rare fallback path.
+        if (attemptedHydration) {
+          context.geometryIndex = 0
+          context.hasRefs = false
+          context.visitedLazyIdentities.clear()
+          context.lazyNodes.clear()
+          output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
+          outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
+        }
         reconcileDomChildren(container, outputChildren, context)
       }
+      commitViewPass(true)
       for (const [parent, position] of scrollPositions) {
         parent.scrollTop = position.top
         parent.scrollLeft = position.left
@@ -723,26 +1445,35 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         if (!context.visitedLazyIdentities.has(key)) context.lazyMeasurements.delete(key)
       }
       commitRefs()
-      unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => {
-        pendingTransaction = transaction
-        if (scheduled || stopped) return
-        scheduled = true
-        queueMicrotask(update)
-      }))
+      syncSubscriptions(dependencies, transaction => {
+        requestRootUpdate(transaction, true)
+      })
       updateGeometry()
       observeLazyViewport()
       if (refreshLazyRanges() && !scheduled) {
-        scheduled = true
-        queueMicrotask(update)
+        requestRootUpdate(undefined, true)
       }
       hasMounted = true
+      // A geometry/lazy measurement may have queued the next root pass while
+      // this one was committing. Keep the force flag for that queued pass;
+      // otherwise the top View could be reused and the changed range would
+      // never be materialized.
+      if (!scheduled) viewRuntime.forceAll = false
     }
     update()
     return () => {
       if (stopped) return
       stopped = true
-      unsubscribers.forEach(unsubscribe => unsubscribe())
-      unsubscribers = []
+      subscriptions.forEach(unsubscribe => unsubscribe())
+      subscriptions.clear()
+      for (const key of [...viewRuntime.rootChildren]) disposeBoundary(key)
+      viewRuntime.rootChildren.clear()
+      viewRuntime.rootNextChildren.clear()
+      for (const boundary of viewRuntime.boundaries.values()) {
+        boundary.subscriptions.forEach(unsubscribe => unsubscribe())
+        boundary.subscriptions.clear()
+      }
+      viewRuntime.boundaries.clear()
       activeRefs.forEach(entry => entry.cleanup())
       activeRefs.clear()
       lazyViewportCleanups.forEach(cleanup => cleanup())
@@ -755,25 +1486,24 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
   const update = () => {
     if (stopped) return
     scheduled = false
-    unsubscribers.forEach(unsubscribe => unsubscribe())
     const dependencies = new Set<StateRef<unknown>>()
     const renderTransaction = pendingTransaction
     pendingTransaction = undefined
     const html = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderToHTML(value), dependency => dependencies.add(dependency)))
     container.innerHTML = html
-    unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => {
+    syncSubscriptions(dependencies, transaction => {
       pendingTransaction = transaction
       if (scheduled || stopped) return
       scheduled = true
       queueMicrotask(update)
-    }))
+    })
   }
   update()
   return () => {
     if (stopped) return
     stopped = true
-    unsubscribers.forEach(unsubscribe => unsubscribe())
-    unsubscribers = []
+    subscriptions.forEach(unsubscribe => unsubscribe())
+    subscriptions.clear()
     if (container.innerHTML) container.innerHTML = ""
   }
 }

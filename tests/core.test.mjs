@@ -495,6 +495,128 @@ test("State tracks defineProperty and newly defined nested values", () => {
   unsubscribe()
 })
 
+test("State primitive nested mutations do not rescan unrelated reactive ownership", () => {
+  let ownKeysCalls = 0
+  const tracked = Array.from({ length: 64 }, (_, index) => {
+    const target = { count: index }
+    return new Proxy(target, {
+      ownKeys(value) {
+        ownKeysCalls += 1
+        return Reflect.ownKeys(value)
+      },
+    })
+  })
+  const state = State(tracked)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  ownKeysCalls = 0
+
+  state.value[31].count += 1
+
+  assert.equal(notifications, 1)
+  assert.equal(state.value[31].count, 32)
+  assert.equal(ownKeysCalls, 0)
+  unsubscribe()
+})
+
+test("State reuses reactive ownership for additional subscribers", () => {
+  let ownKeysCalls = 0
+  const tracked = new Proxy({ nested: { count: 0 } }, {
+    ownKeys(value) { ownKeysCalls += 1; return Reflect.ownKeys(value) },
+  })
+  const state = State(tracked)
+  let firstCalls = 0
+  let secondCalls = 0
+  const unsubscribeFirst = subscribeState(state, () => { firstCalls += 1 })
+  assert.ok(ownKeysCalls > 0)
+  ownKeysCalls = 0
+  const unsubscribeSecond = subscribeState(state, () => { secondCalls += 1 })
+  assert.equal(ownKeysCalls, 0)
+  state.value.nested.count += 1
+  assert.equal(firstCalls, 1)
+  assert.equal(secondCalls, 1)
+  unsubscribeSecond()
+  unsubscribeFirst()
+})
+
+test("State incrementally owns appended subtrees and batches native array mutators", () => {
+  const state = State([{ id: 0 }, { id: 1 }, { id: 2 }])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+
+  state.value.push({ id: 3, nested: { count: 0 } })
+  assert.equal(notifications, 1)
+  state.value[3].nested.count += 1
+  assert.equal(notifications, 2)
+
+  notifications = 0
+  state.value.reverse()
+  assert.equal(notifications, 1)
+  notifications = 0
+  state.value.sort((left, right) => left.id - right.id)
+  assert.equal(notifications, 1)
+  notifications = 0
+  state.value.splice(1, 2, { id: 10 }, { id: 11 })
+  assert.equal(notifications, 1)
+  unsubscribe()
+})
+
+test("State array mutator wrappers preserve method identity and generic calls", () => {
+  const first = State([1])
+  const second = State([2])
+  assert.equal(first.value.push, first.value.push)
+  let firstCalls = 0
+  let secondCalls = 0
+  const unsubscribeFirst = subscribeState(first, () => { firstCalls += 1 })
+  const unsubscribeSecond = subscribeState(second, () => { secondCalls += 1 })
+  const push = first.value.push
+  push.call(second.value, 3, 4)
+  assert.deepEqual([...second.value], [2, 3, 4])
+  assert.equal(firstCalls, 0)
+  assert.equal(secondCalls, 1)
+  unsubscribeSecond()
+  unsubscribeFirst()
+})
+
+test("State array batching does not delay unrelated State notifications", () => {
+  const values = State([3, 2, 1])
+  const other = State(0)
+  const order = []
+  const unsubscribeValues = subscribeState(values, () => order.push("values"))
+  const unsubscribeOther = subscribeState(other, () => order.push("other"))
+  let changed = false
+  values.value.sort((left, right) => {
+    if (!changed) { changed = true; other.value += 1 }
+    return left - right
+  })
+  assert.equal(order[0], "other")
+  assert.equal(order.filter(value => value === "values").length, 1)
+  unsubscribeOther()
+  unsubscribeValues()
+})
+
+test("State array batching detaches removed ownership while preserving shared and cyclic ownership", () => {
+  const shared = { count: 0 }
+  const cycle = { count: 0 }
+  cycle.self = cycle
+  const state = State([shared, shared, cycle])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+
+  const sharedProxy = state.value[0]
+  state.value.splice(0, 1)
+  notifications = 0
+  sharedProxy.count += 1
+  assert.equal(notifications, 1)
+
+  const cycleProxy = state.value[1]
+  state.value.pop()
+  notifications = 0
+  cycleProxy.count += 1
+  assert.equal(notifications, 0)
+  unsubscribe()
+})
+
 test("State assignments do not read accessor properties before setting", () => {
   let getterCalls = 0
   let setterValue

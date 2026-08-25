@@ -35,16 +35,18 @@ test('workspace-internal dependencies never require a published Vune package dur
   }
 })
 
-test('renderer-independent root does not force a renderer into canonical consumers', () => {
+test('canonical root installs the published Vune packages together', () => {
   const manifest = readJSON('package.json')
-  assert.equal(manifest.dependencies['@vune-ui/vue'], undefined)
-  assert.equal(manifest.dependencies['@vune-ui/react'], undefined)
-  assert.equal(manifest.dependencies['@vune-ui/web'], undefined)
-  assert.equal(manifest.dependencies['@vune-ui/core'], 'workspace:*')
-  assert.equal(manifest.peerDependencies['@vune-ui/react'], 'workspace:*')
-  assert.equal(manifest.peerDependenciesMeta['@vune-ui/react'].optional, true)
-  assert.equal(manifest.peerDependenciesMeta.react.optional, true)
-  assert.equal(manifest.peerDependenciesMeta['react-dom'].optional, true)
+  for (const name of [
+    '@vune-ui/compiler',
+    '@vune-ui/core',
+    '@vune-ui/react',
+    '@vune-ui/vite',
+    '@vune-ui/vue',
+    '@vune-ui/web',
+  ]) assert.equal(manifest.dependencies[name], 'workspace:*')
+  assert.equal(manifest.peerDependencies, undefined)
+  assert.equal(manifest.peerDependenciesMeta, undefined)
 })
 
 test('local package output never checks stale archives into source', () => {

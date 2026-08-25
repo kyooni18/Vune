@@ -17,12 +17,17 @@ export interface BindingRef<T> {
 export type Value<T> = T | StateRef<T> | BindingRef<T> | (() => T)
 type Listener = (transaction: Transaction) => void
 
+type OwnershipChange = "none" | "add" | "reconcile"
+
 interface StateRecord<T> {
   current: T
   listeners: Set<Listener>
   version: number
   owners: Set<ReactiveOwner>
   transaction: Transaction
+  batchDepth: number
+  pendingNotification: boolean
+  pendingReconcile: boolean
 }
 
 interface ReactiveOwner {
@@ -35,6 +40,17 @@ const records = new WeakMap<object, StateRecord<any>>()
 const bindings = new WeakSet<object>()
 const owners = new WeakMap<object, ReactiveOwner>()
 const proxyRaws = new WeakMap<object, object>()
+const arrayMutators = new Map<PropertyKey, Function>([
+  ["copyWithin", Array.prototype.copyWithin],
+  ["fill", Array.prototype.fill],
+  ["pop", Array.prototype.pop],
+  ["push", Array.prototype.push],
+  ["reverse", Array.prototype.reverse],
+  ["shift", Array.prototype.shift],
+  ["sort", Array.prototype.sort],
+  ["splice", Array.prototype.splice],
+  ["unshift", Array.prototype.unshift],
+])
 let activeCollector: ((state: StateRef<unknown>) => void) | null = null
 
 export function isStateRef(value: unknown): value is StateRef<unknown> {
@@ -70,17 +86,35 @@ function ownerFor(raw: object): ReactiveOwner {
   return owner
 }
 
-function notify(record: StateRecord<unknown>): void {
+function dispatchNotification(record: StateRecord<unknown>): void {
   record.version += 1
-  record.transaction = snapshotTransaction(currentTransaction())
   for (const listener of [...record.listeners]) listener(record.transaction)
 }
 
-function notifyOwner(owner: ReactiveOwner): void {
-  const affected = [...owner.records]
-  for (const record of affected) notify(record)
-  for (const record of affected) {
-    if (record.listeners.size > 0) reconcile(record as StateRecord<unknown>)
+function notify(record: StateRecord<unknown>): void {
+  record.transaction = snapshotTransaction(currentTransaction())
+  if (record.batchDepth > 0) {
+    record.pendingNotification = true
+    return
+  }
+  dispatchNotification(record)
+}
+
+function beginBatch(record: StateRecord<unknown>): void {
+  record.batchDepth += 1
+}
+
+function endBatch(record: StateRecord<unknown>): void {
+  if (record.batchDepth === 0) return
+  record.batchDepth -= 1
+  if (record.batchDepth > 0) return
+  if (record.pendingReconcile) {
+    record.pendingReconcile = false
+    if (record.listeners.size > 0) reconcile(record)
+  }
+  if (record.pendingNotification) {
+    record.pendingNotification = false
+    dispatchNotification(record)
   }
 }
 
@@ -90,9 +124,60 @@ function attach(record: StateRecord<unknown>, owner: ReactiveOwner): void {
   record.owners.add(owner)
 }
 
+function attachGraph(record: StateRecord<unknown>, value: unknown, visited = new Set<object>()): void {
+  const raw = unwrap(value)
+  if (!reactiveContainer(raw) || visited.has(raw)) return
+  visited.add(raw)
+  attach(record, ownerFor(raw))
+  for (const property of Reflect.ownKeys(raw)) {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, property)
+    if (descriptor && "value" in descriptor) attachGraph(record, descriptor.value, visited)
+  }
+}
+
 function detach(record: StateRecord<unknown>): void {
   for (const owner of record.owners) owner.records.delete(record)
   record.owners.clear()
+}
+
+function reconcile(record: StateRecord<unknown>): void {
+  detach(record)
+  attachGraph(record, record.current)
+}
+
+function requestReconcile(record: StateRecord<unknown>): void {
+  if (record.listeners.size === 0) return
+  if (record.batchDepth > 0) {
+    record.pendingReconcile = true
+    return
+  }
+  reconcile(record)
+}
+
+function ownershipChange(previous: unknown, next: unknown, previousExists = true): OwnershipChange {
+  const left = unwrap(previous)
+  const right = unwrap(next)
+  if (previousExists && Object.is(left, right)) return "none"
+  const previousReactive = previousExists && reactiveContainer(left)
+  const nextReactive = reactiveContainer(right)
+  if (!previousReactive && nextReactive) return "add"
+  if (previousReactive) return "reconcile"
+  return "none"
+}
+
+function updateOwnership(record: StateRecord<unknown>, change: OwnershipChange, addedValue?: unknown): void {
+  if (record.listeners.size === 0 || change === "none") return
+  if (change === "add") {
+    attachGraph(record, addedValue)
+    return
+  }
+  requestReconcile(record)
+}
+
+function notifyOwner(owner: ReactiveOwner, change: OwnershipChange = "reconcile", addedValue?: unknown): void {
+  const affected = [...owner.records]
+  for (const record of affected) updateOwnership(record, change, addedValue)
+  for (const record of affected) notify(record)
 }
 
 function samePropertyDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
@@ -112,39 +197,74 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
   const owner = ownerFor(raw)
   const existing = owner.proxies.get(record)
   if (existing) return existing as T
+  const mutatorCache = new Map<PropertyKey, Function>()
   const proxy = new Proxy(raw, {
-    get(target, property, receiver) { return wrap(Reflect.get(target, property, receiver), record) },
+    get(target, property, receiver) {
+      const result = Reflect.get(target, property, receiver)
+      const nativeMutator = Array.isArray(target) ? arrayMutators.get(property) : undefined
+      if (nativeMutator && result === nativeMutator) {
+        const cached = mutatorCache.get(property)
+        if (cached) return cached
+        const wrapper = function(this: unknown, ...arguments_: unknown[]) {
+          const actual = unwrap(this)
+          const actualOwner = typeof actual === "object" && actual !== null ? owners.get(actual as object) : undefined
+          const batched = actualOwner ? [...actualOwner.records] : []
+          for (const affected of batched) beginBatch(affected)
+          try {
+            return Reflect.apply(nativeMutator, this, arguments_)
+          } finally {
+            for (let index = batched.length - 1; index >= 0; index -= 1) endBatch(batched[index])
+          }
+        }
+        mutatorCache.set(property, wrapper)
+        return wrapper
+      }
+      return wrap(result, record)
+    },
     set(target, property, next) {
       const normalized = unwrap(next)
       const descriptor = Reflect.getOwnPropertyDescriptor(target, property)
       const changed = !descriptor || !("value" in descriptor) || !Object.is(unwrap(descriptor.value), normalized)
+      const change = descriptor && "value" in descriptor
+        ? ownershipChange(descriptor.value, normalized)
+        : ownershipChange(undefined, normalized, false)
       const updated = Reflect.set(target, property, normalized, target)
-      if (updated && changed) notifyOwner(owner)
+      if (updated && changed) notifyOwner(owner, change, change === "add" ? normalized : undefined)
       return updated
     },
     deleteProperty(target, property) {
-      const existed = Reflect.getOwnPropertyDescriptor(target, property) !== undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, property)
+      const existed = descriptor !== undefined
       const deleted = Reflect.deleteProperty(target, property)
-      if (deleted && existed) notifyOwner(owner)
+      if (deleted && existed) {
+        const change = descriptor && "value" in descriptor && reactiveContainer(unwrap(descriptor.value)) ? "reconcile" : "none"
+        notifyOwner(owner, change)
+      }
       return deleted
     },
     defineProperty(target, property, descriptor) {
       const previous = Reflect.getOwnPropertyDescriptor(target, property)
       const normalized = "value" in descriptor ? { ...descriptor, value: unwrap(descriptor.value) } : descriptor
       const defined = Reflect.defineProperty(target, property, normalized)
-      if (defined && !samePropertyDescriptor(previous, Reflect.getOwnPropertyDescriptor(target, property))) notifyOwner(owner)
+      const current = Reflect.getOwnPropertyDescriptor(target, property)
+      if (defined && !samePropertyDescriptor(previous, current)) {
+        const previousValue = previous && "value" in previous ? previous.value : undefined
+        const currentValue = current && "value" in current ? current.value : undefined
+        const change = ownershipChange(previousValue, currentValue, Boolean(previous && "value" in previous))
+        notifyOwner(owner, change, change === "add" ? currentValue : undefined)
+      }
       return defined
     },
     setPrototypeOf(target, prototype) {
       const previous = Reflect.getPrototypeOf(target)
       const updated = Reflect.setPrototypeOf(target, prototype)
-      if (updated && previous !== prototype) notifyOwner(owner)
+      if (updated && previous !== prototype) notifyOwner(owner, "reconcile")
       return updated
     },
     preventExtensions(target) {
       const wasExtensible = Reflect.isExtensible(target)
       const updated = Reflect.preventExtensions(target)
-      if (updated && wasExtensible) notifyOwner(owner)
+      if (updated && wasExtensible) notifyOwner(owner, "reconcile")
       return updated
     },
   })
@@ -153,35 +273,28 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
   return proxy as T
 }
 
-function reconcile(record: StateRecord<unknown>): void {
-  detach(record)
-  const visited = new Set<object>()
-  const visit = (value: unknown): void => {
-    const raw = unwrap(value)
-    if (!reactiveContainer(raw) || visited.has(raw)) return
-    visited.add(raw)
-    attach(record, ownerFor(raw))
-    for (const property of Reflect.ownKeys(raw)) {
-      const descriptor = Object.getOwnPropertyDescriptor(raw, property)
-      if (descriptor && "value" in descriptor) visit(descriptor.value)
-    }
-  }
-  visit(record.current)
-}
-
 export function State<T>(initial: T): StateRef<T> {
   const state = {} as StateRef<T>
-  const record: StateRecord<T> = { current: initial, listeners: new Set(), version: 0, owners: new Set(), transaction: new Transaction() }
-  record.current = wrap(initial, record)
+  const record: StateRecord<T> = {
+    current: initial,
+    listeners: new Set(),
+    version: 0,
+    owners: new Set(),
+    transaction: new Transaction(),
+    batchDepth: 0,
+    pendingNotification: false,
+    pendingReconcile: false,
+  }
+  record.current = wrap(initial, record as StateRecord<unknown>)
   records.set(state as object, record)
   Object.defineProperty(state, "value", {
     enumerable: true,
     get() { activeCollector?.(state as StateRef<unknown>); return record.current },
     set(next: T) {
+      const rawNext = unwrap(next)
+      if (Object.is(unwrap(record.current), rawNext)) return
       detach(record as StateRecord<unknown>)
-      const wrapped = wrap(next, record as StateRecord<unknown>)
-      if (Object.is(record.current, wrapped)) { if (record.listeners.size) reconcile(record as StateRecord<unknown>); return }
-      record.current = wrapped
+      record.current = wrap(rawNext, record as StateRecord<unknown>) as T
       if (record.listeners.size) reconcile(record as StateRecord<unknown>)
       notify(record as StateRecord<unknown>)
     },
@@ -192,10 +305,20 @@ export function State<T>(initial: T): StateRef<T> {
 export function subscribeState(state: StateRef<unknown>, listener: Listener): () => void {
   const record = records.get(state as object)
   if (!record) return () => undefined
+  const first = record.listeners.size === 0
   record.listeners.add(listener)
-  reconcile(record)
+  if (first) reconcile(record)
   let active = true
-  return () => { if (!active) return; active = false; record.listeners.delete(listener); if (!record.listeners.size) detach(record) }
+  return () => {
+    if (!active) return
+    active = false
+    record.listeners.delete(listener)
+    if (!record.listeners.size) {
+      record.pendingNotification = false
+      record.pendingReconcile = false
+      detach(record)
+    }
+  }
 }
 
 export function collectStateReads<T>(compute: () => T, collector: (state: StateRef<unknown>) => void): T {

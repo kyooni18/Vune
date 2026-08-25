@@ -35,6 +35,110 @@ export const Toggle = defineBuiltinView<ToggleProps>(
   ]),
 ) as TypedViewConstructor<ToggleProps, ToggleCall>
 
+export interface SwitchOptions {
+  readonly tint?: string
+  readonly offTint?: string
+  readonly size?: number
+  readonly label?: string
+}
+export interface SwitchProps extends SwitchOptions { readonly isOn: BindingRef<boolean>; readonly title?: string }
+interface SwitchCall {
+  (isOn: BindingRef<boolean>, options?: SwitchOptions): ModifiableViewNode
+  (title: string, isOn: BindingRef<boolean>, options?: SwitchOptions): ModifiableViewNode
+}
+
+export const Switch = defineBuiltinView<SwitchProps>(
+  "Switch",
+  [
+    initializer(
+      "Switch(_ title: string, isOn, options?)",
+      args => args.length >= 2 && args.length <= 3 && typeof args[0] === "string" && isBinding(args[1]) && (args[2] === undefined || isObject(args[2])),
+      args => {
+        const options = args[2] === undefined ? {} : requireOptionRecord(args[2], ["tint", "offTint", "size", "label"], "Switch")
+        return {
+          title: args[0] as string,
+          isOn: args[1] as BindingRef<boolean>,
+          tint: typeof options.tint === "string" ? options.tint : undefined,
+          offTint: typeof options.offTint === "string" ? options.offTint : undefined,
+          size: typeof options.size === "number" && Number.isFinite(options.size) && options.size > 0 ? options.size : undefined,
+          label: typeof options.label === "string" ? options.label : undefined,
+        }
+      },
+      [
+        initializerKinds.value(true, undefined, undefined, "string"),
+        initializerKinds.binding(true, "isOn", "boolean"),
+        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label"], "object"),
+      ],
+    ),
+    initializer(
+      "Switch(isOn, options?)",
+      args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || isObject(args[1])),
+      args => {
+        const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["tint", "offTint", "size", "label"], "Switch")
+        return {
+          isOn: args[0] as BindingRef<boolean>,
+          tint: typeof options.tint === "string" ? options.tint : undefined,
+          offTint: typeof options.offTint === "string" ? options.offTint : undefined,
+          size: typeof options.size === "number" && Number.isFinite(options.size) && options.size > 0 ? options.size : undefined,
+          label: typeof options.label === "string" ? options.label : undefined,
+        }
+      },
+      [
+        initializerKinds.binding(true, "isOn", "boolean"),
+        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label"], "object"),
+      ],
+    ),
+  ],
+  ({ title, isOn, tint, offTint, size, label }) => {
+    const height = size !== undefined ? size : 28
+    const width = Math.round(height * 1.8)
+    const inset = Math.max(2, Math.round(height / 10))
+    const thumbSize = height - inset * 2
+    const control = viewElement("button", {
+      type: "button",
+      role: "switch",
+      "data-vune": "Switch",
+      "aria-checked": Boolean(isOn.value),
+      ...(label !== undefined ? { "aria-label": label } : title === undefined ? {} : { "aria-label": title }),
+      onClick() { isOn.value = !isOn.value },
+      style: {
+        position: "relative",
+        width: `${width}px`,
+        height: `${height}px`,
+        borderRadius: `${height / 2}px`,
+        border: "none",
+        padding: "0",
+        cursor: "pointer",
+        background: isOn.value ? tint ?? "#34c759" : offTint ?? "#e9e9ea",
+        transition: "background 0.2s ease",
+      },
+    }, [
+      viewElement("span", {
+        style: {
+          position: "absolute",
+          top: `${inset}px`,
+          left: isOn.value ? `${width - thumbSize - inset}px` : `${inset}px`,
+          width: `${thumbSize}px`,
+          height: `${thumbSize}px`,
+          borderRadius: "50%",
+          background: "#ffffff",
+          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+          transition: "left 0.2s ease",
+        },
+      }),
+    ])
+    if (title === undefined) return control
+    return viewElement("span", {
+      "data-vune": "Switch",
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: `${Math.round(height * 0.32)}px`,
+      },
+    }, [Text(title), control])
+  },
+) as TypedViewConstructor<SwitchProps, SwitchCall>
+
 export interface TextFieldProps { readonly value: BindingRef<string>; readonly placeholder?: string }
 interface TextFieldCall { (value: BindingRef<string>, placeholder?: string): ModifiableViewNode }
 

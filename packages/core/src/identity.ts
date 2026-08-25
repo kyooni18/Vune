@@ -42,7 +42,14 @@ export type ViewIdentitySegment = string | number
 export type ViewIdentity = readonly ViewIdentitySegment[]
 
 export function viewIdentityKey(identity: ViewIdentity): string {
-  return identity.map(segment => `${typeof segment === "number" ? "n" : "s"}:${String(segment).length}:${String(segment)}`).join("|")
+  let key = ""
+  for (let index = 0; index < identity.length; index += 1) {
+    const segment = identity[index]
+    const value = String(segment)
+    if (index > 0) key += "|"
+    key += `${typeof segment === "number" ? "n" : "s"}:${value.length}:${value}`
+  }
+  return key
 }
 
 export function keyedViewIdentity(identity: ViewIdentity, key: string | number): ViewIdentity {

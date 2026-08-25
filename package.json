@@ -1,6 +1,6 @@
 {
   "name": "vune-ui",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "packageManager": "pnpm@11.22.0",
   "description": "Vune UI authoring package and React compatibility entry point.",
   "type": "module",
@@ -11,6 +11,7 @@
   "files": [
     "bin",
     "dist",
+    "editors",
     "templates",
     "README.md",
     "LICENSE"
@@ -68,7 +69,7 @@
     "test:browser": "node --test tests/browser.test.mjs",
     "test:browser:vue": "node --test tests/vue-browser.test.mjs",
     "test:browser:web": "node --test tests/web-browser.test.mjs",
-    "test:packages": "node --test tests/core.test.mjs tests/animation-manifest.test.mjs tests/graph-modules.test.mjs tests/compiler-modules.test.mjs tests/web-modules.test.mjs tests/bundle-size.test.mjs tests/react-package.test.mjs tests/web-package.test.mjs tests/vue-package.test.mjs tests/vue-live.test.mjs tests/compiler-package.test.mjs tests/compiler-hardening.test.mjs tests/compiler-parser-fuzz.test.mjs tests/canonical-exports.test.mjs tests/api-surface.test.mjs tests/button-initializers.test.mjs tests/layout-primitives.test.mjs tests/renderer-conformance.test.mjs tests/renderer-conformance-live.test.mjs tests/control-primitives.test.mjs tests/collection-interop.test.mjs tests/presentation-primitives.test.mjs tests/advanced-primitives.test.mjs tests/vscode-extension.test.mjs tests/vune-ui-cli.test.mjs tests/workspace-packaging.test.mjs tests/npm-release-script.test.mjs",
+    "test:packages": "node --test tests/core.test.mjs tests/animation-manifest.test.mjs tests/graph-modules.test.mjs tests/compiler-modules.test.mjs tests/web-modules.test.mjs tests/bundle-size.test.mjs tests/react-package.test.mjs tests/web-package.test.mjs tests/vue-package.test.mjs tests/vue-live.test.mjs tests/compiler-package.test.mjs tests/compiler-hardening.test.mjs tests/compiler-parser-fuzz.test.mjs tests/canonical-exports.test.mjs tests/api-surface.test.mjs tests/button-initializers.test.mjs tests/layout-primitives.test.mjs tests/renderer-conformance.test.mjs tests/renderer-conformance-live.test.mjs tests/control-primitives.test.mjs tests/collection-interop.test.mjs tests/presentation-primitives.test.mjs tests/advanced-primitives.test.mjs tests/vscode-extension.test.mjs tests/editor-integrations.test.mjs tests/vune-ui-cli.test.mjs tests/workspace-packaging.test.mjs tests/npm-release-script.test.mjs",
     "benchmark:modifiers": "pnpm run build && node benchmarks/modifiers.mjs",
     "benchmark:modifiers:ci": "VUNE_BENCH_CI=1 VUNE_BENCH_BASE_RATIO=8 VUNE_BENCH_DEPTH_RATIO=4 pnpm run benchmark:modifiers",
     "benchmark:performance": "pnpm run build && node benchmarks/performance.mjs",
@@ -93,6 +94,9 @@
     "dev:link": "node bin/vune-ui.mjs link",
     "dev:create": "node bin/vune-ui.mjs create --local",
     "dev:watch": "node scripts/watch-workspace.mjs",
+    "editor:install": "node bin/vune-ui.mjs editor install",
+    "lsp": "node bin/vune-ui.mjs lsp --stdio",
+    "vscode:package": "node editors/vscode/export.mjs",
     "pack:local": "pnpm run build && node scripts/pack-local.mjs",
     "local:install": "node scripts/install-local-packages.mjs",
     "release:check": "pnpm test && pnpm run benchmark:performance:ci && pnpm run demo:all:build && pnpm run test:browser:built",
@@ -106,10 +110,13 @@
     "check:swiftui-snapshot": "pnpm --filter @vune-ui/core run build && node scripts/check-swiftui-snapshot.mjs",
     "snapshot:swiftui": "node scripts/snapshot-swiftui-api.mjs"
   },
-  "peerDependencies": {
-    "react": ">=18 <20",
-    "react-dom": ">=18 <20",
-    "@vune-ui/react": "workspace:*"
+  "dependencies": {
+    "@vune-ui/compiler": "workspace:*",
+    "@vune-ui/core": "workspace:*",
+    "@vune-ui/react": "workspace:*",
+    "@vune-ui/vite": "workspace:*",
+    "@vune-ui/vue": "workspace:*",
+    "@vune-ui/web": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
@@ -153,19 +160,5 @@
   "bugs": {
     "url": "https://github.com/kyooni18/vune-ui/issues"
   },
-  "homepage": "https://github.com/kyooni18/vune-ui#readme",
-  "dependencies": {
-    "@vune-ui/core": "workspace:*"
-  },
-  "peerDependenciesMeta": {
-    "@vune-ui/react": {
-      "optional": true
-    },
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
-  }
+  "homepage": "https://github.com/kyooni18/vune-ui#readme"
 }

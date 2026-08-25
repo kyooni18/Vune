@@ -6,7 +6,6 @@ import {
   initializerKinds,
   isViewNode,
   lazyView,
-  modifier,
   resolveBuilderInput,
   type NamedArguments,
   type ViewValue,
@@ -22,6 +21,7 @@ import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
 import { arrayCheck } from "./graph/arrays.js"
+import { keyedContent } from "./graph/modifiers.js"
 
 export interface VStackOptions {
   readonly alignment?: "leading" | "center" | "trailing"
@@ -489,22 +489,16 @@ function encodedCollectionKey(key: InferredCollectionKey): string {
   return `${type}:${value.length}:${value}`
 }
 
-function collectionKeys<Item>(collection: readonly Item[], selector?: CollectionKeySelector<Item>): string[] {
-  const occurrences = new Map<string, number>()
-  return collection.map((item, index) => {
-    const key = collectionKey(item, index, selector)
-    const identity = encodedCollectionKey(key)
-    const occurrence = occurrences.get(identity) ?? 0
-    occurrences.set(identity, occurrence + 1)
-    if (occurrence > 0) warnForEachIdentity(`ForEach contains duplicate key "${String(key)}"; state identity is ambiguous.`)
-    return `${identity}|occurrence:${occurrence}`
-  })
-}
-
-function keyedCollectionChildren(value: ViewValue, key: string): ViewValue[] {
-  return ViewBuilder.buildBlock(value).map((child, index) => isViewNode(child)
-    ? modifier(child, "keyed", `${key}|child:${index}`)
-    : child)
+function appendKeyedCollectionChildren(children: ViewValue[], value: ViewValue, key: string): void {
+  if (isViewNode(value)) {
+    children.push(keyedContent(value, `${key}|child:0`))
+    return
+  }
+  const built = ViewBuilder.buildBlock(value)
+  for (let index = 0; index < built.length; index += 1) {
+    const child = built[index]
+    children.push(isViewNode(child) ? keyedContent(child, `${key}|child:${index}`) : child)
+  }
 }
 
 function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {
@@ -566,8 +560,19 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
   ],
   ({ items, key, content }) => {
     const collection = requireCollectionItems(isStateRef(items) ? items.value : items)
-    const keys = collectionKeys(collection, key as CollectionKeySelector<unknown> | undefined)
-    return viewFragment(collection.flatMap((item, index) => keyedCollectionChildren(content(item, index), keys[index])))
+    const selector = key as CollectionKeySelector<unknown> | undefined
+    const occurrences = new Map<string, number>()
+    const children: ViewValue[] = []
+    for (let index = 0; index < collection.length; index += 1) {
+      const item = collection[index]
+      const rawKey = collectionKey(item, index, selector)
+      const identity = encodedCollectionKey(rawKey)
+      const occurrence = occurrences.get(identity) ?? 0
+      occurrences.set(identity, occurrence + 1)
+      if (occurrence > 0) warnForEachIdentity(`ForEach contains duplicate key "${String(rawKey)}"; state identity is ambiguous.`)
+      appendKeyedCollectionChildren(children, content(item, index), `${identity}|occurrence:${occurrence}`)
+    }
+    return viewFragment(children)
   },
   "Item",
 )

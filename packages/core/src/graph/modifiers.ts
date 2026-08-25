@@ -75,6 +75,36 @@ function snapshotClassValue(value: unknown, seen = new Set<unknown[]>()): unknow
   }
 }
 
+function maskShapeDescriptor(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const node = value as { kind?: string; content?: unknown; props?: Record<string, unknown> }
+  const shape = node.kind === "modified" ? node.content : node
+  if (!shape || typeof shape !== "object") return undefined
+  const shapeNode = shape as { kind?: string; props?: Record<string, unknown> }
+  if (shapeNode.kind !== "element") return undefined
+  const name = shapeNode.props?.["data-vune"]
+  if (typeof name !== "string") return undefined
+  const radius = name === "Circle" ? 50
+    : name === "Capsule" ? 50
+      : name === "RoundedRectangle"
+        ? (() => {
+            const value = shapeNode.props?.style && typeof shapeNode.props.style === "object" ? (shapeNode.props.style as Record<string, unknown>).borderRadius : undefined
+            const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : 8
+            return Number.isFinite(parsed) ? Math.max(0, Math.min(50, parsed)) : 8
+          })()
+        : undefined
+  if (radius === undefined && name !== "Rectangle") return undefined
+  const shapeMarkup = name === "Circle"
+    ? `<circle cx="50" cy="50" r="50" fill="white"/>`
+    : `<rect x="0" y="0" width="100" height="100" rx="${radius ?? 0}" fill="white"/>`
+  return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">${shapeMarkup}</svg>`)}")`
+}
+
+function maskStyle(value: unknown): Record<string, string> {
+  const source = typeof value === "string" ? value : maskShapeDescriptor(value)
+  return source ? { mask: source, WebkitMask: source } : {}
+}
+
 function snapshotModifierArgument(name: string, value: unknown): unknown {
   if (name === "style") return snapshotStyleRecord(value)
   if (name === "frame") return snapshotRecord(value)
@@ -98,10 +128,13 @@ function snapshotModifierNode(value: unknown): ViewModifierNode | undefined {
   const arguments_ = ownDataValue(value, "arguments")
   if (typeof name !== "string" || arrayCheck(arguments_) !== true) return undefined
   const props = ownDataValue(value, "props")
+  const normalizedArguments = Object.freeze(snapshotArrayValues(arguments_ as readonly unknown[]).map(item => snapshotModifierArgument(name, item)))
+  const mask = name === "mask" ? maskStyle(normalizedArguments[0]) : {}
+  const normalizedProps = props === undefined ? undefined : props === null ? null : snapshotRecord(props, true) as object
   return Object.freeze({
     name,
-    arguments: Object.freeze(snapshotArrayValues(arguments_ as readonly unknown[]).map(item => snapshotModifierArgument(name, item))),
-    ...(props === undefined ? {} : { props: props === null ? null : snapshotRecord(props, true) as object }),
+    arguments: normalizedArguments,
+    ...(Object.keys(mask).length > 0 ? { props: Object.freeze({ style: Object.freeze(mask) }) } : normalizedProps === undefined ? {} : { props: normalizedProps }),
   })
 }
 
@@ -126,6 +159,7 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
   offset(this: ViewNode, valueOrX: OffsetValue | number, y?: number) {
     return applyModifier(this, "offset", typeof valueOrX === "number" ? [valueOrX, y ?? 0] : [valueOrX])
   },
+  mask(this: ViewNode, value: ViewNode | string) { return applyModifier(this, "mask", [value]) },
   animation(this: ViewNode, animation: Animation | null, value: unknown) { return applyModifier(this, "animation", [animation, value]) },
   style(this: ViewNode, value: VuneStyleProperties) { return applyModifier(this, "style", [value]) },
   className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },
@@ -185,10 +219,15 @@ export function modifiedContentCompiled(
   content: ViewNode,
   modifiers: readonly (readonly [name: string, arguments: readonly unknown[]])[],
 ): ModifiableViewNode {
-  const normalizedIncoming = modifiers.map(([name, arguments_]) => Object.freeze({
-    name,
-    arguments: Object.freeze(arguments_.map(item => snapshotModifierArgument(name, item))),
-  }) as ViewModifierNode)
+  const normalizedIncoming = modifiers.map(([name, arguments_]) => {
+    const normalizedArguments = Object.freeze(arguments_.map(item => snapshotModifierArgument(name, item)))
+    const mask = name === "mask" ? maskStyle(normalizedArguments[0]) : {}
+    return Object.freeze({
+      name,
+      arguments: normalizedArguments,
+      ...(Object.keys(mask).length > 0 ? { props: Object.freeze({ style: Object.freeze(mask) }) } : {}),
+    }) as ViewModifierNode
+  })
   return materializeModifiedContent(content, normalizedIncoming)
 }
 
@@ -199,4 +238,25 @@ export function modifier(content: ViewNode, name: string, ...arguments_: readonl
 
 export function modifierGraphOf(value: ViewNode): readonly ViewModifierNode[] {
   return value.kind === "modified" ? value.modifiers : []
+}
+
+/** Internal keyed wrapper used by collection builders. It preserves the same
+ * modifier graph shape without installing the public modifier prototype on
+ * every transient row node. */
+export function keyedContent(content: ViewNode, key: string | number): ViewNode {
+  const keyed = Object.freeze({
+    name: "keyed",
+    arguments: Object.freeze([key]),
+  }) as ViewModifierNode
+  const modifiers = Object.freeze(content.kind === "modified"
+    ? [...content.modifiers, keyed]
+    : [keyed])
+  return Object.freeze({
+    kind: "modified" as const,
+    content: content.kind === "modified" ? content.content : content,
+    modifiers,
+    modifier: keyed,
+    name: keyed.name,
+    arguments: keyed.arguments,
+  })
 }

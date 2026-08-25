@@ -8,15 +8,20 @@ respective runtimes. Legacy React APIs are isolated under `vune-ui/legacy`.
 The dependency direction is:
 
 ```text
-.vune.ts -> @vune-ui/compiler -> Vune View graph -> @vune-ui/react, @vune-ui/vue, or @vune-ui/web
+.vune / .vune.ts -> @vune-ui/compiler -> Vune View graph -> @vune-ui/react, @vune-ui/vue, or @vune-ui/web
 ```
 
 React is a renderer, not the definition of a Vune View.
 
 New framework code should import graph values from `vune-ui` and select a renderer
 explicitly from `@vune-ui/react`, `@vune-ui/vue`, or `@vune-ui/web`. The
-`vune-ui/legacy` entry point remains available for compatibility, backed by the
-separate `@vune-ui/legacy-react` package.
+`vune-ui/legacy` entry point remains available for compatibility and is implemented
+inside `@vune-ui/react`; the separate `@vune-ui/legacy-react` package remains only
+as a compatibility distribution.
+
+Installing `vune-ui` also installs the published Vune compiler, renderer
+packages, and Vite adapter. The `create-vune-ui` scaffolding CLI remains a
+separate package.
 
 The canonical Vite workflow lowers Vune builders and custom `struct ...: View` declarations without coupling the graph to a renderer. The compatibility React workflow also offers `State`, `Action`, and `view` macros.
 
@@ -151,7 +156,7 @@ export default view(() => (
 ))
 ```
 
-`@vune-ui/vite` lowers `.vune.ts` builders, labeled initializers, shorthand
+`@vune-ui/vite` lowers `.vune` and `.vune.ts` builders, labeled initializers, shorthand
 modifiers, raw HTML, and custom `struct ...: View` declarations. The root
 `vune-ui` entry remains renderer-independent; select React, Vue, or Web from the
 corresponding `@vune-ui/*` renderer package.
@@ -170,6 +175,26 @@ The release helper publishes in dependency order and can resume a partial releas
 
 See [Local development](docs/LOCAL_DEVELOPMENT.md) for the complete separate-
 project workflow.
+
+## Editor and LSP integration
+
+Vune includes a standalone stdio language server and setup generator for Vim,
+Neovim, VS Code, Zed, Helix, and generic LSP clients:
+
+```bash
+npx vune-ui editor install --editor all
+vune-ui lsp --stdio
+```
+
+To export the included VS Code extension as an installable VSIX:
+
+```bash
+pnpm vscode:package
+code --install-extension dist/vune-language-support-<version>.vsix
+```
+
+See [Editor integrations](docs/EDITORS.md) for global installs and client
+configuration details.
 
 ## View values, initializers, and builders
 

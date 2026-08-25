@@ -54,13 +54,24 @@ function domEvent(key: string): { readonly name: string; readonly capture: boole
 export function setDomEvent(element: Element, key: string, value: unknown, context: DomRenderContext, attach = true): void {
   const event = domEvent(key)
   const listeners = context.eventListeners.get(element) ?? new Map<string, EventListener>()
-  const previous = listeners.get(event.storageKey)
-  if (previous) element.removeEventListener(event.name, previous, event.capture)
-  listeners.delete(event.storageKey)
+  type EventInvoker = EventListener & { handler?: EventListener }
+  const previous = listeners.get(event.storageKey) as EventInvoker | undefined
   if (attach && typeof value === "function") {
-    const listener = value as EventListener
-    element.addEventListener(event.name, listener, event.capture)
-    listeners.set(event.storageKey, listener)
+    // Keep one native listener attached for the lifetime of the prop and only
+    // replace the current callback. Rendered event closures are commonly new
+    // function identities even when the DOM node is reused; remove/add on
+    // every reconciliation is pure overhead and can perturb event ordering.
+    if (previous) {
+      previous.handler = value as EventListener
+    } else {
+      const invoker = ((nativeEvent: Event) => invoker.handler?.call(element, nativeEvent)) as EventInvoker
+      invoker.handler = value as EventListener
+      element.addEventListener(event.name, invoker, event.capture)
+      listeners.set(event.storageKey, invoker)
+    }
+  } else if (previous) {
+    element.removeEventListener(event.name, previous, event.capture)
+    listeners.delete(event.storageKey)
   }
   if (listeners.size > 0) context.eventListeners.set(element, listeners)
   else context.eventListeners.delete(element)
@@ -168,6 +179,29 @@ function applyAttributeValue(element: Element, key: string, value: unknown): voi
   setAttribute(element, name, String(value))
 }
 
+function stageDomProps(element: Element, props: Record<string, unknown>, context: DomRenderContext): void {
+  const previous = context.domProps.get(element) ?? {}
+  const previousStyle = previous.style && typeof previous.style === "object" ? previous.style as Record<string, unknown> : undefined
+  const nextStyle = props.style && typeof props.style === "object" ? props.style as Record<string, unknown> : undefined
+  const remembered: Record<string, unknown> = {
+    ...previous,
+    ...props,
+    ...(nextStyle ? { style: { ...(previousStyle ?? {}), ...nextStyle } } : {}),
+  }
+  if (Object.prototype.hasOwnProperty.call(props, "class") || Object.prototype.hasOwnProperty.call(props, "className")) {
+    const before = classNameOf(previous.class ?? previous.className)
+    const incoming = classNameOf(props.class ?? props.className)
+    const combined = [before, incoming].filter(Boolean).join(" ")
+    delete remembered.className
+    if (combined) remembered.class = combined
+    else delete remembered.class
+  }
+  if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
+  context.domProps.set(element, remembered)
+  const nextKey = typeof props.key === "string" || typeof props.key === "number" ? props.key : undefined
+  if (nextKey !== undefined) context.domKeys.set(element, nextKey)
+}
+
 export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext, merge = true): void {
   const previous = merge ? context.domProps.get(element) ?? {} : {}
   const currentStyle = previous.style && typeof previous.style === "object" ? previous.style : {}
@@ -189,11 +223,15 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
 export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   if (context.hydrating) context.hydrationProps.set(element, props)
   if (!props || Object.keys(props).length === 0) return
+  if (context.stagingProps && !context.hydrating) {
+    stageDomProps(element, props, context)
+    return
+  }
   if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
   for (const [key, value] of Object.entries(props)) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
-      setDomEvent(element, key, value, context, !context.hydrating && typeof value === "function")
+      setDomEvent(element, key, value, context, !context.hydrating && !context.stagingEvents && typeof value === "function")
       continue
     }
     if (value === undefined || value === null) continue
@@ -207,6 +245,21 @@ export function applyDomProps(element: Element, props: Record<string, unknown> |
     applyAttributeValue(element, key, value)
   }
   rememberDomProps(element, props, context)
+}
+
+export function commitStagedDomProps(element: Element, context: DomRenderContext): void {
+  const props = context.domProps.get(element)
+  if (!props || Object.keys(props).length === 0) return
+  const stagingProps = context.stagingProps
+  const stagingEvents = context.stagingEvents
+  context.stagingProps = false
+  context.stagingEvents = false
+  try {
+    applyDomProps(element, props, context)
+  } finally {
+    context.stagingProps = stagingProps
+    context.stagingEvents = stagingEvents
+  }
 }
 
 function removeDomProp(element: Element, key: string): void {
@@ -237,7 +290,6 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
     if (/^on[A-Za-z]/.test(key)) setDomEvent(element, key, undefined, context, false)
     else removeDomProp(element, key)
   }
-  if (next?.style && typeof next.style === "object") element.removeAttribute("style")
   for (const [key, value] of Object.entries(next ?? {})) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
@@ -248,14 +300,43 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
       if (previous[key] !== undefined) removeDomProp(element, key)
       continue
     }
-    if (key === "style") { domStyle(element, value); continue }
+    if (key === "style") {
+      const previousStyle = previous.style
+      if (typeof value === "object" && value !== null && typeof previousStyle === "object" && previousStyle !== null) {
+        const style = styleDeclaration(element)
+        if (style) {
+          const before = previousStyle as Record<string, unknown>
+          const after = value as Record<string, unknown>
+          for (const styleKey of Object.keys(before)) {
+            if (Object.prototype.hasOwnProperty.call(after, styleKey)) continue
+            style.removeProperty(cssPropertyName(styleKey))
+          }
+          for (const [styleKey, styleValue] of Object.entries(after)) {
+            if (styleValue === undefined || styleValue === null) {
+              if (before[styleKey] !== undefined && before[styleKey] !== null) style.removeProperty(cssPropertyName(styleKey))
+              continue
+            }
+            if (Object.is(before[styleKey], styleValue)) continue
+            style.setProperty(cssPropertyName(styleKey), String(styleValue))
+          }
+        }
+      } else if (!Object.is(previousStyle, value)) {
+        element.removeAttribute("style")
+        domStyle(element, value)
+      }
+      continue
+    }
     if (key === "className" || key === "class") {
       const className = classNameOf(value)
-      if (className) element.setAttribute("class", className)
-      else element.removeAttribute("class")
+      const previousClassName = classNameOf(previous[key])
+      if (className !== previousClassName) {
+        if (className) element.setAttribute("class", className)
+        else element.removeAttribute("class")
+      }
       continue
     }
     if (key === "ref") continue
+    if (Object.is(previous[key], value)) continue
     applyAttributeValue(element, key, value)
   }
   if (!next || Object.keys(next).length === 0) context.domProps.delete(element)

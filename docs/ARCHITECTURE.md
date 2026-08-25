@@ -4,7 +4,7 @@ Vune is split into a language/runtime core and renderer packages. The important
 boundary is:
 
 ```text
-Vune source (.vune.ts)
+Vune source (.vune or .vune.ts)
         |
         v
 @vune-ui/compiler -----> Vune View graph / compiled template IR -----> renderer adapter -----> runtime
@@ -18,7 +18,7 @@ Vune source (.vune.ts)
 | Package | Owns | Must not import |
 | --- | --- | --- |
 | `@vune-ui/core` | `View`, `ViewType`, initializer resolution, `ViewBuilder`, `State`, `Binding`, native controls and layout primitives, `GeometryProxy`, closure roles, immutable `ModifiedContent` | React, React DOM, browser APIs |
-| `@vune-ui/compiler` | `.vune.ts` builder lowering, labeled arguments, shorthand binding/modifiers, diagnostics, source-map contract | renderer implementations |
+| `@vune-ui/compiler` | `.vune` and `.vune.ts` builder lowering, labeled arguments, shorthand binding/modifiers, diagnostics, source-map contract | renderer implementations |
 | `@vune-ui/react` | React materialization, React component identity, React external-store subscriptions, React component interop and compatibility re-exports | compiler internals |
 | `@vune-ui/vue` | Vue VNode materialization, Vue component/slot bridges, explicit State/Ref bridges | React |
 | `@vune-ui/web` | HTML serialization, DOM materialization, events, refs, and State-driven mount invalidation | React |
@@ -68,7 +68,7 @@ source scanner and lowering pipeline. Its internal contracts are:
 | `compiler/pipeline` | Binding shorthand, closures, builder/struct lowering, HTML expression lowering, and syntax detection |
 | `compiler/specialization` | Type-checker-backed AOT initializer lowering, compact modifier fusion, compiled template/slot lowering, and static-subtree hoisting |
 | `compiler/diagnostics` | Original-source syntax, TypeScript, and semantic HTML diagnostics |
-| `compiler/vite` | Vue SFC and `.vune.ts` Vite transformation orchestration |
+| `compiler/vite` | Vue SFC and `.vune`/`.vune.ts` Vite transformation orchestration |
 | `compiler/index` | Public API barrel, source maps, and language-service composition |
 
 If static type resolution is not unique, the specialization pass leaves the
@@ -142,7 +142,7 @@ the TypeScript `TypeChecker` into the same symbol table; its static initializer
 selection calls the core semantic resolver, so IDE and runtime do not invent a
 second overload contract.
 
-Raw HTML is graph input too. In a `.vune.ts` file the compiler lowers this
+Raw HTML is graph input too. In a `.vune` or `.vune.ts` file the compiler lowers this
 without a tag allow-list, retaining attributes such as `class`, `for`, `aria-*`,
 and `data-*`:
 
@@ -179,7 +179,7 @@ Initializer metadata is attached to a callable View and selected from the
 actual arguments. Closure roles are marked as `value`, `viewBuilder`, or
 `action`, so the compiler does not need a `Button`-specific syntax branch.
 
-Canonical `.vune.ts` source exposes exactly two Button shapes:
+Canonical `.vune` and `.vune.ts` source expose exactly two Button shapes:
 
 ```ts
 Button("Save") { save() }

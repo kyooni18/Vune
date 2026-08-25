@@ -1282,7 +1282,7 @@ function ensureImports(source: string): string {
     .filter(name => new RegExp(`\\b${name}(?:<[^()\\n]*>)?\\s*\\(`).test(source) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
   let result = source
   if (required.length === 0) return result
-  const imports = [...result.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*(["'])(vune-ui|@vune-ui\/core)\2[\t ]*;?/g)]
+  const imports = [...result.matchAll(/import\s*\{([^}]*)\}\s*from\s*(["'])(vune-ui|@vune-ui\/core)\2[\t ]*;?/g)]
   const imported = new Set(imports.flatMap(match => match[1].split(",").map(value => value.trim()).filter(Boolean)))
   const missing = required.filter(name => !imported.has(name))
   if (missing.length === 0) return result

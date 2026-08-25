@@ -105,11 +105,15 @@ for (const target of releaseTargets) {
   assert.equal(packedManifest.version, manifest.version)
   assert.doesNotMatch(JSON.stringify(packedManifest), /workspace:/, `${manifest.name} published manifest leaked a workspace: dependency`)
   if (manifest.name === 'vune-ui') {
-    assert.equal(packedManifest.dependencies?.['@vune-ui/react'], undefined, 'canonical vune-ui must not install a renderer')
-    assert.equal(packedManifest.peerDependencies?.['@vune-ui/react'], manifest.version)
-    assert.equal(packedManifest.peerDependenciesMeta?.['@vune-ui/react']?.optional, true)
-    assert.equal(packedManifest.peerDependenciesMeta?.react?.optional, true)
-    assert.equal(packedManifest.peerDependenciesMeta?.['react-dom']?.optional, true)
+    for (const name of [
+      '@vune-ui/compiler',
+      '@vune-ui/core',
+      '@vune-ui/react',
+      '@vune-ui/vite',
+      '@vune-ui/vue',
+      '@vune-ui/web',
+    ]) assert.equal(packedManifest.dependencies?.[name], manifest.version, `canonical vune-ui must install ${name}`)
+    assert.equal(packedManifest.peerDependencies, undefined, 'canonical vune-ui should not keep optional renderer peers')
   }
 
   console.log(`${manifest.name}@${manifest.version}: ${files.size} files, ${(report.unpackedSize / 1024).toFixed(1)} KiB unpacked`)
@@ -127,15 +131,16 @@ try {
   }, null, 2))
   const install = spawnSync("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: canonicalOnlyDir, encoding: "utf8" })
   assert.equal(install.status, 0, `canonical-only packed install failed:\n${install.stdout}\n${install.stderr}`)
-  assert.equal(existsSync(resolve(canonicalOnlyDir, "node_modules/react")), false, "canonical vune-ui unexpectedly installed React")
-  assert.equal(existsSync(resolve(canonicalOnlyDir, "node_modules/@vune-ui/react")), false, "canonical vune-ui unexpectedly installed the React renderer")
+  for (const packageName of ["compiler", "core", "react", "vite", "vue", "web"]) {
+    assert.equal(existsSync(resolve(canonicalOnlyDir, `node_modules/@vune-ui/${packageName}`)), true, `canonical vune-ui did not install @vune-ui/${packageName}`)
+  }
   const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import { Text } from "vune-ui";
     const value = Text("renderer-independent");
     if (!value || typeof value !== "object") throw new Error("canonical renderer-independent import failed");
   `], { cwd: canonicalOnlyDir, encoding: "utf8" })
   assert.equal(smoke.status, 0, `canonical-only smoke test failed:\n${smoke.stdout}\n${smoke.stderr}`)
-  console.log("Canonical vune-ui installs without React or a renderer")
+  console.log("Canonical vune-ui installs the Vune compiler, renderers, and Vite adapter")
 } finally {
   rmSync(canonicalOnlyDir, { recursive: true, force: true })
 }

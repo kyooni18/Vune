@@ -2,6 +2,10 @@ import { createVuneSourceMap } from "./source-map.js"
 import { hasVuneSyntax, transformVuneSource } from "./pipeline.js"
 import type { VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
+const VUNE_SOURCE_RE = /\.vune(?:\.tsx?)?$/i
+const HOST_SCRIPT_RE = /\.[cm]?[jt]sx?$/i
+const DEFAULT_RESOLVE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"]
+
 function isVuneVueScript(attributes: string): boolean {
   const language = /\blang\s*=\s*(["'])([^"']+)\1/i.exec(attributes)?.[2]
   return !language || /^(?:vune|js|jsx|ts|tsx|mts|cts)$/i.test(language)
@@ -48,7 +52,7 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
       /(?:^|&)type=script(?:&|$)/.test(query)
       || (!isVueTemplate && !isVueStyle && !/<(?:script|template)\b/i.test(source))
     )
-    if (!isVue && !/\.vune\.tsx?$/.test(fileName) && !/\.[cm]?[jt]sx?$/.test(fileName)) return null
+    if (!isVue && !VUNE_SOURCE_RE.test(fileName) && !HOST_SCRIPT_RE.test(fileName)) return null
     if (options.include) {
       options.include.lastIndex = 0
       if (!options.include.test(fileName)) return null
@@ -58,7 +62,7 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
     const vueSource = isVue && !isVueScript
       ? transformVueSfcSource(source, fileName)
       : source
-    if (!isVue && !/\.vune\.tsx?$/.test(fileName) && !hasVuneSyntax(source, false)) return null
+    if (!isVue && !VUNE_SOURCE_RE.test(fileName) && !hasVuneSyntax(source, false)) return null
     if (isVue && vueSource === source && !isVueScript) return null
     if (isVueScript && !hasVuneSyntax(source, !/(?:^|&)lang\.(?:tsx|jsx)(?:&|$)/.test(query))) return null
     const cacheKey = isVue ? id : fileName
@@ -76,8 +80,12 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
   return {
     name: "vune-compiler",
     enforce: "pre" as const,
-    config() {
+    config(userConfig: { resolve?: { extensions?: readonly string[] } } = {}) {
+      const hostExtensions = userConfig.resolve?.extensions ?? DEFAULT_RESOLVE_EXTENSIONS
       return {
+        resolve: {
+          extensions: [...new Set([".vune", ".vune.ts", ".vune.tsx", ...hostExtensions])],
+        },
         optimizeDeps: {
           rolldownOptions: {
             plugins: [dependencyScanPlugin],

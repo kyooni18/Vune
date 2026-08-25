@@ -258,7 +258,19 @@ function semanticRuntimeArguments(candidate: InitializerMatch, args: readonly un
 
 function sharedRuntimeResolution(target: unknown, candidates: readonly InitializerMatch[], args: readonly unknown[]): InitializerResolution | undefined {
   if (candidates.length === 0 || candidates.some(candidate => !candidate.parameters)) return undefined
-  const symbols = candidates.map(semanticInitializerSymbol).filter((item): item is SemanticInitializerSymbol => item !== undefined)
+  // Initializer metadata carries source-language label requirements so the
+  // compiler can reject calls such as `init(value:)` when the declaration
+  // requires a positional `_ value`. A JavaScript host, however, calls the
+  // generated constructor positionally and uses `undefined` as the optional
+  // placeholder (for example `MkSwitchButton(true, undefined, onToggle)`).
+  // Runtime resolution must therefore retain labels for named carriers while
+  // disabling source-only positional label checks.
+  const symbols = candidates.map((candidate, index) => {
+    const symbol = semanticInitializerSymbol(candidate, index)
+    return symbol
+      ? { ...symbol, parameters: symbol.parameters.map(parameter => ({ ...parameter, labelRequired: false })) } as SemanticInitializerSymbol
+      : undefined
+  }).filter((item): item is SemanticInitializerSymbol => item !== undefined)
   const genericParameters = genericParametersOf(target)
   const supplied = suppliedInitializerArguments(args)
   const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
@@ -602,12 +614,19 @@ export function resolveInitializer(target: unknown, args: readonly unknown[]): I
     }
   }
   const candidates = metadataOf(target)
+  if (candidates.length === 1 && !candidates[0].parameters) {
+    const candidate = candidates[0]
+    // Legacy single-initializer Views cannot be ambiguous and their score is
+    // constant. Avoid semantic resolution and one-entry candidate allocation
+    // on every dynamic construction (notably reused ForEach rows).
+    const normalized = normalizeNamedArguments(candidate, supplied)
+    if (candidate.accepts(normalized)) return { initializer: candidate, args: normalized }
+    throw new VuneInitializerError(displayNameOf(target), supplied, [candidate.signature])
+  }
   const genericParameters = genericParametersOf(target)
   const shared = sharedRuntimeResolution(target, candidates, supplied)
   if (shared) return shared
-  if (candidates.length === 1 && candidates[0].parameters) {
-    return resolveSingleDeclaredInitializer(target, candidates[0], supplied, genericParameters)
-  }
+  if (candidates.length === 1) return resolveSingleDeclaredInitializer(target, candidates[0], supplied, genericParameters)
   const matches = candidates.map(candidate => {
     const normalized = normalizeNamedArguments(candidate, supplied)
     const declared = declaredParametersAccept(candidate, normalized, genericParameters)

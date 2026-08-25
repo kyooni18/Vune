@@ -178,6 +178,7 @@ export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateView
 /** Public View value: an immutable graph node with value-semantic modifiers. */
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
+type MaskValue = ViewNode | string
 
 export interface Modifiers {
   padding(value?: Length): ModifiableViewNode
@@ -195,6 +196,7 @@ export interface Modifiers {
   rotationEffect(value: number, anchor?: string): ModifiableViewNode
   offset(value: OffsetValue): ModifiableViewNode
   offset(x: number, y: number): ModifiableViewNode
+  mask(value: MaskValue): ModifiableViewNode
   animation(animation: Animation | null, value: unknown): ModifiableViewNode
   style(value: VuneStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode

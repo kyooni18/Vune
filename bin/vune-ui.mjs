@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { updatePnpmWorkspaceOverrides } from './pnpm-workspace.mjs'
+import { installEditors } from '../editors/install.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageManifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
@@ -19,6 +20,9 @@ const options = {
   local: false,
   localRoot: undefined,
   renderer: 'react',
+  editor: 'all',
+  global: false,
+  projectRoot: undefined,
 }
 
 function takeValue(argument, index, longName) {
@@ -37,11 +41,14 @@ try {
     if (argument === '--force') options.force = true
     else if (argument === '--no-install' || argument === '--skip-install') options.noInstall = true
     else if (argument === '--local') options.local = true
+    else if (argument === '--global') options.global = true
     else if (argument === '--help' || argument === '-h') options.help = true
     else {
       const packageManager = takeValue(argument, index, '--package-manager') ?? takeValue(argument, index, '--pm')
       const localRoot = takeValue(argument, index, '--local-root')
       const renderer = takeValue(argument, index, '--renderer')
+      const editor = takeValue(argument, index, '--editor')
+      const project = takeValue(argument, index, '--project')
       if (packageManager) {
         options.packageManager = packageManager.value
         index += packageManager.consumed
@@ -52,6 +59,12 @@ try {
       } else if (renderer) {
         options.renderer = renderer.value
         index += renderer.consumed
+      } else if (editor) {
+        options.editor = editor.value
+        index += editor.consumed
+      } else if (project) {
+        options.projectRoot = project.value
+        index += project.consumed
       } else {
         positionals.push(argument)
       }
@@ -188,10 +201,6 @@ function configureLocalDependencies(projectRoot, localRoot, renderer = 'react') 
   for (const name of ['@vune-ui/core', '@vune-ui/compiler']) {
     manifest.devDependencies[name] = linkSpecifier(resolve(localRoot, localPackagePaths[name]))
   }
-  if (renderer === 'react') {
-    manifest.devDependencies['@vune-ui/legacy-react'] = linkSpecifier(resolve(localRoot, localPackagePaths['@vune-ui/legacy-react']))
-  }
-
   // pnpm 11 moved overrides out of package.json and into pnpm-workspace.yaml.
   // Keep every internal package pinned to this checkout so unpublished
   // transitive @vune-ui/* dependencies never fall through to the registry.
@@ -219,6 +228,10 @@ Usage:
   vune-ui create <directory> [--pm <manager>] [--no-install] [--force] [--local] [--local-root <path>]
   vune-ui init [--force] [--no-install] [--local] [--local-root <path>]
   vune-ui link <project> [--renderer react|vue|web] [--pm <manager>] [--no-install] [--local-root <path>]
+  vune-ui lsp [--stdio]
+  vune-ui lsp install [--editor ...] [--project <path>] [--global]
+  vune-ui editor install [--editor vim|nvim|vscode|zed|helix|generic|all] [--project <path>] [--global]
+  vune-ui editor export vscode [output.vsix]
 
 Local checkout workflow:
   # from the Vune repository
@@ -235,6 +248,22 @@ Initializer aliases after publishing:
 create scaffolds a ready-to-run React + Vite + TypeScript Vune app.
 --local rewrites Vune dependencies to link: paths pointing at the source checkout.
 link adds the same local links and pnpm-workspace.yaml overrides to an existing project.`)
+}
+
+function editorCommand() {
+  const action = positionals[0]
+  if (action === 'install') {
+    if (positionals.length > 1) options.editor = positionals[1]
+    return installEditors({ editor: options.editor, projectRoot: options.projectRoot ?? process.cwd(), global: options.global }) && 0
+  }
+  if (action === 'export' && positionals[1] === 'vscode') {
+    const script = resolve(packageRoot, 'editors/vscode/export.mjs')
+    const result = spawnSync(process.execPath, [script, ...positionals.slice(2)], { cwd: packageRoot, stdio: 'inherit' })
+    return result.status ?? 1
+  }
+  console.error('Usage: vune-ui editor install [--editor vim|nvim|vscode|zed|helix|generic|all] [--project <path>] [--global]')
+  console.error('       vune-ui editor export vscode [output.vsix]')
+  return 1
 }
 
 function scaffold(projectRoot, commandName) {
@@ -298,6 +327,13 @@ function main() {
     }
     return linkProject(positionals[0])
   }
+  if (command === 'lsp') {
+    if (positionals[0] === 'install') return installEditors({ editor: options.editor, projectRoot: options.projectRoot ?? process.cwd(), global: options.global }) && 0
+    const script = resolve(packageRoot, 'editors/lsp/vune-lsp.mjs')
+    const result = spawnSync(process.execPath, [script, ...argv.slice(1)], { cwd: packageRoot, stdio: 'inherit' })
+    return result.status ?? 1
+  }
+  if (command === 'editor') return editorCommand()
   console.error(`Unknown Vune command: ${command}`)
   printHelp()
   return 1

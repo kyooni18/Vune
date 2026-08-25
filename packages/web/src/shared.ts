@@ -1,7 +1,6 @@
 import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
-
 const htmlAttributeAliases: Readonly<Record<string, string>> = Object.freeze({
   allowFullScreen: "allowfullscreen",
   autoFocus: "autofocus",
@@ -101,6 +100,11 @@ export function styleOf(modifier: ViewModifierNode): Record<string, string> {
         y = Number(point.y ?? point.height ?? 0)
       }
       style = { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` }
+      break
+    }
+    case "mask": {
+      const props = modifier.props && typeof modifier.props === "object" && "style" in modifier.props ? (modifier.props as { style?: unknown }).style : undefined
+      style = props && typeof props === "object" ? Object.fromEntries(Object.entries(props as Record<string, unknown>).map(([key, item]) => [cssPropertyName(key), String(item)])) : {}
       break
     }
     case "frame": {
@@ -228,4 +232,6 @@ export interface DomRenderContext {
   geometryIndex: number
   hasRefs: boolean
   hydrating: boolean
+  stagingEvents: boolean
+  stagingProps: boolean
 }

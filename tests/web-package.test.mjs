@@ -16,6 +16,7 @@ import {
   compiledTemplate,
   defineCompiledTemplate,
   viewElement,
+  viewFragment,
 } from "../packages/core/dist/index.js"
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
 
@@ -782,6 +783,248 @@ test("@vune-ui/web preserves keyed child State across reorder and resets it afte
   items.value = [{ id: "a" }, ...items.value]
   await Promise.resolve()
   assert.equal(container.querySelector('[data-row="a"]')?.textContent, "a:0")
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web batches synchronous State writes into one View reevaluation", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const count = State(0)
+  let bodyRuns = 0
+  const App = defineView("BatchedStateWriteApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => {
+      bodyRuns += 1
+      return Element("span", { "data-count": true }, String(count.value))
+    },
+  })
+
+  const unmount = mount(App(), container)
+  assert.equal(bodyRuns, 1)
+  bodyRuns = 0
+  for (let index = 0; index < 1000; index += 1) count.value += 1
+  await Promise.resolve()
+  assert.equal(bodyRuns, 1)
+  assert.equal(container.querySelector("[data-count]")?.textContent, "1000")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web isolates row-local invalidation and reuses unchanged keyed View bodies", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a" }, { id: "b" }, { id: "c" }])
+  let appRuns = 0
+  let rowRuns = 0
+  const Row = defineView("BoundaryPerfRow", {
+    initializers: [initializer("Row(id)", args => args.length === 1, args => ({ id: args[0] }))],
+    state: () => ({ count: State(0) }),
+    body: ({ id, count }) => {
+      rowRuns += 1
+      return Element("button", {
+        "data-row": id,
+        onclick: () => { count.value += 1 },
+      }, `${id}:${count.value}`)
+    },
+  })
+  const App = defineView("BoundaryPerfApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => {
+      appRuns += 1
+      return Element("section", null, ForEach(items.value, item => item.id, item => Row(item.id).foreground("red")))
+    },
+  })
+
+  const unmount = mount(App(), container)
+  assert.equal(appRuns, 1)
+  assert.equal(rowRuns, 3)
+  const originalA = container.querySelector('[data-row="a"]')
+  const originalB = container.querySelector('[data-row="b"]')
+  assert.ok(originalA)
+  assert.ok(originalB)
+
+  appRuns = 0
+  rowRuns = 0
+  originalA.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(appRuns, 0)
+  assert.equal(rowRuns, 1)
+  assert.equal(container.querySelector('[data-row="a"]'), originalA)
+  assert.equal(originalA.textContent, "a:1")
+  assert.equal(originalA.style.color, "red")
+
+  appRuns = 0
+  rowRuns = 0
+  items.value = [...items.value].reverse()
+  await Promise.resolve()
+  assert.equal(appRuns, 1)
+  assert.equal(rowRuns, 0)
+  assert.equal(container.querySelector('[data-row="a"]'), originalA)
+  assert.equal(container.querySelector('[data-row="b"]'), originalB)
+  assert.deepEqual([...container.querySelectorAll("button")].map(button => button.dataset.row), ["c", "b", "a"])
+
+  appRuns = 0
+  rowRuns = 0
+  items.value = [...items.value, { id: "d" }]
+  await Promise.resolve()
+  assert.equal(appRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(container.querySelector('[data-row="a"]'), originalA)
+  assert.equal(container.querySelector('[data-row="d"]')?.textContent, "d:0")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web batches in-place ForEach mutations and preserves keyed row identity", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a" }, { id: "b" }, { id: "c" }])
+  let appRuns = 0
+  let rowRuns = 0
+  const Row = defineView("InPlaceMutationRow", {
+    initializers: [initializer("Row(id)", args => args.length === 1, args => ({ id: args[0] }))],
+    state: () => ({ count: State(0) }),
+    body: ({ id, count }) => {
+      rowRuns += 1
+      return Element("button", { "data-row": id, onclick: () => { count.value += 1 } }, `${id}:${count.value}`)
+    },
+  })
+  const App = defineView("InPlaceMutationApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => {
+      appRuns += 1
+      return Element("section", null, ForEach(items, item => item.id, item => Row(item.id)))
+    },
+  })
+
+  const unmount = mount(App(), container)
+  const originalA = container.querySelector('[data-row="a"]')
+  const originalB = container.querySelector('[data-row="b"]')
+  assert.ok(originalA)
+  assert.ok(originalB)
+  originalA.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(originalA.textContent, "a:1")
+
+  appRuns = 0
+  rowRuns = 0
+  items.value.reverse()
+  await Promise.resolve()
+  assert.equal(appRuns, 1)
+  assert.equal(rowRuns, 0)
+  assert.deepEqual([...container.querySelectorAll("button")].map(button => button.dataset.row), ["c", "b", "a"])
+  assert.equal(container.querySelector('[data-row="a"]'), originalA)
+  assert.equal(container.querySelector('[data-row="b"]'), originalB)
+  assert.equal(originalA.textContent, "a:1")
+
+  appRuns = 0
+  rowRuns = 0
+  items.value.push({ id: "d" })
+  await Promise.resolve()
+  assert.equal(appRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(container.querySelector('[data-row="a"]'), originalA)
+  assert.equal(container.querySelector('[data-row="d"]')?.textContent, "d:0")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web wakes nested empty View boundaries in one scheduler turn", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const visible = State(false)
+  let parentRuns = 0
+  let childRuns = 0
+  const Child = defineView("NestedEmptyBoundaryChild", {
+    initializers: [initializer("Child()", args => args.length === 0)],
+    body: () => {
+      childRuns += 1
+      return visible.value ? Element("span", { "data-visible": true }, "visible") : viewFragment([])
+    },
+  })
+  const Parent = defineView("NestedEmptyBoundaryParent", {
+    initializers: [initializer("Parent()", args => args.length === 0)],
+    body: () => {
+      parentRuns += 1
+      return Element("section", null, Child())
+    },
+  })
+
+  const unmount = mount(Parent(), container)
+  assert.equal(container.querySelector("[data-visible]"), null)
+  assert.equal(parentRuns, 1)
+  assert.equal(childRuns, 1)
+
+  visible.value = true
+  await Promise.resolve()
+  assert.equal(container.querySelector("[data-visible]")?.textContent, "visible")
+
+  const parentRunsAfterShow = parentRuns
+  visible.value = false
+  await Promise.resolve()
+  assert.equal(container.querySelector("[data-visible]"), null)
+  assert.equal(parentRuns, parentRunsAfterShow)
+
+  visible.value = true
+  await Promise.resolve()
+  assert.equal(container.querySelector("[data-visible]")?.textContent, "visible")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web reuses live View subtrees across ancestor replacement and outer modifier changes", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const wrapper = State("section")
+  const color = State("red")
+  let rowRuns = 0
+  const Row = defineView("ReuseAcrossAncestorRow", {
+    initializers: [initializer("Row()", args => args.length === 0)],
+    state: () => ({ count: State(0) }),
+    body: ({ count }) => {
+      rowRuns += 1
+      return Element("button", { onclick: () => { count.value += 1 } }, `count:${count.value}`)
+    },
+  })
+  const App = defineView("ReuseAcrossAncestorApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => Element(wrapper.value, null, Row().foreground(color.value)),
+  })
+
+  const unmount = mount(App(), container)
+  const button = container.querySelector("button")
+  assert.ok(button)
+  assert.equal(rowRuns, 1)
+  assert.equal(button.style.color, "red")
+
+  rowRuns = 0
+  color.value = "blue"
+  await Promise.resolve()
+  assert.equal(rowRuns, 0)
+  assert.equal(container.querySelector("button"), button)
+  assert.equal(button.style.color, "blue")
+
+  wrapper.value = "div"
+  await Promise.resolve()
+  assert.equal(rowRuns, 0)
+  assert.equal(container.firstElementChild?.localName, "div")
+  assert.equal(container.querySelector("button"), button)
+  assert.equal(button.textContent, "count:0")
+
+  button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve()
+  assert.equal(button.textContent, "count:1")
+
   unmount()
   dom.window.close()
 })

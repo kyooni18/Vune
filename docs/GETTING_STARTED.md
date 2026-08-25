@@ -49,12 +49,17 @@ Use `--no-install` when you want to inspect generated files before installing.
 
 ## Install Vune manually
 
-After publication, an existing React application can use:
+After publication, installing `vune-ui` brings the Vune core, compiler, React/Vue/Web
+renderers, and Vite adapter into the application together. An existing React
+application only needs:
 
 ```bash
-pnpm add vune-ui @vune-ui/react
-pnpm add -D @vune-ui/vite @vitejs/plugin-react
+pnpm add vune-ui
+pnpm add -D @vitejs/plugin-react
 ```
+
+The separate `create-vune-ui` package is only needed when using the project
+scaffolding command.
 
 For a local checkout, do not use a plain `pnpm add ../Vune/...` chain; internal
 transitive packages can otherwise fall through to the registry. Use the
@@ -79,7 +84,7 @@ directory already contains files you explicitly want to replace.
 
 ## Configure Vite
 
-The canonical compiler handles `.vune.ts` files and must run before the React
+The canonical compiler handles `.vune` and `.vune.ts` files and must run before the React
 plugin:
 
 ```ts
@@ -98,7 +103,7 @@ export default defineConfig({
 The plugin is a build-time syntax transform. It does not replace React or
 introduce a second renderer.
 
-In a `.vune.ts` graph, a default import from a `.tsx` or `.jsx` module is
+In a `.vune` or `.vune.ts` graph, a default import from a `.tsx` or `.jsx` module is
 lowered to the typed React foreign-component adapter automatically. You can
 also use `Component(MyComponent, props)` or `reactComponent(MyComponent)`
 explicitly when the component is not a default file import.
@@ -143,7 +148,7 @@ createRoot(document.getElementById('app')!).render(createElement(App))
 
 ## Build a stateful screen
 
-Put canonical builder syntax in `App.vune.ts`:
+Put canonical builder syntax in `App.vune` (the `.vune.ts` form remains supported):
 
 ```ts
 import { Button, State, Text, VStack } from "vune-ui"

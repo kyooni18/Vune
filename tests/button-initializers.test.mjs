@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Button, Text, VStack, defineView, initializer, initializerKinds, namedArguments, render, resolveBuilderClosure, resolveInitializer } from "../packages/react/dist/index.js"
+import { Button, Text, VStack, closureKindOf, defineView, initializer, initializerKinds, namedArguments, render, resolveBuilderClosure, resolveInitializer } from "../packages/react/dist/index.js"
 
 test("Button exposes exactly the two canonical initializer forms", () => {
   const calls = []
@@ -77,6 +77,58 @@ test("initializer metadata maps mixed positional, labeled, and trailing closures
   assert.equal(afterPositional.args[1](), undefined)
   assert.match(renderToStaticMarkup(render(MixedCard("Title", action, label))), /Title.*Body/)
   assert.throws(() => resolveInitializer(MixedCard, [namedArguments({ label, action }), "Title"]), /No matching initializer/)
+})
+
+test("runtime initializer resolution accepts omitted optional middle arguments and applies defaults", () => {
+  const DefaultedControl = defineView("DefaultedControl", {
+    initializers: [initializer(
+      "DefaultedControl(_ checked: boolean, disabled: boolean = false, @Action onToggle: () => void = noop)",
+      args => args.length >= 1 && args.length <= 3
+        && typeof args[0] === "boolean"
+        && (args[1] === undefined || typeof args[1] === "boolean")
+        && (args[2] === undefined || typeof args[2] === "function"),
+      args => ({
+        checked: args[0],
+        disabled: args[1] === undefined ? false : args[1],
+        onToggle: args[2] === undefined ? (() => undefined) : args[2],
+      }),
+      [
+        initializerKinds.value(true, undefined, undefined, "boolean"),
+        initializerKinds.value(false, "disabled", undefined, "boolean"),
+        initializerKinds.action(false, "onToggle", "function", true),
+      ],
+    )],
+    body: () => Text("control"),
+  })
+
+  const onToggle = () => undefined
+  const middleOmission = resolveInitializer(DefaultedControl, [true, undefined, onToggle])
+  assert.equal(middleOmission.args[0], true)
+  assert.equal(middleOmission.args[1], undefined)
+  assert.equal(closureKindOf(middleOmission.args[2]), "action")
+  assert.deepEqual(middleOmission.initializer.build(middleOmission.args), {
+    checked: true,
+    disabled: false,
+    onToggle,
+  })
+
+  const LoadingLike = defineView("LoadingLike", {
+    initializers: [initializer(
+      "LoadingLike(isStatic: boolean = false, inline: boolean = false)",
+      args => args.length <= 2 && (args[0] === undefined || typeof args[0] === "boolean") && (args[1] === undefined || typeof args[1] === "boolean"),
+      args => ({
+        isStatic: args[0] === undefined ? false : args[0],
+        inline: args[1] === undefined ? false : args[1],
+      }),
+      [
+        initializerKinds.value(false, "isStatic", undefined, "boolean"),
+        initializerKinds.value(false, "inline", undefined, "boolean"),
+      ],
+    )],
+    body: () => Text("loading"),
+  })
+  const hostOmission = resolveInitializer(LoadingLike, [undefined, true])
+  assert.deepEqual(hostOmission.initializer.build(hostOmission.args), { isStatic: false, inline: true })
 })
 
 test("initializer ties are an error and do not use declaration order as a fallback", () => {

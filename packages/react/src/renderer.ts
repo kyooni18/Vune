@@ -77,6 +77,7 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
       result = { style: { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` } }
       break
     }
+    case "mask": result = { style: modifier.props && typeof modifier.props === "object" && "style" in modifier.props ? (modifier.props as { style?: unknown }).style : {} }; break
     case "style": result = { style: value }; break
     case "className": result = { className: classNameOf(value) }; break
     case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break

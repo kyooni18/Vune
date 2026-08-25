@@ -35,7 +35,6 @@ The command edits the target `package.json` with direct source links:
   "devDependencies": {
     "@vune-ui/core": "link:/absolute/path/to/Vune/packages/core",
     "@vune-ui/compiler": "link:/absolute/path/to/Vune/packages/compiler",
-    "@vune-ui/legacy-react": "link:/absolute/path/to/Vune/packages/legacy-react",
     "@vune-ui/vite": "link:/absolute/path/to/Vune/packages/vite"
   }
 }

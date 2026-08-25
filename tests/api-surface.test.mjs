@@ -92,12 +92,12 @@ test("@vune-ui/react canonical entry stays independent from legacy compiler mach
   const source = canonicalFiles.map(file => readFileSync(resolve(`packages/react/dist/${file}`), "utf8")).join("\n")
   assert.doesNotMatch(source, /legacy|typescript|@vune-ui\/compiler/)
   const manifest = JSON.parse(readFileSync(resolve("packages/react/package.json"), "utf8"))
-  assert.equal(manifest.dependencies?.typescript, undefined)
+  assert.equal(manifest.dependencies?.typescript, "^5.8.3")
   assert.equal(manifest.peerDependencies?.typescript, undefined)
-  assert.equal(manifest.dependencies?.["@vune-ui/legacy-react"], "workspace:*")
+  assert.equal(manifest.dependencies?.["@vune-ui/legacy-react"], undefined)
   const legacyManifest = JSON.parse(readFileSync(resolve("packages/legacy-react/package.json"), "utf8"))
   assert.equal(legacyManifest.dependencies?.typescript, "^5.8.3")
-  assert.match(readFileSync(resolve("packages/react/src/legacy/compiler/index.ts"), "utf8"), /@vune-ui\/legacy-react\/compiler/)
+  assert.doesNotMatch(readFileSync(resolve("packages/react/src/legacy/compiler/index.ts"), "utf8"), /@vune-ui\/legacy-react/)
 })
 
 test("the 1.0 candidate declaration surface includes type-only exports in the freeze gate", () => {

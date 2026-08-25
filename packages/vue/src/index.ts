@@ -108,6 +108,11 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
       }
       result = { style: { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` } }; break
     }
+    case "mask": {
+      const mask = modifier.props && typeof modifier.props === "object" && "style" in modifier.props ? (modifier.props as { style?: unknown }).style : undefined
+      result = { style: mask && typeof mask === "object" ? Object.fromEntries(Object.entries(mask as Record<string, unknown>).map(([key, item]) => [key === "WebkitMask" ? "-webkit-mask" : key, item])) : {} }
+      break
+    }
     case "style": result = value && typeof value === "object" ? { style: value } : {}; break
     case "className": result = { class: classNameOf(value) }; break
     case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break

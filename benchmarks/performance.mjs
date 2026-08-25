@@ -60,8 +60,10 @@ function collect(factory) {
   return value
 }
 
-function average(samples) {
-  return samples.reduce((sum, value) => sum + value, 0) / samples.length
+function median(samples) {
+  const ordered = [...samples].sort((left, right) => left - right)
+  const middle = Math.floor(ordered.length / 2)
+  return ordered.length % 2 === 0 ? (ordered[middle - 1] + ordered[middle]) / 2 : ordered[middle]
 }
 
 function retainedHeap(factory) {
@@ -85,8 +87,22 @@ function measure(name, factory) {
     collect(factory)
     samples.push(performance.now() - start)
   }
-  const value = average(samples)
-  console.log(`${name}: ${value.toFixed(2)} ms (${rounds} rounds)`)
+  const value = median(samples)
+  console.log(`${name}: ${value.toFixed(2)} ms (median of ${rounds} rounds)`)
+  return value
+}
+
+function measureMutation(name, setup, mutate) {
+  const samples = []
+  for (let round = 0; round < rounds; round += 1) {
+    const fixture = setup()
+    const start = performance.now()
+    mutate(fixture)
+    samples.push(performance.now() - start)
+    fixture.cleanup?.()
+  }
+  const value = median(samples)
+  console.log(`${name}: ${value.toFixed(2)} ms (median of ${rounds} rounds, mutation only)`)
   return value
 }
 
@@ -97,8 +113,8 @@ async function measureAsync(name, factory) {
     await factory()
     samples.push(performance.now() - start)
   }
-  const value = average(samples)
-  console.log(`${name}: ${value.toFixed(2)} ms (${rounds} rounds)`)
+  const value = median(samples)
+  console.log(`${name}: ${value.toFixed(2)} ms (median of ${rounds} rounds)`)
   return value
 }
 
@@ -537,8 +553,20 @@ async function lazyScrollUpdate(itemCount = 10000) {
 async function measureRounds(factory) {
   const samples = []
   for (let round = 0; round < rounds; round += 1) samples.push(await factory())
-  return average(samples)
+  return median(samples)
 }
+
+const arrayMutationCount = Number(process.env.VUNE_BENCH_ARRAY_MUTATION_ITEMS ?? 1000)
+const arrayMutationBudget = Number(process.env.VUNE_BENCH_ARRAY_MUTATION_MS ?? 25)
+const stateArrayFixture = () => {
+  const state = State(Array.from({ length: arrayMutationCount }, (_, index) => ({ id: index })))
+  const unsubscribe = subscribeState(state, () => {})
+  return { state, cleanup: unsubscribe }
+}
+const arrayReverse = measureMutation(`Vune State in-place reverse ${arrayMutationCount}`, stateArrayFixture, ({ state }) => state.value.reverse())
+const arraySort = measureMutation(`Vune State in-place sort ${arrayMutationCount}`, stateArrayFixture, ({ state }) => state.value.sort((left, right) => right.id - left.id))
+if (ci && arrayReverse > arrayMutationBudget) throw new Error(`State in-place reverse exceeded ${arrayMutationBudget} ms: ${arrayReverse.toFixed(2)} ms`)
+if (ci && arraySort > arrayMutationBudget) throw new Error(`State in-place sort exceeded ${arrayMutationBudget} ms: ${arraySort.toFixed(2)} ms`)
 
 for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   const rawState = measure(`raw state update ${count}`, () => rawStateUpdate(count))

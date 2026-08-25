@@ -525,7 +525,7 @@ function transformVuneMacrosWithMap(source: string, id = ''): MacroTransformResu
   if (source.includes('/* @vune-ui-macro-transformed */')) return null
   if (id) {
     const pathname = id.split('?', 1)[0]
-    if (!/\.[cm]?[jt]sx?$/.test(pathname)) return null
+    if (!/\.vune(?:\.tsx?)?$/i.test(pathname) && !/\.[cm]?[jt]sx?$/.test(pathname)) return null
   }
 
   const sourceFile = ts.createSourceFile(

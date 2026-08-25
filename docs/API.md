@@ -39,7 +39,7 @@ Renderer-specific entry points add only materialization and runtime bridges:
   keeps subsequent State invalidations live.
 
 The explicit `vune-ui/legacy` entry point provides the legacy React compatibility
-surface, implemented by `@vune-ui/legacy-react`:
+surface, implemented inside `@vune-ui/react`:
 
 - Core views and state: `view`, `defineView`, `View`, `ViewBuilder`, `State`,
   `Binding`, and `Action`.
