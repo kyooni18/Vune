@@ -26,7 +26,6 @@ import {
   currentRenderTransaction,
   collectStateReads,
   defineView,
-  edgeInsetsFromCss,
   ForeignComponent,
   frameStyle,
   initializer,
@@ -53,7 +52,25 @@ import {
   viewElement,
 } from "@vune-ui/core"
 
+import { geometryFromElement, sameGeometry } from "./geometry.js"
+
 const vuneVueSlots = Symbol.for("vune.vue.slots")
+
+function sync(
+  active: Map<StateRef<unknown>, () => void>,
+  next: ReadonlySet<StateRef<unknown>>,
+  invalidate: (transaction: Transaction) => void,
+): void {
+  for (const [state, stop] of active) {
+    if (next.has(state)) continue
+    stop()
+    active.delete(state)
+  }
+  for (const state of next) {
+    if (active.has(state)) continue
+    active.set(state, subscribeState(state, invalidate))
+  }
+}
 
 export type VuneVueSlot = ViewValue | ((props: any, ...args: any[]) => ViewValue)
 export type VueComponentProps<C> = C extends abstract new (...args: any[]) => { $props: infer Props }
@@ -277,8 +294,13 @@ const ReactiveVuneValue = defineComponent({
     const value = shallowRef<ViewGraphValue>(null)
     const version = shallowRef(0)
     const transaction = shallowRef<Transaction | undefined>(undefined)
+    const subscriptions = new Map<StateRef<unknown>, () => void>()
     let pendingTransaction: Transaction | undefined
-    watchEffect(onCleanup => {
+    const invalidate = (nextTransaction: Transaction) => {
+      pendingTransaction = nextTransaction
+      version.value += 1
+    }
+    watchEffect(() => {
       void version.value
       const declaredDependencies = props.dependencies?.()
       const dependencies = new Set<StateRef<unknown>>(declaredDependencies ?? [])
@@ -287,50 +309,12 @@ const ReactiveVuneValue = defineComponent({
         ? props.factory()
         : collectStateReads(props.factory, dependency => dependencies.add(dependency)))
       pendingTransaction = undefined
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, nextTransaction => {
-        pendingTransaction = nextTransaction
-        version.value += 1
-      }))
-      onCleanup(() => unsubscribers.forEach(unsubscribe => unsubscribe()))
+      sync(subscriptions, dependencies, invalidate)
     })
+    onScopeDispose(() => subscriptions.forEach(stop => stop()))
     return () => h(RenderValue, { value: value.value, transaction: transaction.value })
   },
 })
-
-function geometryFromElement(element: Element): GeometryProxy {
-  const rect = element.getBoundingClientRect()
-  const frame = {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
-    top: rect.top,
-    right: rect.right,
-    bottom: rect.bottom,
-    left: rect.left,
-  }
-  const document = element.ownerDocument
-  const view = document.defaultView
-  if (!view?.getComputedStyle || !document.body) return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
-  const probe = document.createElement("div")
-  probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
-  document.body.appendChild(probe)
-  const style = view.getComputedStyle(probe)
-  const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
-  probe.remove()
-  return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
-}
-
-function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
-  return left.frame.x === right.frame.x
-    && left.frame.y === right.frame.y
-    && left.frame.width === right.frame.width
-    && left.frame.height === right.frame.height
-    && left.safeAreaInsets.top === right.safeAreaInsets.top
-    && left.safeAreaInsets.right === right.safeAreaInsets.right
-    && left.safeAreaInsets.bottom === right.safeAreaInsets.bottom
-    && left.safeAreaInsets.left === right.safeAreaInsets.left
-}
 
 const GeometryVuneValue = defineComponent({
   name: "VuneGeometryReader",
@@ -344,14 +328,15 @@ const GeometryVuneValue = defineComponent({
     const version = shallowRef(0)
     let pendingTransaction: Transaction | undefined
     let disconnect = () => undefined
-    watchEffect(onCleanup => {
+    const subscriptions = new Map<StateRef<unknown>, () => void>()
+    watchEffect(() => {
       void version.value
       const dependencies = new Set<StateRef<unknown>>()
       value.value = withRenderTransaction(pendingTransaction, () => collectStateReads(() => props.render(geometry.value), dependency => dependencies.add(dependency)))
       pendingTransaction = undefined
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, transaction => { pendingTransaction = transaction; version.value += 1 }))
-      onCleanup(() => unsubscribers.forEach(unsubscribe => unsubscribe()))
+      sync(subscriptions, dependencies, transaction => { pendingTransaction = transaction; version.value += 1 })
     })
+    onScopeDispose(() => subscriptions.forEach(stop => stop()))
     onMounted(() => {
       const element = host.value
       if (!element) return
@@ -360,12 +345,19 @@ const GeometryVuneValue = defineComponent({
         if (!sameGeometry(geometry.value, next)) geometry.value = next
       }
       update()
-      const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update)
-      observer?.observe(element)
-      window.addEventListener("resize", update)
+      let observer: ResizeObserver | undefined
+      try {
+        observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update)
+        observer?.observe(element)
+      } catch {
+        try { observer?.disconnect() } catch {}
+        observer = undefined
+      }
+      const view = element.ownerDocument.defaultView
+      try { view?.addEventListener("resize", update) } catch {}
       disconnect = () => {
-        observer?.disconnect()
-        window.removeEventListener("resize", update)
+        try { observer?.disconnect() } catch {}
+        try { view?.removeEventListener("resize", update) } catch {}
       }
     })
     onBeforeUnmount(() => disconnect())
@@ -499,7 +491,7 @@ export function toVueRef<T>(state: StateRef<T>): Ref<T> {
     if (getCurrentScope()) onScopeDispose(unsubscribe)
     return {
       get() { track(); return state.value },
-      set(value) { state.value = value; trigger() },
+      set(value) { state.value = value },
     }
   })
 }

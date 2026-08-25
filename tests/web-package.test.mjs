@@ -504,6 +504,21 @@ test("@vune-ui/web measures CSS safe-area insets at the DOM boundary", async () 
   dom.window.close()
 })
 
+test("@vune-ui/web GeometryReader survives unavailable CSSOM and cleans its probe", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  dom.window.getComputedStyle = () => { throw new Error("CSSOM unavailable") }
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const initialChildren = dom.window.document.body.children.length
+  const unmount = mount(GeometryReader(geometry => Element("span", null, String(geometry.safeAreaInsets.top))), container)
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(container.textContent, "0")
+  assert.equal(dom.window.document.body.children.length, initialChildren)
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web resolves renderer-independent View state", () => {
   const Counter = defineView("Counter", {
     initializers: [initializer("Counter()", args => args.length === 0)],
@@ -697,6 +712,39 @@ test("@vune-ui/web detaches listeners from replaced and unmounted DOM nodes", as
   dom.window.close()
 })
 
+test("@vune-ui/web detaches nested listeners when a whole child batch is removed", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const visible = State(true)
+  let clicks = 0
+  const App = defineView("BatchEventLifetime", {
+    initializers: [initializer("BatchEventLifetime()", args => args.length === 0)],
+    body: () => Element("section", null, ...(visible.value ? [
+      ...Array.from({ length: 32 }, (_, index) => Element("span", { "data-index": index }, String(index))),
+      Element("button", { "data-listener": "a", onclick: () => { clicks += 1 } }, "Nested A"),
+      Element("button", { "data-listener": "b", onclick: () => { clicks += 1 } }, "Nested B"),
+    ] : [])),
+  })
+  const unmount = mount(App(), container)
+  const removedButtons = [...container.querySelectorAll("button")]
+  assert.equal(removedButtons.length, 2)
+  for (const button of removedButtons) button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.equal(clicks, 2)
+
+  visible.value = false
+  await Promise.resolve()
+  assert.equal(container.querySelector("section")?.childNodes.length, 0)
+  for (const button of removedButtons) {
+    assert.equal(button.isConnected, false)
+    button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  }
+  assert.equal(clicks, 2)
+
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web windows lazy children and responds to scroll without rebuilding the boundary", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
@@ -725,6 +773,39 @@ test("@vune-ui/web windows lazy children and responds to scroll without rebuildi
   assert.equal(before?.isConnected, false)
   unmount()
   dom.window.close()
+})
+
+test("@vune-ui/web keeps LazyVStack usable when CSSOM and layout measurement are unavailable", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  container.style.overflowY = "auto"
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: 100 })
+  dom.window.getComputedStyle = () => { throw new Error("CSSOM unavailable") }
+  const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect
+  Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value() { throw new Error("layout unavailable") },
+  })
+  try {
+    const children = Array.from({ length: 100 }, (_, index) => Element("span", { "data-item": String(index) }, String(index)))
+    const unmount = mount(LazyVStack({ estimatedItemSize: 20, overscan: 0 }, ...children), container)
+    await Promise.resolve()
+    await Promise.resolve()
+    const boundary = container.querySelector("[data-vune-lazy]")
+    assert.ok(boundary)
+    assert.ok(boundary.querySelectorAll("[data-item]").length < children.length)
+
+    container.scrollTop = 400
+    container.dispatchEvent(new dom.window.Event("scroll"))
+    await Promise.resolve()
+    await Promise.resolve()
+    assert.ok(boundary.querySelector("[data-item=20]"))
+    unmount()
+  } finally {
+    Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", { configurable: true, value: originalRect })
+    dom.window.close()
+  }
 })
 
 test("@vune-ui/web refines lazy ranges from measured child sizes", async () => {
@@ -1155,6 +1236,24 @@ test("@vune-ui/web commits refs only after live DOM reconciliation and keeps sta
   dom.window.close()
 })
 
+test("@vune-ui/web unmount finishes cleanup when one ref callback throws", () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  let secondCleaned = false
+  const value = Element("div", null,
+    Element("button", { ref: node => { if (node === null) throw new Error("ref cleanup failed") } }, "first"),
+    Element("button", { ref: node => { if (node === null) secondCleaned = true } }, "second"),
+  )
+  const unmount = mount(value, container)
+
+  assert.throws(() => unmount(), /ref cleanup failed/)
+  assert.equal(secondCleaned, true)
+  assert.equal(container.childNodes.length, 0)
+  assert.doesNotThrow(() => unmount())
+  dom.window.close()
+})
+
 test("@vune-ui/web object refs do not execute has or accessor traps", () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
@@ -1247,6 +1346,70 @@ test("@vune-ui/web rejects invalid programmatic HTML names during SSR", () => {
     renderToHTML(Element("élement", { "資料": "값", "a·b": "ok", ":kind": "custom" }, "Safe")),
     '<élement 資料="값" a·b="ok" :kind="custom">Safe</élement>',
   )
+})
+
+test("@vune-ui/web replaces every unkeyed sibling when multiple node types change together", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const alternate = State(false)
+  const App = defineView("UnkeyedSiblingReplacement", {
+    initializers: [initializer("UnkeyedSiblingReplacement()", args => args.length === 0)],
+    body: () => Element("div", null, ...(alternate.value
+      ? [Element("span", null, "A"), Element("em", null, "B")]
+      : [Element("i", null, "X"), Element("b", null, "Y")])),
+  })
+  const unmount = mount(App(), container)
+  assert.deepEqual([...container.querySelector("div").children].map(element => element.localName), ["i", "b"])
+  alternate.value = true
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual([...container.querySelector("div").children].map(element => element.localName), ["span", "em"])
+  assert.equal(container.textContent, "AB")
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web hydration fallback drops unvisited stale descendants and attributes", async () => {
+  const value = Element("strong", { class: "root" }, "lead", Element("span", { class: "tail" }, "tail"))
+  const dom = new JSDOM('<div id=app><strong class="root"><span class="tail">tail</span><i data-stale="true">bogus</i></strong></div>')
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const serverRoot = container.firstElementChild
+  const unmount = mount(value, container, { hydrate: true })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.notEqual(container.firstElementChild, serverRoot)
+  assert.equal(container.innerHTML, '<strong class="root">lead<span class="tail">tail</span></strong>')
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web hydration fallback detaches listeners from partially hydrated server nodes", () => {
+  const dom = new JSDOM('<div id=app><section><button>go</button><i>stale</i></section></div>')
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const serverButton = container.querySelector("button")
+  assert.ok(serverButton)
+  let clicks = 0
+  const value = Element("section", null,
+    Element("button", { onclick: () => { clicks += 1 } }, "go"),
+    Element("span", null, "fresh"),
+  )
+  const unmount = mount(value, container, { hydrate: true })
+  const clientButton = container.querySelector("button")
+  assert.ok(clientButton)
+  assert.notEqual(clientButton, serverButton)
+
+  serverButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.equal(clicks, 0)
+  clientButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.equal(clicks, 1)
+
+  unmount()
+  clientButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.equal(clicks, 1)
+  dom.window.close()
 })
 
 test("@vune-ui/web hydration reconciles stale server attributes without replacing matching nodes", () => {

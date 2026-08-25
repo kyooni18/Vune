@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Suspense, createSSRApp, defineAsyncComponent, defineComponent, h, inject, provide, ref } from "vue"
+import { Suspense, createSSRApp, defineAsyncComponent, defineComponent, h, inject, provide, ref, watchEffect } from "vue"
 import { renderToString } from "@vue/server-renderer"
 import {
   Button,
@@ -154,6 +154,25 @@ test("Vue and Vune reactivity cross only through explicit ref bridges", () => {
   const binding = fromVueRef(vueValue)
   binding.value = "after"
   assert.equal(vueValue.value, "after")
+})
+
+test("toVueRef invalidates Vue effects exactly once per State change", () => {
+  const state = State(1)
+  const vueState = toVueRef(state)
+  let runs = 0
+  const stop = watchEffect(() => {
+    void vueState.value
+    runs += 1
+  }, { flush: "sync" })
+
+  assert.equal(runs, 1)
+  vueState.value = 2
+  assert.equal(runs, 2)
+  vueState.value = 2
+  assert.equal(runs, 2)
+  state.value = 3
+  assert.equal(runs, 3)
+  stop()
 })
 
 test("@vune-ui/vue materializes GeometryReader through a measured host boundary", async () => {

@@ -28,6 +28,7 @@ interface StateRecord<T> {
   batchDepth: number
   pendingNotification: boolean
   pendingReconcile: boolean
+  observedMutationClock: number
 }
 
 interface ReactiveOwner {
@@ -52,6 +53,11 @@ const arrayMutators = new Map<PropertyKey, Function>([
   ["unshift", Array.prototype.unshift],
 ])
 let activeCollector: ((state: StateRef<unknown>) => void) | null = null
+// Nested mutations can happen while a renderer is between getSnapshot() and
+// subscribe(). Owners are intentionally detached while a State has no live
+// listeners, so retain a cheap global clock to conservatively detect that
+// race without keeping every object graph strongly indexed at all times.
+let reactiveMutationClock = 0
 
 export function isStateRef(value: unknown): value is StateRef<unknown> {
   return typeof value === "object" && value !== null && records.has(value as object)
@@ -88,7 +94,16 @@ function ownerFor(raw: object): ReactiveOwner {
 
 function dispatchNotification(record: StateRecord<unknown>): void {
   record.version += 1
-  for (const listener of [...record.listeners]) listener(record.transaction)
+  let failed = false
+  let failure: unknown
+  for (const listener of [...record.listeners]) {
+    try { listener(record.transaction) } catch (error) {
+      if (!failed) { failed = true; failure = error }
+    }
+  }
+  // A broken subscriber must not prevent sibling renderers from observing the
+  // mutation. Preserve the caller-visible error after all listeners caught up.
+  if (failed) throw failure
 }
 
 function notify(record: StateRecord<unknown>): void {
@@ -124,14 +139,32 @@ function attach(record: StateRecord<unknown>, owner: ReactiveOwner): void {
   record.owners.add(owner)
 }
 
-function attachGraph(record: StateRecord<unknown>, value: unknown, visited = new Set<object>()): void {
-  const raw = unwrap(value)
-  if (!reactiveContainer(raw) || visited.has(raw)) return
-  visited.add(raw)
-  attach(record, ownerFor(raw))
-  for (const property of Reflect.ownKeys(raw)) {
-    const descriptor = Object.getOwnPropertyDescriptor(raw, property)
-    if (descriptor && "value" in descriptor) attachGraph(record, descriptor.value, visited)
+function attachGraph(record: StateRecord<unknown>, value: unknown): void {
+  // State values can be produced from deeply nested JSON or document trees.
+  // Walking ownership recursively makes subscription depth depend on the JS
+  // call-stack limit (only a few thousand nodes in Node/browser engines). Keep
+  // the same descriptor-only, cycle-safe traversal on an explicit stack.
+  const visited = new Set<object>()
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const raw = unwrap(pending.pop())
+    if (!reactiveContainer(raw) || visited.has(raw)) continue
+    visited.add(raw)
+    attach(record, ownerFor(raw))
+    let properties: readonly PropertyKey[]
+    try {
+      properties = Reflect.ownKeys(raw)
+    } catch {
+      // Proxies are allowed as State values. If they intentionally block
+      // reflection, keep the reachable container itself reactive instead of
+      // making subscription fail merely because its children are opaque.
+      continue
+    }
+    for (const property of properties) {
+      let descriptor: PropertyDescriptor | undefined
+      try { descriptor = Object.getOwnPropertyDescriptor(raw, property) } catch { continue }
+      if (descriptor && "value" in descriptor) pending.push(descriptor.value)
+    }
   }
 }
 
@@ -175,9 +208,20 @@ function updateOwnership(record: StateRecord<unknown>, change: OwnershipChange, 
 }
 
 function notifyOwner(owner: ReactiveOwner, change: OwnershipChange = "reconcile", addedValue?: unknown): void {
+  reactiveMutationClock += 1
   const affected = [...owner.records]
   for (const record of affected) updateOwnership(record, change, addedValue)
-  for (const record of affected) notify(record)
+  let failed = false
+  let failure: unknown
+  for (const record of affected) {
+    try { notify(record) } catch (error) {
+      if (!failed) { failed = true; failure = error }
+    }
+  }
+  // Shared raw objects may feed multiple State records. Keep every record's
+  // version/listeners coherent even when one subscriber fails, then preserve
+  // the first error for normal error-boundary/reporting behavior.
+  if (failed) throw failure
 }
 
 function samePropertyDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
@@ -210,11 +254,22 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
           const actualOwner = typeof actual === "object" && actual !== null ? owners.get(actual as object) : undefined
           const batched = actualOwner ? [...actualOwner.records] : []
           for (const affected of batched) beginBatch(affected)
+          let failed = false
+          let failure: unknown
+          let result: unknown
           try {
-            return Reflect.apply(nativeMutator, this, arguments_)
-          } finally {
-            for (let index = batched.length - 1; index >= 0; index -= 1) endBatch(batched[index])
+            result = Reflect.apply(nativeMutator, this, arguments_)
+          } catch (error) {
+            failed = true
+            failure = error
           }
+          for (let index = batched.length - 1; index >= 0; index -= 1) {
+            try { endBatch(batched[index]) } catch (error) {
+              if (!failed) { failed = true; failure = error }
+            }
+          }
+          if (failed) throw failure
+          return result
         }
         mutatorCache.set(property, wrapper)
         return wrapper
@@ -284,6 +339,7 @@ export function State<T>(initial: T): StateRef<T> {
     batchDepth: 0,
     pendingNotification: false,
     pendingReconcile: false,
+    observedMutationClock: reactiveMutationClock,
   }
   record.current = wrap(initial, record as StateRecord<unknown>)
   records.set(state as object, record)
@@ -306,6 +362,14 @@ export function subscribeState(state: StateRef<unknown>, listener: Listener): ()
   const record = records.get(state as object)
   if (!record) return () => undefined
   const first = record.listeners.size === 0
+  if (first && record.observedMutationClock !== reactiveMutationClock) {
+    // useSyncExternalStore reads its snapshot before subscribing. If any
+    // reactive object changed in that gap, advance this State's snapshot
+    // conservatively so the renderer performs its mandatory post-subscribe
+    // recheck instead of potentially committing stale nested data.
+    record.version += 1
+    record.observedMutationClock = reactiveMutationClock
+  }
   record.listeners.add(listener)
   if (first) reconcile(record)
   let active = true
@@ -317,6 +381,7 @@ export function subscribeState(state: StateRef<unknown>, listener: Listener): ()
       record.pendingNotification = false
       record.pendingReconcile = false
       detach(record)
+      record.observedMutationClock = reactiveMutationClock
     }
   }
 }
@@ -328,7 +393,16 @@ export function collectStateReads<T>(compute: () => T, collector: (state: StateR
 }
 
 export function stateVersion(state: StateRef<unknown>): number {
-  return records.get(state as object)?.version ?? 0
+  const record = records.get(state as object)
+  if (!record) return 0
+  if (record.listeners.size === 0 && record.observedMutationClock !== reactiveMutationClock) {
+    // Detached States cannot cheaply know which shared nested object changed.
+    // A conservative bump is preferable to a missed external-store snapshot;
+    // once subscribed, owner tracking makes notifications precise again.
+    record.version += 1
+    record.observedMutationClock = reactiveMutationClock
+  }
+  return record.version
 }
 
 /** Transaction attached to the most recent mutation of this State. */

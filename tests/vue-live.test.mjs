@@ -84,6 +84,73 @@ test("Vue reevaluates a Vune body when an independently-owned State changes", as
   }
 })
 
+test("Vue drops stale Vune State subscriptions and releases them on unmount", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>")
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    Element: globalThis.Element,
+    HTMLElement: globalThis.HTMLElement,
+    SVGElement: globalThis.SVGElement,
+    Node: globalThis.Node,
+  }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.SVGElement = dom.window.SVGElement
+  globalThis.Node = dom.window.Node
+  try {
+    const { createApp, nextTick } = await import("vue")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const usePrimary = State(true)
+    const primary = State("primary-0")
+    const secondary = State("secondary-0")
+    let renders = 0
+    const app = createApp(VuneView, {
+      render: () => {
+        renders += 1
+        return Text(usePrimary.value ? primary.value : secondary.value)
+      },
+    })
+    app.mount(dom.window.document.getElementById("app"))
+    assert.match(dom.window.document.body.textContent ?? "", /primary-0/)
+
+    primary.value = "primary-1"
+    await nextTick()
+    assert.match(dom.window.document.body.textContent ?? "", /primary-1/)
+
+    usePrimary.value = false
+    await nextTick()
+    assert.match(dom.window.document.body.textContent ?? "", /secondary-0/)
+    const rendersAfterSwitch = renders
+
+    primary.value = "primary-stale"
+    await nextTick()
+    assert.equal(renders, rendersAfterSwitch)
+    assert.match(dom.window.document.body.textContent ?? "", /secondary-0/)
+
+    secondary.value = "secondary-1"
+    await nextTick()
+    assert.ok(renders > rendersAfterSwitch)
+    assert.match(dom.window.document.body.textContent ?? "", /secondary-1/)
+
+    app.unmount()
+    const rendersAfterUnmount = renders
+    secondary.value = "secondary-after-unmount"
+    await nextTick()
+    assert.equal(renders, rendersAfterUnmount)
+  } finally {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.Element = previous.Element
+    globalThis.HTMLElement = previous.HTMLElement
+    globalThis.SVGElement = previous.SVGElement
+    globalThis.Node = previous.Node
+    dom.window.close()
+  }
+})
+
 test("Vue materialization preserves Vune events and refs at the live DOM boundary", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
   const previousWindow = globalThis.window
@@ -152,6 +219,44 @@ test("Vue GeometryReader measures CSS safe-area insets at the DOM boundary", asy
     assert.match(dom.window.document.body.textContent ?? "", /12/)
     app.unmount()
   } finally {
+    globalThis.window = previousWindow
+    globalThis.document = previousDocument
+    globalThis.Element = previousElement
+    globalThis.SVGElement = previousSVGElement
+    globalThis.Node = previousNode
+    if (previousResizeObserver === undefined) delete globalThis.ResizeObserver
+    else globalThis.ResizeObserver = previousResizeObserver
+    dom.window.close()
+  }
+})
+
+test("Vue GeometryReader falls back to zero geometry when layout measurement throws", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>")
+  const previousWindow = globalThis.window
+  const previousDocument = globalThis.document
+  const previousElement = globalThis.Element
+  const previousSVGElement = globalThis.SVGElement
+  const previousNode = globalThis.Node
+  const previousResizeObserver = globalThis.ResizeObserver
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.Element = dom.window.Element
+  globalThis.SVGElement = dom.window.SVGElement
+  globalThis.Node = dom.window.Node
+  globalThis.ResizeObserver = class { constructor() { throw new Error("observer unavailable") } }
+  const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect
+  dom.window.HTMLElement.prototype.getBoundingClientRect = () => { throw new Error("layout unavailable") }
+  try {
+    const { createApp, nextTick } = await import("vue")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const app = createApp(VuneView, { render: () => GeometryReader(geometry => Text(`${geometry.size.width}:${geometry.safeAreaInsets.top}`)) })
+    app.mount(dom.window.document.getElementById("app"))
+    await nextTick()
+    await nextTick()
+    assert.match(dom.window.document.body.textContent ?? "", /0:0/)
+    app.unmount()
+  } finally {
+    dom.window.HTMLElement.prototype.getBoundingClientRect = originalRect
     globalThis.window = previousWindow
     globalThis.document = previousDocument
     globalThis.Element = previousElement

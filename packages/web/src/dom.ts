@@ -21,7 +21,7 @@ import {
 } from "@vune-ui/core"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
-import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomEvent, setDomRef, synchronizeDomSelectValue } from "./props.js"
+import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue } from "./props.js"
 import { domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
 
 interface DomViewBoundary {
@@ -135,17 +135,9 @@ function bindInsertedSubtree(node: Node, context: DomRenderContext): void {
     return
   }
   bindCandidateNode(node, node, context)
-  if (node.nodeType === 1) {
-    const element = node as Element
-    const props = context.domProps.get(element)
-    for (const [key, value] of Object.entries(props ?? {})) {
-      if (/^on[A-Za-z]/.test(key) && typeof value === "function") {
-        // Candidate trees intentionally stage event props without native
-        // listeners. Attach only when a node actually becomes live.
-        setDomEvent(element, key, value, context, true)
-      }
-    }
-  }
+  // commitStagedSubtree() has already activated props (including events) for
+  // every newly inserted descendant. This phase only binds runtime metadata;
+  // walking props again would repeat event-map work for every live element.
   const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
   for (const child of [...content.childNodes]) bindInsertedSubtree(child, context)
 }
@@ -280,6 +272,29 @@ function appendNodeBatch(parent: Node, nodes: readonly Node[]): void {
   parent.appendChild(fragment)
 }
 
+function removeNodeBatch(parent: Node, nodes: readonly Node[], context: DomRenderContext): void {
+  if (nodes.length === 0) return
+  for (const node of nodes) releaseDomSubtree(node, context)
+  const current = parent.childNodes
+  let coversParent = current.length === nodes.length
+  if (coversParent) {
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (current[index] !== nodes[index]) {
+        coversParent = false
+        break
+      }
+    }
+  }
+  const replaceChildren = (parent as Node & { replaceChildren?: (...nodes: Node[]) => void }).replaceChildren
+  if (coversParent && typeof replaceChildren === "function") {
+    replaceChildren.call(parent)
+    return
+  }
+  for (const node of nodes) {
+    if (node.parentNode === parent) parent.removeChild(node)
+  }
+}
+
 function reconcileTailAppend(
   parent: Node,
   currentChildren: readonly Node[],
@@ -323,6 +338,7 @@ function reconcilePureKeyedPermutation(
   context: DomRenderContext,
 ): boolean {
   if (currentChildren.length < 2 || currentChildren.length !== nextChildren.length) return false
+  const runtime = runtimeFor(context)
   const keyed = new Map<string | number, Node>()
   const oldIndex = new Map<Node, number>()
   for (let index = 0; index < currentChildren.length; index += 1) {
@@ -335,24 +351,36 @@ function reconcilePureKeyedPermutation(
   const desired: Node[] = []
   const indices: number[] = []
   const seen = new Set<string | number>()
+  let alreadyOrdered = true
+  let strictlyDescending = true
   for (const next of nextChildren) {
     const key = nodeKey(next, context)
     if (key === undefined || seen.has(key)) return false
     seen.add(key)
-    const live = runtimeFor(context)?.reuseCandidates.get(next) ?? keyed.get(key)
+    const live = runtime?.reuseCandidates.get(next) ?? keyed.get(key)
     if (!live || live.parentNode !== parent || nodeKey(live, context) !== key) return false
     const index = oldIndex.get(live)
     if (index === undefined) return false
+    if (index !== desired.length) alreadyOrdered = false
+    if (indices.length > 0 && index >= indices[indices.length - 1]) strictlyDescending = false
     desired.push(live)
     indices.push(index)
   }
 
-  const stable = longestIncreasingSubsequenceIndices(indices)
-  const moveCount = desired.length - stable.size
   for (let index = 0; index < nextChildren.length; index += 1) {
     reconcileDomNode(parent, desired[index], nextChildren[index], context)
   }
-  if (moveCount === 0) return true
+  if (alreadyOrdered) return true
+
+  // A full reverse is common in tables and feeds. Computing an LIS only tells
+  // us that every node but one must move, so batch the permutation directly.
+  if (strictlyDescending) {
+    appendNodeBatch(parent, desired)
+    return true
+  }
+
+  const stable = longestIncreasingSubsequenceIndices(indices)
+  const moveCount = desired.length - stable.size
 
   // When most rows move, repeatedly editing the live child list can become
   // quadratic in DOM implementations. Move the permutation through a detached
@@ -372,6 +400,11 @@ function reconcilePureKeyedPermutation(
 }
 
 function releaseDomSubtree(node: Node, context: DomRenderContext): void {
+  // If no live element in this mount owns a native listener, there is nothing
+  // to tear down in the subtree. This is the overwhelmingly common path for
+  // large presentational branches and avoids walking every descendant merely
+  // to query an empty WeakMap.
+  if (context.eventTargetCount === 0) return
   if (node.nodeType === 1) {
     const element = node as Element
     clearDomEvents(element, context)
@@ -408,6 +441,17 @@ function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRen
 
 function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, context: DomRenderContext): void {
   const currentNodes = parent.childNodes
+  if (nextChildren.length === 0) {
+    if (currentNodes.length > 0) removeNodeBatch(parent, [...currentNodes], context)
+    return
+  }
+  if (currentNodes.length === 0) {
+    const additions = Array.from(nextChildren)
+    for (const addition of additions) commitStagedSubtree(addition, context)
+    appendNodeBatch(parent, additions)
+    for (const addition of additions) bindInsertedSubtree(addition, context)
+    return
+  }
   if (currentNodes.length === nextChildren.length) {
     let unkeyed = true
     for (let index = 0; index < nextChildren.length; index += 1) {
@@ -417,8 +461,13 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
       }
     }
     if (unkeyed) {
-      for (let index = 0; index < nextChildren.length; index += 1) {
-        reconcileDomNode(parent, currentNodes[index], nextChildren[index], context)
+      // nextChildren is often a live NodeList owned by a detached candidate. If
+      // a replacement moves one of those nodes into the live tree, that list
+      // shrinks immediately and a direct loop can skip later siblings. Only
+      // the candidate side needs a snapshot; replacements keep live length.
+      const nextSnapshot = Array.from(nextChildren)
+      for (let index = 0; index < nextSnapshot.length; index += 1) {
+        reconcileDomNode(parent, currentNodes[index], nextSnapshot[index], context)
       }
       return
     }
@@ -427,6 +476,7 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   const nextArray = Array.from(nextChildren)
   if (reconcileTailAppend(parent, currentChildren, nextArray, context)) return
   if (reconcilePureKeyedPermutation(parent, currentChildren, nextArray, context)) return
+  const runtime = runtimeFor(context)
   const keyed = new Map<string | number, Node>()
   const used = new Set<Node>()
   for (const child of currentChildren) {
@@ -439,7 +489,7 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   for (let index = 0; index < nextArray.length; index += 1) {
     const next = nextArray[index]
     const key = nodeKey(next, context)
-    const reusable = runtimeFor(context)?.reuseCandidates.get(next)
+    const reusable = runtime?.reuseCandidates.get(next)
     let current = reusable && reusable.parentNode ? reusable : key === undefined ? unkeyed[nextUnkeyed++] : keyed.get(key)
     if (current) used.add(current)
     if (!current) {
@@ -488,7 +538,20 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   if (nextKey !== undefined) context.domKeys.set(currentElement, nextKey)
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
   bindCandidateNode(next, current, context)
-  if (reusable !== current) reconcileDomChildren(domContentContainer(currentElement), domContentContainer(nextElement).childNodes, context)
+  if (reusable !== current) {
+    const currentContent = domContentContainer(currentElement)
+    const nextContent = domContentContainer(nextElement)
+    const currentChildren = currentContent.childNodes
+    const nextChildren = nextContent.childNodes
+    if (currentChildren.length === 1 && nextChildren.length === 1 && currentChildren[0].nodeType === 3 && nextChildren[0].nodeType === 3) {
+      const currentText = currentChildren[0]
+      const nextText = nextChildren[0]
+      if (currentText.nodeValue !== nextText.nodeValue) currentText.nodeValue = nextText.nodeValue
+      bindCandidateNode(nextText, currentText, context)
+    } else if (currentChildren.length !== 0 || nextChildren.length !== 0) {
+      reconcileDomChildren(currentContent, nextChildren, context)
+    }
+  }
   synchronizeDomSelectValue(currentElement, context.domProps.get(nextElement))
   return current
 }
@@ -496,11 +559,13 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
 function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNodes: readonly Node[], context: DomRenderContext): void {
   const current = currentNodes.filter(node => node.parentNode === parent)
   if (current.length === 0) {
-    for (const next of nextNodes) {
-      commitStagedSubtree(next, context)
-      parent.appendChild(next)
-      bindInsertedSubtree(next, context)
-    }
+    for (const next of nextNodes) commitStagedSubtree(next, context)
+    appendNodeBatch(parent, nextNodes)
+    for (const next of nextNodes) bindInsertedSubtree(next, context)
+    return
+  }
+  if (nextNodes.length === 0) {
+    removeNodeBatch(parent, current, context)
     return
   }
   const after = current[current.length - 1].nextSibling
@@ -536,6 +601,10 @@ function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNode
   }
 }
 
+function safeBoundingRect(element: Element): DOMRect | undefined {
+  try { return element.getBoundingClientRect() } catch { return undefined }
+}
+
 function lazyEstimate(node: LazyViewNode): number {
   const value = node.props["data-vune-lazy-estimate"]
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN
@@ -552,8 +621,10 @@ function lazyScrollParent(element: HTMLElement, axis: LazyViewNode["axis"]): HTM
   const property = axis === "horizontal" ? "overflowX" : "overflowY"
   let parent = element.parentElement
   while (parent) {
-    const style = parent.ownerDocument.defaultView?.getComputedStyle(parent)
-    const overflow = style?.[property]
+    let overflow = parent.style[property]
+    try {
+      overflow = parent.ownerDocument.defaultView?.getComputedStyle(parent)?.[property] || overflow
+    } catch { /* inaccessible CSSOM: fall back to the inline declaration */ }
     if (overflow === "auto" || overflow === "scroll" || overflow === "overlay") return parent
     parent = parent.parentElement
   }
@@ -561,26 +632,32 @@ function lazyScrollParent(element: HTMLElement, axis: LazyViewNode["axis"]): HTM
 }
 
 function measuredLazySize(element: HTMLElement, node: LazyViewNode): number | undefined {
-  const values = [...element.children].flatMap(child => {
-    if (child.hasAttribute("data-vune-lazy-spacer")) return []
-    const rect = child.getBoundingClientRect()
+  let total = 0
+  let count = 0
+  for (const child of element.children) {
+    if (child.hasAttribute("data-vune-lazy-spacer")) continue
+    const rect = safeBoundingRect(child)
+    if (!rect) continue
     const value = node.axis === "horizontal" ? rect.width : rect.height
-    return Number.isFinite(value) && value > 0 ? [value] : []
-  })
-  if (values.length === 0) return undefined
-  return values.reduce((sum, value) => sum + value, 0) / values.length
+    if (!Number.isFinite(value) || value <= 0) continue
+    total += value
+    count += 1
+  }
+  return count === 0 ? undefined : total / count
 }
 
 function lazyRangeForElement(element: HTMLElement, node: LazyViewNode, measuredSize?: number): LazyViewRange {
   const vertical = node.axis !== "horizontal"
-  const rect = element.getBoundingClientRect()
+  const rect = safeBoundingRect(element)
   const parent = lazyScrollParent(element, node.axis)
   const window = element.ownerDocument.defaultView
-  let start = vertical ? -rect.top : -rect.left
+  const elementOffset = vertical ? rect?.top ?? 0 : rect?.left ?? 0
+  let start = -elementOffset
   let viewport = vertical ? window?.innerHeight ?? 800 : window?.innerWidth ?? 1200
   if (parent) {
-    const parentRect = parent.getBoundingClientRect()
-    start = (vertical ? parent.scrollTop : parent.scrollLeft) + (vertical ? parentRect.top - rect.top : parentRect.left - rect.left)
+    const parentRect = safeBoundingRect(parent)
+    const parentOffset = vertical ? parentRect?.top ?? 0 : parentRect?.left ?? 0
+    start = (vertical ? parent.scrollTop : parent.scrollLeft) + parentOffset - elementOffset
     viewport = vertical ? parent.clientHeight : parent.clientWidth
     if (!viewport) viewport = vertical ? window?.innerHeight ?? 800 : window?.innerWidth ?? 1200
   }
@@ -1027,18 +1104,27 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
 }
 
 function geometryFromElement(element: Element): GeometryProxy {
-  const rect = element.getBoundingClientRect()
+  const rect = safeBoundingRect(element)
+  if (!rect) return zeroGeometry
   const frame = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left }
   const document = element.ownerDocument
   const view = document.defaultView
-  if (!view?.getComputedStyle || !document.body) return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
+  const fallback = { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
+  if (!view?.getComputedStyle || !document.body) return fallback
   const probe = document.createElement("div")
   probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
-  document.body.appendChild(probe)
-  const style = view.getComputedStyle(probe)
-  const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
-  probe.remove()
-  return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
+  try {
+    document.body.appendChild(probe)
+    const style = view.getComputedStyle(probe)
+    const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
+    return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
+  } catch {
+    // Geometry is still useful when CSSOM access is unavailable (sandboxed or
+    // synthetic documents). Safe-area measurement is optional, not fatal.
+    return fallback
+  } finally {
+    try { probe.remove() } catch { /* detached/synthetic DOM cleanup is best-effort */ }
+  }
 }
 
 function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
@@ -1084,6 +1170,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       hydrationProps: new WeakMap(),
       domProps: new WeakMap(),
       eventListeners: new WeakMap(),
+      eventTargetCount: 0,
       domKeys: new WeakMap(),
       domTags: new WeakMap(),
       lazyRanges: new Map(),
@@ -1299,21 +1386,21 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
     }
     const observeLazyViewport = () => {
-      const targets: EventTarget[] = []
+      const targets = new Set<EventTarget>()
       const window = document.defaultView
-      if (window) targets.push(window)
-      targets.push(container)
+      if (window) targets.add(window)
+      targets.add(container)
       container.querySelectorAll<HTMLElement>("[data-vune-lazy]").forEach(element => {
         const key = context.lazyKeys.get(element)
         const node = key ? context.lazyNodes.get(key) : undefined
         const parent = node ? lazyScrollParent(element, node.axis) : null
-        if (parent) targets.push(parent)
+        if (parent) targets.add(parent)
       })
       // Detached or replaced scroll parents keep handler references alive
       // until unmount unless pruned on every pass.
       const listener = scheduleLazyMeasure as EventListener
       for (const target of [...lazyViewportTargets]) {
-        if (targets.includes(target)) continue
+        if (targets.has(target)) continue
         lazyViewportTargets.delete(target)
         target.removeEventListener("scroll", listener)
         target.removeEventListener("resize", listener)
@@ -1431,7 +1518,19 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
           outputChildren = output.nodeType === 11 ? [...output.childNodes] : [output]
         }
-        reconcileDomChildren(container, outputChildren, context)
+        if (attemptedHydration) {
+          // Once structural hydration fails, some live descendants may never
+          // have been visited, so their server-only attributes are unknown to
+          // the normal prop diff. Reusing that partially inspected tree can
+          // preserve stale nodes/attributes. Commit one clean client tree and
+          // replace the failed hydration boundary atomically instead.
+          for (const child of outputChildren) commitStagedSubtree(child, context)
+          removeNodeBatch(container, [...container.childNodes], context)
+          appendNodeBatch(container, outputChildren)
+          for (const child of outputChildren) bindInsertedSubtree(child, context)
+        } else {
+          reconcileDomChildren(container, outputChildren, context)
+        }
       }
       commitViewPass(true)
       for (const [parent, position] of scrollPositions) {
@@ -1464,22 +1563,30 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     return () => {
       if (stopped) return
       stopped = true
-      subscriptions.forEach(unsubscribe => unsubscribe())
+      let failed = false
+      let failure: unknown
+      const cleanup = (action: () => void) => {
+        try { action() } catch (error) {
+          if (!failed) { failed = true; failure = error }
+        }
+      }
+      subscriptions.forEach(unsubscribe => cleanup(unsubscribe))
       subscriptions.clear()
-      for (const key of [...viewRuntime.rootChildren]) disposeBoundary(key)
+      for (const key of [...viewRuntime.rootChildren]) cleanup(() => disposeBoundary(key))
       viewRuntime.rootChildren.clear()
       viewRuntime.rootNextChildren.clear()
       for (const boundary of viewRuntime.boundaries.values()) {
-        boundary.subscriptions.forEach(unsubscribe => unsubscribe())
+        boundary.subscriptions.forEach(unsubscribe => cleanup(unsubscribe))
         boundary.subscriptions.clear()
       }
       viewRuntime.boundaries.clear()
-      activeRefs.forEach(entry => entry.cleanup())
+      activeRefs.forEach(entry => cleanup(entry.cleanup))
       activeRefs.clear()
-      lazyViewportCleanups.forEach(cleanup => cleanup())
+      lazyViewportCleanups.forEach(action => cleanup(action))
       lazyViewportCleanups.length = 0
-      for (const child of container.childNodes) releaseDomSubtree(child, context)
-      ;(container as Element & { replaceChildren(...nodes: Node[]): void }).replaceChildren()
+      for (const child of [...container.childNodes]) cleanup(() => releaseDomSubtree(child, context))
+      cleanup(() => (container as Element & { replaceChildren(...nodes: Node[]): void }).replaceChildren())
+      if (failed) throw failure
     }
   }
 

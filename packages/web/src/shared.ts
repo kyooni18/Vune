@@ -221,6 +221,7 @@ export interface DomRenderContext {
   readonly hydrationProps: WeakMap<Element, Record<string, unknown> | null | undefined>
   readonly domProps: WeakMap<Element, Record<string, unknown>>
   readonly eventListeners: WeakMap<Element, Map<string, EventListener>>
+  eventTargetCount: number
   readonly domKeys: WeakMap<Node, string | number | undefined>
   readonly domTags: WeakMap<Element, string>
   readonly lazyRanges: Map<string, LazyViewRange>

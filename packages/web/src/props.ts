@@ -54,6 +54,7 @@ function domEvent(key: string): { readonly name: string; readonly capture: boole
 export function setDomEvent(element: Element, key: string, value: unknown, context: DomRenderContext, attach = true): void {
   const event = domEvent(key)
   const listeners = context.eventListeners.get(element) ?? new Map<string, EventListener>()
+  const hadListeners = listeners.size > 0
   type EventInvoker = EventListener & { handler?: EventListener }
   const previous = listeners.get(event.storageKey) as EventInvoker | undefined
   if (attach && typeof value === "function") {
@@ -73,8 +74,11 @@ export function setDomEvent(element: Element, key: string, value: unknown, conte
     element.removeEventListener(event.name, previous, event.capture)
     listeners.delete(event.storageKey)
   }
-  if (listeners.size > 0) context.eventListeners.set(element, listeners)
+  const hasListeners = listeners.size > 0
+  if (hasListeners) context.eventListeners.set(element, listeners)
   else context.eventListeners.delete(element)
+  if (!hadListeners && hasListeners) context.eventTargetCount += 1
+  else if (hadListeners && !hasListeners) context.eventTargetCount = Math.max(0, context.eventTargetCount - 1)
 }
 
 export function clearDomEvents(element: Element, context: DomRenderContext): void {
@@ -86,6 +90,7 @@ export function clearDomEvents(element: Element, context: DomRenderContext): voi
     element.removeEventListener(storageKey.slice(separator + 1), listener, capture)
   }
   context.eventListeners.delete(element)
+  context.eventTargetCount = Math.max(0, context.eventTargetCount - 1)
 }
 
 function namespacedAttribute(name: string): { readonly namespace?: string; readonly localName: string; readonly qualifiedName: string } {
@@ -180,24 +185,34 @@ function applyAttributeValue(element: Element, key: string, value: unknown): voi
 }
 
 function stageDomProps(element: Element, props: Record<string, unknown>, context: DomRenderContext): void {
-  const previous = context.domProps.get(element) ?? {}
-  const previousStyle = previous.style && typeof previous.style === "object" ? previous.style as Record<string, unknown> : undefined
-  const nextStyle = props.style && typeof props.style === "object" ? props.style as Record<string, unknown> : undefined
-  const remembered: Record<string, unknown> = {
-    ...previous,
-    ...props,
-    ...(nextStyle ? { style: { ...(previousStyle ?? {}), ...nextStyle } } : {}),
-  }
-  if (Object.prototype.hasOwnProperty.call(props, "class") || Object.prototype.hasOwnProperty.call(props, "className")) {
-    const before = classNameOf(previous.class ?? previous.className)
-    const incoming = classNameOf(props.class ?? props.className)
-    const combined = [before, incoming].filter(Boolean).join(" ")
-    delete remembered.className
-    if (combined) remembered.class = combined
-    else delete remembered.class
+  const previous = context.domProps.get(element)
+  const hasClass = Object.prototype.hasOwnProperty.call(props, "class") || Object.prototype.hasOwnProperty.call(props, "className")
+  if (!previous && !hasClass) {
+    // Element props are already snapshotted by @vune-ui/core. Keeping that
+    // immutable record directly avoids allocating another object for the very
+    // common first staging pass; later modifiers still merge through the path
+    // below when the same candidate receives more props.
+    context.domProps.set(element, props)
+  } else {
+    const before = previous ?? {}
+    const previousStyle = before.style && typeof before.style === "object" ? before.style as Record<string, unknown> : undefined
+    const nextStyle = props.style && typeof props.style === "object" ? props.style as Record<string, unknown> : undefined
+    const remembered: Record<string, unknown> = {
+      ...before,
+      ...props,
+      ...(nextStyle ? { style: { ...(previousStyle ?? {}), ...nextStyle } } : {}),
+    }
+    if (hasClass) {
+      const beforeClass = classNameOf(before.class ?? before.className)
+      const incoming = classNameOf(props.class ?? props.className)
+      const combined = [beforeClass, incoming].filter(Boolean).join(" ")
+      delete remembered.className
+      if (combined) remembered.class = combined
+      else delete remembered.class
+    }
+    context.domProps.set(element, remembered)
   }
   if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
-  context.domProps.set(element, remembered)
   const nextKey = typeof props.key === "string" || typeof props.key === "number" ? props.key : undefined
   if (nextKey !== undefined) context.domKeys.set(element, nextKey)
 }
@@ -220,15 +235,22 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
   if (nextKey !== undefined) context.domKeys.set(element, nextKey)
 }
 
-export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+function applyDomPropsNow(
+  element: Element,
+  props: Record<string, unknown> | null | undefined,
+  context: DomRenderContext,
+  remember: boolean,
+): void {
   if (context.hydrating) context.hydrationProps.set(element, props)
-  if (!props || Object.keys(props).length === 0) return
+  if (!props) return
+  const entries = Object.entries(props)
+  if (entries.length === 0) return
   if (context.stagingProps && !context.hydrating) {
     stageDomProps(element, props, context)
     return
   }
   if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
-  for (const [key, value] of Object.entries(props)) {
+  for (const [key, value] of entries) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
       setDomEvent(element, key, value, context, !context.hydrating && !context.stagingEvents && typeof value === "function")
@@ -244,7 +266,11 @@ export function applyDomProps(element: Element, props: Record<string, unknown> |
     if (key === "ref") continue
     applyAttributeValue(element, key, value)
   }
-  rememberDomProps(element, props, context)
+  if (remember) rememberDomProps(element, props, context)
+}
+
+export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+  applyDomPropsNow(element, props, context, true)
 }
 
 export function commitStagedDomProps(element: Element, context: DomRenderContext): void {
@@ -255,7 +281,9 @@ export function commitStagedDomProps(element: Element, context: DomRenderContext
   context.stagingProps = false
   context.stagingEvents = false
   try {
-    applyDomProps(element, props, context)
+    // stageDomProps already holds the normalized snapshot. Do not clone it a
+    // second time merely because the candidate is becoming live.
+    applyDomPropsNow(element, props, context, false)
   } finally {
     context.stagingProps = stagingProps
     context.stagingEvents = stagingEvents
@@ -280,9 +308,20 @@ function removeDomProp(element: Element, key: string): void {
   if (key !== "children" && key !== "key" && key !== "ref" && !/^on[A-Za-z]/.test(key)) removeAttribute(element, name)
 }
 
+function sameDomProps(previous: Record<string, unknown>, next: Record<string, unknown>, nextKeys: readonly string[]): boolean {
+  const previousKeys = Object.keys(previous)
+  if (previousKeys.length !== nextKeys.length) return false
+  for (const key of nextKeys) {
+    if (!Object.prototype.hasOwnProperty.call(previous, key) || !Object.is(previous[key], next[key])) return false
+  }
+  return true
+}
+
 export function patchDomProps(element: Element, next: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   const previousStored = context.domProps.get(element)
-  if (!previousStored && (!next || Object.keys(next).length === 0)) return
+  const nextKeys = next ? Object.keys(next) : []
+  if (!previousStored && nextKeys.length === 0) return
+  if (previousStored && next && sameDomProps(previousStored, next, nextKeys)) return
   const previous = previousStored ?? {}
   for (const key of Object.keys(previous)) {
     if (key === "ref" || key === "key" || key === "children") continue
@@ -339,6 +378,6 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
     if (Object.is(previous[key], value)) continue
     applyAttributeValue(element, key, value)
   }
-  if (!next || Object.keys(next).length === 0) context.domProps.delete(element)
-  else rememberDomProps(element, next, context, false)
+  if (!next || nextKeys.length === 0) context.domProps.delete(element)
+  else context.domProps.set(element, next)
 }

@@ -53,6 +53,7 @@ import {
   resolveInitializer,
   resolveSemanticInitializer,
   subscribeState,
+  stateVersion,
   viewElement,
   vuneClosureKind,
   vuneClosureVariants,
@@ -472,6 +473,75 @@ test("State preserves reflection-hostile proxies as opaque values", () => {
   unsubscribe()
 })
 
+test("State subscriptions keep reflection-hostile containers opaque instead of throwing", () => {
+  for (const value of [
+    new Proxy({ count: 0 }, { ownKeys() { throw new Error("keys unavailable") } }),
+    new Proxy({ count: 0 }, { getOwnPropertyDescriptor() { throw new Error("descriptor unavailable") } }),
+  ]) {
+    const state = State(value)
+    assert.doesNotThrow(() => {
+      const unsubscribe = subscribeState(state, () => undefined)
+      unsubscribe()
+    })
+  }
+})
+
+test("State listener failures do not starve later listeners or shared State records", () => {
+  const shared = { count: 0 }
+  const first = State(shared)
+  const second = State(shared)
+  let laterCalls = 0
+  let secondCalls = 0
+  const stopThrowing = subscribeState(first, () => { throw new Error("subscriber failed") })
+  const stopLater = subscribeState(first, () => { laterCalls += 1 })
+  const stopSecond = subscribeState(second, () => { secondCalls += 1 })
+
+  assert.throws(() => { first.value.count = 1 }, /subscriber failed/)
+  assert.equal(laterCalls, 1)
+  assert.equal(secondCalls, 1)
+  assert.equal(second.value.count, 1)
+
+  stopSecond()
+  stopLater()
+  stopThrowing()
+})
+
+test("State versions detect nested mutations across the snapshot-to-subscribe gap", () => {
+  const shared = { count: 0 }
+  const first = State(shared)
+  const second = State(shared)
+  const before = stateVersion(second)
+
+  first.value.count = 1
+  const unsubscribe = subscribeState(second, () => undefined)
+
+  assert.equal(second.value.count, 1)
+  assert.ok(stateVersion(second) > before)
+  unsubscribe()
+})
+
+test("State versions advance for nested mutations while detached", () => {
+  const state = State({ nested: { count: 0 } })
+  const before = stateVersion(state)
+  state.value.nested.count = 1
+  assert.ok(stateVersion(state) > before)
+})
+
+test("State subscriptions handle deeply nested ownership without overflowing the call stack", () => {
+  let value = { count: 0 }
+  for (let index = 0; index < 20_000; index += 1) value = { child: value }
+  const state = State(value)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+
+  let leaf = state.value
+  for (let index = 0; index < 20_000; index += 1) leaf = leaf.child
+  leaf.count = 1
+
+  assert.equal(notifications, 1)
+  unsubscribe()
+})
+
 test("State tracks defineProperty and newly defined nested values", () => {
   const state = State({})
   let notifications = 0
@@ -558,6 +628,36 @@ test("State incrementally owns appended subtrees and batches native array mutato
   notifications = 0
   state.value.splice(1, 2, { id: 10 }, { id: 11 })
   assert.equal(notifications, 1)
+  unsubscribe()
+})
+
+test("State array batches fully unwind when one shared subscriber throws", () => {
+  const shared = []
+  const first = State(shared)
+  const second = State(shared)
+  let firstCalls = 0
+  const stopFirst = subscribeState(first, () => { firstCalls += 1 })
+  const stopThrowing = subscribeState(second, () => { throw new Error("shared array subscriber failed") })
+
+  assert.throws(() => { first.value.push(1) }, /shared array subscriber failed/)
+  assert.equal(firstCalls, 1)
+
+  stopThrowing()
+  first.value.push(2)
+  assert.equal(firstCalls, 2)
+  assert.deepEqual([...first.value], [1, 2])
+  stopFirst()
+})
+
+test("State array batches unwind when a native mutator callback throws", () => {
+  const state = State([3, 2, 1])
+  let calls = 0
+  const unsubscribe = subscribeState(state, () => { calls += 1 })
+
+  assert.throws(() => state.value.sort(() => { throw new Error("compare failed") }), /compare failed/)
+  state.value.push(4)
+  assert.equal(calls, 1)
+  assert.equal(state.value.at(-1), 4)
   unsubscribe()
 })
 

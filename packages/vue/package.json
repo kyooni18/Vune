@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/vue",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Vue renderer and explicit interop bridges for the renderer-independent Vune core.",
   "type": "module",
   "files": [

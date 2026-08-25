@@ -131,6 +131,27 @@ test('GeometryReader feeds measured host geometry back into the React graph', as
   }
 })
 
+test('GeometryReader falls back to zero geometry when layout measurement throws', async () => {
+  const restore = installDOM()
+  const previousResizeObserver = globalThis.ResizeObserver
+  globalThis.ResizeObserver = class { constructor() { throw new Error('observer unavailable') } }
+  const originalRect = window.HTMLElement.prototype.getBoundingClientRect
+  window.HTMLElement.prototype.getBoundingClientRect = () => { throw new Error('layout unavailable') }
+  try {
+    const App = canonicalView(() => GeometryReader(geometry => CanonicalText(`${geometry.size.width}:${geometry.safeAreaInsets.top}`)))
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+    await act(async () => {})
+    assert.match(document.body.textContent, /0:0/)
+    await act(async () => { root.unmount() })
+  } finally {
+    window.HTMLElement.prototype.getBoundingClientRect = originalRect
+    if (previousResizeObserver === undefined) delete globalThis.ResizeObserver
+    else globalThis.ResizeObserver = previousResizeObserver
+    restore()
+  }
+})
+
 test('canonical @vune-ui/react graph output hydrates through the standard React boundary', async () => {
   const restore = installDOM()
   try {

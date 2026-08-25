@@ -220,29 +220,41 @@ function useReactiveGraph<T>(
   const value = withRenderTransaction(transaction, () => declaredDependencies && staticDependenciesComplete
     ? compute()
     : collectStateReads(compute, dependency => dependencies.add(dependency)))
-  previousVersions.current = new Map([...dependencies].map(dependency => [dependency, stateVersion(dependency)]))
+  const dependencyList = [...dependencies]
+  const nextVersions = new Map<StateRef<unknown>, number>()
+  for (const dependency of dependencyList) nextVersions.set(dependency, stateVersion(dependency))
+  previousVersions.current = nextVersions
   // Subscribe keyed by the dependency-set identity so useSyncExternalStore
   // only re-subscribes when the set actually changes instead of every commit.
-  const dependencyKey = [...dependencies].map(stateDependencyId).sort((left, right) => left - right).join(",")
+  const dependencyKey = dependencyList.map(stateDependencyId).sort((left, right) => left - right).join(",")
   const subscribe = useMemo(
     () => (listener: () => void) => {
-      const unsubscribers = [...dependencies].map(dependency => subscribeState(dependency, () => listener()))
+      const unsubscribers = dependencyList.map(dependency => subscribeState(dependency, listener))
       return () => unsubscribers.forEach(unsubscribe => unsubscribe())
     },
-    // `dependencies` is rebuilt whenever the discovered set changes, which is
-    // exactly captured by dependencyKey.
+    // The dependency list is rebuilt every render, but this key changes only
+    // when the actual set changes.
+    [dependencyKey],
+  )
+  const getSnapshot = useMemo(
+    () => () => {
+      let version = 0
+      for (const dependency of dependencyList) version += stateVersion(dependency)
+      return version
+    },
     [dependencyKey],
   )
   useSyncExternalStore(
     subscribe,
-    () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
-    () => [...dependencies].reduce((version, dependency) => version + stateVersion(dependency), 0),
+    getSnapshot,
+    getSnapshot,
   )
   return { value, transaction }
 }
 
 function geometryFromElement(element: Element): GeometryProxy {
-  const rect = element.getBoundingClientRect()
+  let rect: DOMRect
+  try { rect = element.getBoundingClientRect() } catch { return zeroGeometry }
   const frame = {
     x: rect.x,
     y: rect.y,
@@ -255,14 +267,22 @@ function geometryFromElement(element: Element): GeometryProxy {
   }
   const document = element.ownerDocument
   const view = document.defaultView
-  if (!view?.getComputedStyle || !document.body) return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
+  const fallback = { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
+  if (!view?.getComputedStyle || !document.body) return fallback
   const probe = document.createElement("div")
   probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
-  document.body.appendChild(probe)
-  const style = view.getComputedStyle(probe)
-  const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
-  probe.remove()
-  return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
+  try {
+    document.body.appendChild(probe)
+    const style = view.getComputedStyle(probe)
+    const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
+    return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
+  } catch {
+    // Geometry is still useful when CSSOM access is unavailable (sandboxed or
+    // synthetic documents). Safe-area measurement is optional, not fatal.
+    return fallback
+  } finally {
+    try { probe.remove() } catch { /* detached/synthetic DOM cleanup is best-effort */ }
+  }
 }
 
 function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
@@ -288,12 +308,21 @@ function GeometryHost({ render }: { render: (geometry: GeometryProxy) => ReactNo
       setGeometry(previous => sameGeometry(previous, next) ? previous : next)
     }
     update()
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update)
-    observer?.observe(element)
-    window.addEventListener("resize", update)
+    let observer: ResizeObserver | undefined
+    try {
+      if (typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver(update)
+        observer.observe(element)
+      }
+    } catch {
+      try { observer?.disconnect() } catch { /* broken observers are already inert */ }
+      observer = undefined
+    }
+    const view = element.ownerDocument.defaultView
+    try { view?.addEventListener("resize", update) } catch { /* synthetic window: initial measurement is still valid */ }
     return () => {
-      observer?.disconnect()
-      window.removeEventListener("resize", update)
+      try { observer?.disconnect() } catch { /* best-effort cleanup */ }
+      try { view?.removeEventListener("resize", update) } catch { /* best-effort cleanup */ }
     }
   }, [])
   return createElement("div", { ref: host, "data-vune": "GeometryReader", style: { boxSizing: "border-box", width: "100%" } }, reactive.value)
