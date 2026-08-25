@@ -121,6 +121,14 @@ for (const target of releaseTargets) {
 
 const canonicalOnlyDir = mkdtempSync(resolve(tmpdir(), "vune-canonical-only-"))
 try {
+  // npm cannot resolve the semver dependencies declared by the packed
+  // `vune-ui` tarball in offline mode unless the matching packed dependency
+  // tarballs are supplied as install candidates. Keep the project manifest
+  // intentionally minimal (only the canonical package and core), while
+  // making the release check independent of the machine's npm cache.
+  const canonicalDependencyTarballs = canonicalPackages
+    .filter(packageName => packageName !== "core")
+    .map(packageName => packedTarballs.get(`@vune-ui/${packageName}`))
   writeFileSync(resolve(canonicalOnlyDir, "package.json"), JSON.stringify({
     private: true,
     type: "module",
@@ -129,7 +137,16 @@ try {
       "@vune-ui/core": `file:${packedTarballs.get("@vune-ui/core")}`,
     },
   }, null, 2))
-  const install = spawnSync("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: canonicalOnlyDir, encoding: "utf8" })
+  const install = spawnSync("npm", [
+    "install",
+    "--offline",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--no-package-lock",
+    "--no-save",
+    ...canonicalDependencyTarballs,
+  ], { cwd: canonicalOnlyDir, encoding: "utf8" })
   assert.equal(install.status, 0, `canonical-only packed install failed:\n${install.stdout}\n${install.stderr}`)
   for (const packageName of ["compiler", "core", "react", "vite", "vue", "web"]) {
     assert.equal(existsSync(resolve(canonicalOnlyDir, `node_modules/@vune-ui/${packageName}`)), true, `canonical vune-ui did not install @vune-ui/${packageName}`)
