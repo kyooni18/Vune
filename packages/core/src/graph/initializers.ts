@@ -235,7 +235,10 @@ function semanticRuntimeArgument(value: unknown): SemanticArgument {
   }
   if (typeof value === "function") return { value, type: "function" }
   if (isViewNode(value)) return { value, type: "View" }
-  return { value }
+  return {
+    value,
+    type: value === null ? "null" : arrayCheck(value) === true ? "array" : typeof value,
+  }
 }
 
 function semanticRuntimeArguments(candidate: InitializerMatch, args: readonly unknown[]): readonly SemanticArgument[] {
@@ -258,19 +261,7 @@ function semanticRuntimeArguments(candidate: InitializerMatch, args: readonly un
 
 function sharedRuntimeResolution(target: unknown, candidates: readonly InitializerMatch[], args: readonly unknown[]): InitializerResolution | undefined {
   if (candidates.length === 0 || candidates.some(candidate => !candidate.parameters)) return undefined
-  // Initializer metadata carries source-language label requirements so the
-  // compiler can reject calls such as `init(value:)` when the declaration
-  // requires a positional `_ value`. A JavaScript host, however, calls the
-  // generated constructor positionally and uses `undefined` as the optional
-  // placeholder (for example `MkSwitchButton(true, undefined, onToggle)`).
-  // Runtime resolution must therefore retain labels for named carriers while
-  // disabling source-only positional label checks.
-  const symbols = candidates.map((candidate, index) => {
-    const symbol = semanticInitializerSymbol(candidate, index)
-    return symbol
-      ? { ...symbol, parameters: symbol.parameters.map(parameter => ({ ...parameter, labelRequired: false })) } as SemanticInitializerSymbol
-      : undefined
-  }).filter((item): item is SemanticInitializerSymbol => item !== undefined)
+  const symbols = candidates.map(semanticInitializerSymbol).filter((item): item is SemanticInitializerSymbol => item !== undefined)
   const genericParameters = genericParametersOf(target)
   const supplied = suppliedInitializerArguments(args)
   const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
