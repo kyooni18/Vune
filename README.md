@@ -104,6 +104,10 @@ cd my-vune-app
 pnpm dev
 ```
 
+The generated app uses Vune's direct Web renderer and does not install or
+configure React or Vue. Add a renderer package separately when an existing
+React or Vue application needs framework-specific interop.
+
 The equivalent CLI form is `pnpm dlx vune-ui create my-vune-app`. From an empty
 directory, pass `.` to create the app in place. Use `--no-install` to inspect the
 generated files before installing dependencies.

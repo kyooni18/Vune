@@ -77,8 +77,9 @@ This is equivalent to:
 node bin/vune-ui.mjs create ~/Code/Web/React/MyVuneApp --local
 ```
 
-The generated project is not a Vune workspace member. Its dependencies point
-back to the Vune checkout through `link:` paths.
+The generated project uses the direct Web renderer, does not install React or
+Vue, and is not a Vune workspace member. Its dependencies point back to the
+Vune checkout through `link:` paths.
 
 ## 5. Local tarballs when links are undesirable
 

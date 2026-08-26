@@ -57,7 +57,7 @@ export function escape(value: unknown): string {
     .replaceAll('"', "&quot;")
 }
 
-export function styleOf(modifier: ViewModifierNode): Record<string, string> {
+export function styleOf(modifier: ViewModifierNode, includeAnimationFallback = true): Record<string, string> {
   const value = modifier.arguments[0]
   let style: Record<string, string>
   switch (modifier.name) {
@@ -76,17 +76,25 @@ export function styleOf(modifier: ViewModifierNode): Record<string, string> {
       break
     }
     case "scaleEffect": {
-      const scale = typeof value === "number"
-        ? `${value}`
-        : value && typeof value === "object"
-          ? `${Number((value as { x?: unknown; width?: unknown }).x ?? (value as { width?: unknown }).width ?? 1)}, ${Number((value as { y?: unknown; height?: unknown }).y ?? (value as { height?: unknown }).height ?? 1)}`
-          : "1"
-      style = { transform: `scale(${scale})` }
+      let x = 1
+      let y = 1
+      if (typeof value === "number" && Number.isFinite(value)) { x = value; y = value }
+      else if (value && typeof value === "object") {
+        const scale = value as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+        const rawX = Number(scale.x ?? scale.width ?? 1)
+        const rawY = Number(scale.y ?? scale.height ?? rawX)
+        x = Number.isFinite(rawX) ? rawX : 1
+        y = Number.isFinite(rawY) ? rawY : x
+      }
+      // Keep transform components on separate CSS channels. This lets scale,
+      // rotation and translation run with independent motion plans instead of
+      // fighting over one monolithic `transform` string.
+      style = { scale: x === y ? `${x}` : `${x} ${y}` }
       break
     }
     case "rotationEffect": {
       const degrees = typeof value === "number" && Number.isFinite(value) ? value : 0
-      style = { transform: `rotate(${degrees}deg)` }
+      style = { rotate: `${degrees}deg` }
       break
     }
     case "offset": {
@@ -99,7 +107,7 @@ export function styleOf(modifier: ViewModifierNode): Record<string, string> {
         x = Number(point.x ?? point.width ?? 0)
         y = Number(point.y ?? point.height ?? 0)
       }
-      style = { transform: `translate(${Number.isFinite(x) ? x : 0}px, ${Number.isFinite(y) ? y : 0}px)` }
+      style = { translate: `${Number.isFinite(x) ? x : 0}px ${Number.isFinite(y) ? y : 0}px` }
       break
     }
     case "mask": {
@@ -116,14 +124,14 @@ export function styleOf(modifier: ViewModifierNode): Record<string, string> {
       ? normalizedStyle(value as Record<string, unknown>)
       : {}; break
     case "animation": {
-      const animationStyle = animationCSSStyle(value as Animation | null)
+      const animationStyle = includeAnimationFallback ? animationCSSStyle(value as Animation | null) : undefined
       style = animationStyle ? Object.fromEntries(Object.entries(animationStyle).map(([key, item]) => [cssPropertyName(key), item])) : {}
       break
     }
     default: style = {}
   }
   const transaction = currentRenderTransaction()
-  if (swiftUIAnimatableModifierNames.has(modifier.name) && !transaction.disablesAnimations && transaction.animation) {
+  if (includeAnimationFallback && swiftUIAnimatableModifierNames.has(modifier.name) && !transaction.disablesAnimations && transaction.animation) {
     const animationStyle = animationCSSStyle(transaction.animation)
     if (animationStyle) style = { ...style, ...Object.fromEntries(Object.entries(animationStyle).map(([key, item]) => [cssPropertyName(key), item])) }
   }

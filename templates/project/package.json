@@ -9,17 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vune-ui": "^__VUNE_VERSION__",
     "@vune-ui/core": "^__VUNE_VERSION__",
-    "@vune-ui/react": "^__VUNE_VERSION__",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@vune-ui/web": "^__VUNE_VERSION__"
   },
   "devDependencies": {
     "@vune-ui/vite": "^__VUNE_VERSION__",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.0",
     "typescript": "^5.8.0",
     "vite": "^8.0.0"
   }

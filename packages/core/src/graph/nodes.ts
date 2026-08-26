@@ -5,6 +5,7 @@ import type { StateRef } from "../state.js"
 import type {
   CompiledTemplateDescriptor,
   CompiledTemplateValue,
+  CompiledViewBodyPlan,
   ForeignComponentDescriptor,
   ForeignComponentOptions,
   GeometryProxy,
@@ -155,8 +156,14 @@ function snapshotCompiledTemplateValue(
 }
 
 /** Freeze, validate, and index a renderer-neutral AOT template once at module evaluation. */
-export function defineCompiledTemplate(root: CompiledTemplateValue, slotCount: number): CompiledTemplateDescriptor {
+export function defineCompiledTemplate(
+  root: CompiledTemplateValue,
+  slotCount: number,
+  slotKinds: readonly ("view" | "text")[] = Array(slotCount).fill("view"),
+): CompiledTemplateDescriptor {
   if (!Number.isSafeInteger(slotCount) || slotCount < 0) throw new RangeError("Compiled template slotCount must be a non-negative safe integer")
+  if (slotKinds.length !== slotCount) throw new RangeError(`Compiled template expected ${slotCount} slot kinds but received ${slotKinds.length}`)
+  if (slotKinds.some(kind => kind !== "view" && kind !== "text")) throw new TypeError("Compiled template slot kinds must be 'view' or 'text'")
   const slotIdentities: Array<readonly (string | number)[] | undefined> = Array(slotCount).fill(undefined)
   const snapshot = snapshotCompiledTemplateValue(root, slotCount, slotIdentities)
   const missing = slotIdentities.findIndex(identity => identity === undefined)
@@ -165,6 +172,7 @@ export function defineCompiledTemplate(root: CompiledTemplateValue, slotCount: n
     root: snapshot,
     slotCount,
     slotIdentities: Object.freeze(slotIdentities as readonly (readonly (string | number)[])[]),
+    slotKinds: Object.freeze([...slotKinds]),
   })
 }
 
@@ -186,6 +194,7 @@ export function viewHost(
   state?: (props: Record<string, unknown>) => Record<string, unknown>,
   dependencies?: (props: Record<string, unknown>) => readonly StateRef<unknown>[],
   dependenciesComplete = false,
+  compiledBody?: CompiledViewBodyPlan<Record<string, unknown>>,
 ): ModifiableViewNode {
   const normalizedState = state
     ? (props: Record<string, unknown>): Record<string, unknown> => {
@@ -209,6 +218,11 @@ export function viewHost(
     state: normalizedState,
     ...(dependencies ? { dependencies } : {}),
     ...(dependenciesComplete ? { dependenciesComplete: true } : {}),
+    ...(compiledBody ? { compiledBody: Object.freeze({
+      template: compiledBody.template,
+      ...(compiledBody.patchesModifiers ? { patchesModifiers: true } : {}),
+      evaluate: compiledBody.evaluate,
+    }) } : {}),
   }, true)
 }
 

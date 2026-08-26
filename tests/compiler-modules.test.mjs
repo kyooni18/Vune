@@ -10,6 +10,7 @@ import * as vite from "../packages/compiler/dist/vite.js"
 test("compiler specialization is an internal, renderer-neutral pass", () => {
   assert.equal(typeof specialization.lowerStaticModifierChains, "function")
   assert.equal(typeof specialization.lowerStaticImportedCalls, "function")
+  assert.equal(typeof specialization.foldStaticResults, "function")
   assert.ok(specialization.staticModifierNames.has("padding"))
   const source = readFileSync(new URL("../packages/compiler/dist/specialization.js", import.meta.url), "utf8")
   assert.doesNotMatch(source, /(?:^|[\\"'])react(?:[-/][^\\"']*)?[\\"']/i)

@@ -82,10 +82,24 @@ vune-ui init
 Use `--no-install` to defer dependency installation or `--force` when the
 directory already contains files you explicitly want to replace.
 
+The initializer creates a renderer-independent Web app using `@vune-ui/core`,
+`@vune-ui/web`, and `@vune-ui/vite`; React and Vue are not installed or
+configured. Use `vune-ui link --renderer react` or `--renderer vue` when
+connecting an existing framework application.
+
 ## Configure Vite
 
-The canonical compiler handles `.vune` and `.vune.ts` files and must run before the React
-plugin:
+The generated Web app only needs the Vune compiler plugin:
+
+```ts
+import { defineConfig } from 'vite'
+import { vunePlugin } from '@vune-ui/vite'
+
+export default defineConfig({ plugins: [vunePlugin()] })
+```
+
+For a React app, the canonical compiler handles `.vune` and `.vune.ts` files
+and must run before the React plugin:
 
 ```ts
 import react from '@vitejs/plugin-react'

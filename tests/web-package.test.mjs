@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { JSDOM } from "jsdom"
 import {
+  Animation,
   Element,
   ForEach,
   GeometryReader,
@@ -17,6 +18,7 @@ import {
   defineCompiledTemplate,
   viewElement,
   viewFragment,
+  withAnimation,
 } from "../packages/core/dist/index.js"
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
 
@@ -29,6 +31,11 @@ const Text = defineBuiltinView(
 test("@vune-ui/web renders the same core graph without React", () => {
   assert.equal(renderToHTML(Text("Hello").padding(4)), '<span style="padding:4px">Hello</span>')
   assert.equal(renderToHTML(Text("Styled").className(["card", false, "active"])), '<span class="card active">Styled</span>')
+  const independentTransforms = renderToHTML(Text("Motion").scaleEffect(1.2).rotationEffect(15).offset(4, 8))
+  assert.match(independentTransforms, /scale:1\.2/)
+  assert.match(independentTransforms, /rotate:15deg/)
+  assert.match(independentTransforms, /translate:4px 8px/)
+  assert.doesNotMatch(independentTransforms, /transform:/)
 })
 
 test("@vune-ui/web materializes compiled templates in SSR and DOM modes", () => {
@@ -46,6 +53,544 @@ test("@vune-ui/web materializes compiled templates in SSR and DOM modes", () => 
   assert.ok(container)
   const unmount = mount(value, container)
   assert.equal(container.innerHTML, '<div class="compiled"><span>Static</span><span>Web template</span></div>')
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web direct-patches compiler-proven text slots without rebuilding static DOM", async () => {
+  const value = State(0)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "compiled-text" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledTextPatch", {
+    initializers: [initializer("CompiledTextPatch()", args => args.length === 0)],
+    body: () => compiledTemplate(template, [value.value]),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  const text = element?.firstChild
+  assert.equal(text?.nodeValue, "0")
+
+  const originalCreateTextNode = dom.window.document.createTextNode.bind(dom.window.document)
+  let updateTextAllocations = 0
+  dom.window.document.createTextNode = value => {
+    updateTextAllocations += 1
+    return originalCreateTextNode(value)
+  }
+  value.value = 42
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.strictEqual(container.firstChild?.firstChild, text)
+  assert.equal(text?.nodeValue, "42")
+  assert.equal(updateTextAllocations, 0)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web bypasses exhaustive compiled View bodies on State-only text updates", async () => {
+  let count
+  let bodyRuns = 0
+  let slotRuns = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "compiled-boundary" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledBoundaryPatch", {
+    initializers: [initializer("CompiledBoundaryPatch()", args => args.length === 0)],
+    state: () => ({ count: count = State(0) }),
+    dependencies: ({ count }) => [count],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      evaluate: ({ count }) => {
+        slotRuns += 1
+        return { slots: [String(count.value)] }
+      },
+    },
+    body: ({ count }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [String(count.value)])
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  const text = element?.firstChild
+  assert.equal(bodyRuns, 1)
+  assert.equal(slotRuns, 0)
+  assert.equal(text?.nodeValue, "0")
+
+  count.value = 7
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.strictEqual(container.firstChild?.firstChild, text)
+  assert.equal(text?.nodeValue, "7")
+  assert.equal(bodyRuns, 1)
+  assert.equal(slotRuns, 1)
+
+  count.value = 11
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(text?.nodeValue, "11")
+  assert.equal(bodyRuns, 1)
+  assert.equal(slotRuns, 2)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web direct-patches compiled State modifiers without rerunning the View body", async () => {
+  let count
+  let bodyRuns = 0
+  let planRuns = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "base" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledModifierBoundary", {
+    initializers: [initializer("CompiledModifierBoundary()", args => args.length === 0)],
+    state: () => ({ count: count = State(0) }),
+    dependencies: ({ count }) => [count],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ count }) => {
+        planRuns += 1
+        return {
+          slots: [String(count.value)],
+          modifiers: [
+            ["opacity", [count.value > 0 ? 1 : 0.25]],
+            ["className", [count.value > 1 ? "hot" : "cold"]],
+          ],
+        }
+      },
+    },
+    body: ({ count }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [String(count.value)])
+        .opacity(count.value > 0 ? 1 : 0.25)
+        .className(count.value > 1 ? "hot" : "cold")
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  const text = element?.firstChild
+  assert.equal(bodyRuns, 1)
+  assert.equal(element?.getAttribute("class"), "base cold")
+  assert.equal(element?.style.opacity, "0.25")
+
+  const originalCreateElementNS = dom.window.document.createElementNS.bind(dom.window.document)
+  let elementAllocations = 0
+  dom.window.document.createElementNS = (...args) => {
+    elementAllocations += 1
+    return originalCreateElementNS(...args)
+  }
+  count.value = 2
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.strictEqual(container.firstChild?.firstChild, text)
+  assert.equal(text?.nodeValue, "2")
+  assert.equal(element?.getAttribute("class"), "base hot")
+  assert.equal(element?.style.opacity, "1")
+  assert.equal(bodyRuns, 1)
+  assert.equal(planRuns, 1)
+  assert.equal(elementAllocations, 0)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web preserves animation transactions on direct compiled modifier patches", async () => {
+  let opacity
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: null, children: ["Motion"],
+  }, 0, [])
+  const App = defineView("CompiledAnimatedModifier", {
+    initializers: [initializer("CompiledAnimatedModifier()", args => args.length === 0)],
+    state: () => ({ opacity: opacity = State(0) }),
+    dependencies: ({ opacity }) => [opacity],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ opacity }) => ({ slots: [], modifiers: [["opacity", [opacity.value]]] }),
+    },
+    body: ({ opacity }) => compiledTemplate(template).opacity(opacity.value),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstElementChild
+  assert.equal(element?.style.opacity, "0")
+
+  withAnimation(Animation.linear(0.05), () => { opacity.value = 1 })
+  await Promise.resolve()
+  await Promise.resolve()
+  const early = Number(element?.style.opacity)
+  assert.ok(Number.isFinite(early) && early < 1)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.equal(element?.style.opacity, "1")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web keeps property-scoped animation domains independent on the direct compiled path", async () => {
+  let opacity
+  let scale
+  let bodyRuns = 0
+  const opacityAnimation = Animation.linear(0.09)
+  const scaleAnimation = Animation.spring(0.05, 0.78)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: null,
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledIndependentMotionDomains", {
+    initializers: [initializer("CompiledIndependentMotionDomains()", args => args.length === 0)],
+    state: () => ({ opacity: opacity = State(0), scale: scale = State(1) }),
+    dependencies: ({ opacity, scale }) => [opacity, scale],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ opacity, scale }) => ({
+        slots: ["Motion"],
+        modifiers: [
+          ["opacity", [opacity.value]],
+          ["animation", [opacityAnimation, opacity.value]],
+          ["scaleEffect", [scale.value]],
+          ["animation", [scaleAnimation, scale.value]],
+        ],
+      }),
+    },
+    body: ({ opacity, scale }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, ["Motion"])
+        .opacity(opacity.value)
+        .animation(opacityAnimation, opacity.value)
+        .scaleEffect(scale.value)
+        .animation(scaleAnimation, scale.value)
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstElementChild
+  assert.ok(element)
+  assert.equal(bodyRuns, 1)
+  assert.equal(element.style.opacity, "0")
+  assert.equal(element.style.getPropertyValue("scale"), "1")
+
+  opacity.value = 1
+  scale.value = 1.8
+  await Promise.resolve()
+  await Promise.resolve()
+  const earlyOpacity = Number(element.style.opacity)
+  const earlyScale = Number(element.style.getPropertyValue("scale"))
+  assert.ok(earlyOpacity < 1, `opacity jumped instead of animating: ${earlyOpacity}`)
+  assert.ok(earlyScale < 1.8, `scale jumped instead of animating: ${earlyScale}`)
+  assert.equal(bodyRuns, 1)
+
+  // Retarget only the scale domain. The opacity domain must keep its own
+  // timeline and complete independently.
+  scale.value = 0.75
+  await Promise.resolve()
+  await Promise.resolve()
+  await new Promise(resolve => setTimeout(resolve, 180))
+  assert.equal(Number(element.style.opacity), 1)
+  assert.ok(Math.abs(Number(element.style.getPropertyValue("scale")) - 0.75) < 1e-6)
+  assert.equal(bodyRuns, 1)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web infers intrinsic text-size motion from real geometry changes", async () => {
+  let label
+  let bodyRuns = 0
+  const animation = Animation.easeInOut(0.05)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: null,
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledIntrinsicLayoutMotion", {
+    initializers: [initializer("CompiledIntrinsicLayoutMotion()", args => args.length === 0)],
+    state: () => ({ label: label = State("A") }),
+    dependencies: ({ label }) => [label],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ label }) => ({
+        slots: [label.value],
+        // No width/height modifier exists. The changed animation trigger owns
+        // the intrinsic geometry change discovered from the actual DOM box.
+        modifiers: [["animation", [animation, label.value]]],
+      }),
+    },
+    body: ({ label }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [label.value]).animation(animation, label.value)
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstElementChild
+  assert.ok(element)
+  element.getBoundingClientRect = () => {
+    const width = Math.max(10, (element.textContent ?? "").length * 10)
+    return { x: 0, y: 0, left: 0, top: 0, right: width, bottom: 20, width, height: 20, toJSON() { return this } }
+  }
+
+  label.value = "A considerably longer label"
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(bodyRuns, 1)
+  assert.equal(element.textContent, "A considerably longer label")
+  assert.match(element.style.transform, /scale\(/, "intrinsic width delta should produce a FLIP scale channel")
+  await new Promise(resolve => setTimeout(resolve, 130))
+  assert.equal(element.style.transform, "none")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web direct-patches safe outer modifiers after compiled body modifiers", async () => {
+  let count
+  let bodyRuns = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "base" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledOuterModifierFallback", {
+    initializers: [initializer("CompiledOuterModifierFallback()", args => args.length === 0)],
+    state: () => ({ count: count = State(0) }),
+    dependencies: ({ count }) => [count],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ count }) => ({
+        slots: [String(count.value)],
+        modifiers: [["className", [count.value > 0 ? "inner-on" : "inner-off"]]],
+      }),
+    },
+    body: ({ count }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [String(count.value)]).className(count.value > 0 ? "inner-on" : "inner-off")
+    },
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App().className("outer"), container)
+  const element = container.firstElementChild
+  assert.equal(element?.getAttribute("class"), "base inner-off outer")
+  assert.equal(bodyRuns, 1)
+
+  count.value = 1
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstElementChild, element)
+  assert.equal(element?.getAttribute("class"), "base inner-on outer")
+  assert.equal(bodyRuns, 1)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web falls back for effectful outer modifiers on compiled body patches", async () => {
+  let count
+  let bodyRuns = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "base" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledUnsafeOuterModifierFallback", {
+    initializers: [initializer("CompiledUnsafeOuterModifierFallback()", args => args.length === 0)],
+    state: () => ({ count: count = State(0) }),
+    dependencies: ({ count }) => [count],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchesModifiers: true,
+      evaluate: ({ count }) => ({
+        slots: [String(count.value)],
+        modifiers: [["className", [count.value > 0 ? "inner-on" : "inner-off"]]],
+      }),
+    },
+    body: ({ count }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [String(count.value)]).className(count.value > 0 ? "inner-on" : "inner-off")
+    },
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App().withProps({ title: "outer" }), container)
+  const element = container.firstElementChild
+  assert.equal(element?.getAttribute("class"), "base inner-off")
+  assert.equal(element?.getAttribute("title"), "outer")
+  assert.equal(bodyRuns, 1)
+
+  count.value = 1
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstElementChild, element)
+  assert.equal(element?.getAttribute("class"), "base inner-on")
+  assert.equal(element?.getAttribute("title"), "outer")
+  assert.equal(bodyRuns, 2)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web reuses zero-slot compiled DOM roots across dynamic modifier updates", async () => {
+  const opacity = State(0.25)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "compiled-static" }, children: ["Static"],
+  }, 0, [])
+  const App = defineView("CompiledStaticPatch", {
+    initializers: [initializer("CompiledStaticPatch()", args => args.length === 0)],
+    body: () => compiledTemplate(template, []).opacity(opacity.value),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  assert.equal(element?.nodeName, "SPAN")
+  assert.equal(element?.textContent, "Static")
+  assert.equal(element?.style.opacity, "0.25")
+
+  const originalCreateElementNS = dom.window.document.createElementNS.bind(dom.window.document)
+  let updateElementAllocations = 0
+  dom.window.document.createElementNS = (...args) => {
+    updateElementAllocations += 1
+    return originalCreateElementNS(...args)
+  }
+  opacity.value = 0.75
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.equal(element?.textContent, "Static")
+  assert.equal(element?.style.opacity, "0.75")
+  assert.equal(updateElementAllocations, 0)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web composes static and dynamic classes without cloning reusable roots", async () => {
+  const active = State(false)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "base" }, children: ["Static"],
+  }, 0, [])
+  const App = defineView("CompiledClassPatch", {
+    initializers: [initializer("CompiledClassPatch()", args => args.length === 0)],
+    body: () => compiledTemplate(template, []).className(active.value ? "hot" : "cold"),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  assert.equal(element?.getAttribute("class"), "base cold")
+
+  const originalCreateElementNS = dom.window.document.createElementNS.bind(dom.window.document)
+  let updateElementAllocations = 0
+  dom.window.document.createElementNS = (...args) => {
+    updateElementAllocations += 1
+    return originalCreateElementNS(...args)
+  }
+  active.value = true
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.equal(element?.getAttribute("class"), "base hot")
+  assert.equal(updateElementAllocations, 0)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web clears stale outer modifiers when a zero-slot template is reused", async () => {
+  const enabled = State(true)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "base" }, children: ["Static"],
+  }, 0, [])
+  const App = defineView("CompiledModifierRemoval", {
+    initializers: [initializer("CompiledModifierRemoval()", args => args.length === 0)],
+    body: () => enabled.value ? compiledTemplate(template, []).opacity(0.2) : compiledTemplate(template, []),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  assert.equal(element?.style.opacity, "0.2")
+
+  enabled.value = false
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.equal(element?.getAttribute("class"), "base")
+  assert.equal(element?.style.opacity, "")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web preserves text-slot patching when reusable roots receive modifiers", async () => {
+  const value = State("A")
+  const opacity = State(0.3)
+  const template = defineCompiledTemplate({
+    kind: "element", type: "span", props: { class: "compiled-text-modifier" },
+    children: [{ kind: "slot", index: 0, identity: ["element", 0] }],
+  }, 1, ["text"])
+  const App = defineView("CompiledTextModifierPatch", {
+    initializers: [initializer("CompiledTextModifierPatch()", args => args.length === 0)],
+    body: () => compiledTemplate(template, [value.value]).opacity(opacity.value),
+  })
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App(), container)
+  const element = container.firstChild
+  const text = element?.firstChild
+  assert.equal(text?.nodeValue, "A")
+
+  value.value = "B"
+  opacity.value = 0.8
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.firstChild, element)
+  assert.strictEqual(container.firstChild?.firstChild, text)
+  assert.equal(text?.nodeValue, "B")
+  assert.equal(element?.style.opacity, "0.8")
+
   unmount()
   dom.window.close()
 })

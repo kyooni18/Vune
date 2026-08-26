@@ -117,12 +117,16 @@ export interface CompiledTemplateFragment {
 
 export type CompiledTemplateValue = ViewGraphLeaf | CompiledTemplateSlot | CompiledTemplateElement | CompiledTemplateFragment
 
+export type CompiledTemplateSlotKind = "view" | "text"
+
 /** Immutable static tree plus the number of runtime graph/value slots it consumes. */
 export interface CompiledTemplateDescriptor {
   readonly root: CompiledTemplateValue
   readonly slotCount: number
   /** Prevalidated original graph-identity path for each runtime slot. */
   readonly slotIdentities: readonly (readonly ViewIdentitySegment[])[]
+  /** Compiler-proven slot shape. Older/manual templates default to generic view slots. */
+  readonly slotKinds: readonly CompiledTemplateSlotKind[]
 }
 
 /** Runtime instance of a compiler template. Only its slot array changes between evaluations. */
@@ -130,6 +134,27 @@ export interface CompiledTemplateViewNode {
   readonly kind: "template"
   readonly template: CompiledTemplateDescriptor
   readonly slots: readonly ViewGraphValue[]
+}
+
+/**
+ * Compiler-proven View body fast path. The template is immutable and the
+ * evaluator computes only its dynamic slots from the already-resolved View
+ * props, allowing renderers to bypass the generic body/reconciliation path.
+ */
+export type CompiledViewModifierSpec = readonly [name: string, arguments: readonly unknown[]]
+
+export interface CompiledViewBodyEvaluation {
+  readonly slots: readonly ViewGraphValue[]
+  /** Optional non-structural modifier graph proven safe for direct renderer patching. */
+  readonly modifiers?: readonly CompiledViewModifierSpec[]
+}
+
+export interface CompiledViewBodyPlan<Props extends object = Record<string, unknown>> {
+  readonly template: CompiledTemplateDescriptor
+  /** Lets renderers reject modifier patching before evaluating a plan when the surrounding graph makes it unsafe. */
+  readonly patchesModifiers?: boolean
+  /** Re-evaluate only dynamic slots/modifier arguments, never the immutable View body graph. */
+  readonly evaluate: (props: Props) => CompiledViewBodyEvaluation
 }
 
 export interface ViewHostNode {
@@ -142,6 +167,8 @@ export interface ViewHostNode {
   readonly dependencies?: (props: Record<string, unknown>) => readonly StateRef<unknown>[]
   /** Whether dependencies is a compiler-proven exhaustive set. */
   readonly dependenciesComplete?: boolean
+  /** Optional compiler-proven body plan used by renderer-specific direct patch paths. */
+  readonly compiledBody?: CompiledViewBodyPlan<Record<string, unknown>>
   readonly render: (props: Record<string, unknown>) => ViewGraphValue
 }
 

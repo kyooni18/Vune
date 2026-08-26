@@ -4,26 +4,29 @@ import {
   edgeInsetsFromCss,
   frameStyle,
   renderViewNode,
+  renderViewNodeAt,
   subscribeState,
   viewIdentityKey,
   withRenderTransaction,
   zeroGeometry,
   type VuneRenderer,
+  type CompiledTemplateDescriptor,
   type CompiledTemplateValue,
   type GeometryProxy,
   type LazyViewNode,
   type LazyViewRange,
   type StateRef,
   type Transaction,
+  type Animation,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
 } from "@vune-ui/core"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
-import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue } from "./props.js"
-import { cancelDomAnimations } from "./motion.js"
-import { domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
+import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue, type DomStyleMotionPolicy } from "./props.js"
+import { animateDomLayout, cancelDomAnimations, type DomLayoutBox } from "./motion.js"
+import { classNameOf, cssPropertyName, domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
 
 interface DomViewBoundary {
   readonly key: string
@@ -47,10 +50,61 @@ interface DomViewBoundary {
   renderedBody: boolean
 }
 
+interface DomCompiledTemplateInstance {
+  readonly template: CompiledTemplateDescriptor
+  roots: Node[]
+  /** Static root props captured before any outer modifiers are staged. */
+  readonly rootProps: readonly (Record<string, unknown> | null)[]
+  readonly textSlots: Array<Text | undefined>
+  /** Live DOM ranges produced by compiler-proven generic View slots. */
+  readonly viewSlots: Array<Node[] | undefined>
+}
+
+interface DomCompiledTemplateBinding {
+  readonly key: string
+  readonly index: number
+}
+
+interface DomAnimationDomain {
+  readonly animation: Animation | null
+  readonly trigger: unknown
+  readonly properties: readonly string[]
+}
+
+interface DomMotionRenderState {
+  readonly pendingProperties: Set<string>
+  readonly domains: DomAnimationDomain[]
+  /** True when this state only describes modifiers layered onto a reused View. */
+  readonly partial: boolean
+}
+
+const directCompiledBodyModifierNames = new Set([
+  "padding", "margin", "gap", "font", "fontSize", "bold",
+  "foreground", "foregroundStyle", "background", "opacity",
+  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation",
+])
+
+function compiledTextSlotValue(value: unknown): { readonly ok: true; readonly value: string } | { readonly ok: false } {
+  if (value === null || value === undefined || typeof value === "boolean") return { ok: true, value: "" }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") return { ok: true, value: String(value) }
+  return { ok: false }
+}
+
 interface DomViewRuntime {
   readonly boundaries: Map<string, DomViewBoundary>
   readonly nodeKeys: WeakMap<Node, Set<string>>
   readonly reuseCandidates: WeakMap<Node, Node>
+  /** Baseline props for compiler-template identity carriers. */
+  readonly reuseCandidateBaseProps: WeakMap<Node, Record<string, unknown> | null>
+  readonly compiledTemplates: Map<string, DomCompiledTemplateInstance>
+  readonly compiledTemplateRoots: WeakMap<Node, DomCompiledTemplateBinding>
+  readonly compiledTemplateTextSlots: WeakMap<Node, DomCompiledTemplateBinding>
+  readonly compiledTemplateViewSlots: WeakMap<Node, DomCompiledTemplateBinding>
+  readonly compiledTemplatePatches: WeakMap<Node, () => void>
+  /** Per-render animation domains attached by .animation(_:value:). */
+  readonly motionStates: WeakMap<Node, DomMotionRenderState>
+  /** Geometry reads are collected before a mutation and committed as one FLIP batch. */
+  readonly layoutSnapshots: Map<Element, { readonly before: DomLayoutBox; animation: Animation }>
   readonly stack: string[]
   renderedKeys: Set<string>
   passVisitedStates: Set<string>
@@ -71,6 +125,217 @@ const domViewRuntimes = new WeakMap<DomRenderContext, DomViewRuntime>()
 
 function runtimeFor(context: DomRenderContext): DomViewRuntime | undefined {
   return domViewRuntimes.get(context)
+}
+
+const layoutAffectingMotionProperties = new Set([
+  "width", "height", "min-width", "min-height", "max-width", "max-height",
+  "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+  "gap", "row-gap", "column-gap", "font", "font-size", "line-height",
+  "letter-spacing", "word-spacing", "border-width", "border-top-width",
+  "border-right-width", "border-bottom-width", "border-left-width",
+  "flex-basis", "grid-template-columns", "grid-template-rows",
+])
+
+function motionStateFor(node: Node, runtime: DomViewRuntime): DomMotionRenderState {
+  let state = runtime.motionStates.get(node)
+  if (!state) {
+    state = { pendingProperties: new Set(), domains: [], partial: node.nodeType === 8 }
+    runtime.motionStates.set(node, state)
+  }
+  return state
+}
+
+function recordMotionStyleProperties(content: Node, properties: readonly string[], context: DomRenderContext): void {
+  if (properties.length === 0) return
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  for (const node of outputNodes(content)) {
+    if (node.nodeType !== 1 && node.nodeType !== 8) continue
+    const state = motionStateFor(node, runtime)
+    for (const property of properties) state.pendingProperties.add(property)
+  }
+}
+
+function recordAnimationDomain(content: Node, animation: Animation | null, trigger: unknown, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  for (const node of outputNodes(content)) {
+    if (node.nodeType !== 1 && node.nodeType !== 8) continue
+    const state = motionStateFor(node, runtime)
+    state.domains.push({ animation, trigger, properties: [...state.pendingProperties] })
+    state.pendingProperties.clear()
+  }
+}
+
+function copyMotionRenderState(source: Node, target: Node, runtime: DomViewRuntime): void {
+  const state = runtime.motionStates.get(source)
+  if (!state) return
+  runtime.motionStates.set(target, {
+    pendingProperties: new Set(state.pendingProperties),
+    domains: state.domains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+    partial: state.partial,
+  })
+}
+
+interface ResolvedMotionState {
+  readonly policy?: DomStyleMotionPolicy
+  readonly merged?: DomMotionRenderState
+  /** undefined inherits the active transaction, null explicitly disables layout motion. */
+  readonly layoutAnimation?: Animation | null
+}
+
+function resolveMotionRenderState(
+  live: Element,
+  nextState: DomMotionRenderState,
+  context: DomRenderContext,
+): ResolvedMotionState {
+  const runtime = runtimeFor(context)
+  if (!runtime) return {}
+  const previous = runtime.motionStates.get(live)
+  const previousDomains = previous?.domains ?? []
+  const offset = nextState.partial ? Math.max(0, previousDomains.length - nextState.domains.length) : 0
+  const comparedPrevious = nextState.partial ? previousDomains.slice(offset) : previousDomains
+  const changed = nextState.domains.map((domain, index) => !Object.is(domain.trigger, comparedPrevious[index]?.trigger))
+  const mergedDomains = nextState.partial
+    ? [...previousDomains.slice(0, offset), ...nextState.domains]
+    : [...nextState.domains]
+  const merged: DomMotionRenderState = {
+    pendingProperties: new Set(nextState.pendingProperties),
+    domains: mergedDomains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+    partial: false,
+  }
+
+  let layoutAnimation: Animation | null | undefined
+  let hasLayoutDecision = false
+  for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
+    const domain = nextState.domains[index]
+    if (!changed[index]) continue
+    if (domain.properties.length === 0 || domain.properties.some(property => layoutAffectingMotionProperties.has(property))) {
+      layoutAnimation = domain.animation
+      hasLayoutDecision = true
+      break
+    }
+  }
+  if (!hasLayoutDecision) {
+    for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
+      const domain = nextState.domains[index]
+      if (!changed[index]) continue
+      // Intrinsic content changes (for example text length) may resize a view
+      // even when the modifier domain only owns opacity or color. The latest
+      // changed domain is therefore the semantic layout trigger too.
+      layoutAnimation = domain.animation
+      hasLayoutDecision = true
+      break
+    }
+  }
+
+  const policy: DomStyleMotionPolicy = {
+    animationForProperty(property) {
+      for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
+        const domain = nextState.domains[index]
+        if (!domain.properties.includes(property)) continue
+        return changed[index] ? domain.animation : undefined
+      }
+      return undefined
+    },
+  }
+  return { policy, merged, layoutAnimation }
+}
+
+function resolveMotionState(
+  live: Element,
+  candidate: Node,
+  context: DomRenderContext,
+): ResolvedMotionState {
+  const runtime = runtimeFor(context)
+  const nextState = runtime?.motionStates.get(candidate)
+  return nextState ? resolveMotionRenderState(live, nextState, context) : {}
+}
+
+function commitResolvedMotionState(live: Element, resolved: ResolvedMotionState, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  if (resolved.merged) runtime.motionStates.set(live, resolved.merged)
+}
+
+function readLayoutBox(element: Element): DomLayoutBox | undefined {
+  const read = (element as Element & { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect
+  if (typeof read !== "function") return undefined
+  const rect = read.call(element)
+  const box = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+  return Object.values(box).every(Number.isFinite) && box.width > 0 && box.height > 0 ? box : undefined
+}
+
+function captureLayoutElement(element: Element, animation: Animation | null | undefined, context: DomRenderContext): void {
+  if (context.activeTransaction?.disablesAnimations) return
+  const selected = animation === undefined ? context.activeTransaction?.animation : animation
+  if (!selected) return
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  const existing = runtime.layoutSnapshots.get(element)
+  if (existing) {
+    // A property-scoped .animation(value:) discovered later in reconciliation
+    // is more specific than the surrounding transaction. Keep the first box,
+    // but allow the animation plan to be upgraded before commit.
+    if (animation !== undefined && animation !== null) existing.animation = animation
+    return
+  }
+  const before = readLayoutBox(element)
+  if (before) runtime.layoutSnapshots.set(element, { before, animation: selected })
+}
+
+function captureLayoutNeighborhood(element: Element, animation: Animation | null | undefined, context: DomRenderContext): void {
+  captureLayoutElement(element, animation, context)
+  const parent = element.parentElement
+  if (!parent) return
+  // A size change can move siblings without changing their own props. Capture
+  // the local sibling set before the mutation so those positional changes can
+  // receive the same semantic animation without scanning the whole document.
+  for (const sibling of parent.children) captureLayoutElement(sibling, animation, context)
+}
+
+function captureLayoutChildren(parent: Node, animation: Animation | null | undefined, context: DomRenderContext): void {
+  if (parent.nodeType === 1) captureLayoutElement(parent as Element, animation, context)
+  for (const child of parent.childNodes) {
+    if (child.nodeType === 1) captureLayoutElement(child as Element, animation, context)
+  }
+}
+
+function flushLayoutMotion(context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime || runtime.layoutSnapshots.size === 0) return
+  const changed: Array<{ readonly element: Element; readonly before: DomLayoutBox; readonly after: DomLayoutBox; readonly animation: Animation }> = []
+  for (const [element, snapshot] of runtime.layoutSnapshots) {
+    const after = readLayoutBox(element)
+    if (!after) continue
+    const { before } = snapshot
+    const differs = Math.abs(before.left - after.left) >= 0.01
+      || Math.abs(before.top - after.top) >= 0.01
+      || Math.abs(before.width - after.width) >= 0.01
+      || Math.abs(before.height - after.height) >= 0.01
+    if (differs) changed.push({ element, before, after, animation: snapshot.animation })
+  }
+  runtime.layoutSnapshots.clear()
+
+  const changedElements = new Map(changed.map(entry => [entry.element, entry] as const))
+  for (const entry of changed) {
+    // When an ancestor and descendant are being driven by the exact same plan,
+    // animating both FLIP transforms would double-apply the same geometric
+    // movement. Let the nearest changed ancestor carry that visual delta. A
+    // descendant with a different Animation remains independent by design.
+    let ancestor = entry.element.parentElement
+    let covered = false
+    while (ancestor) {
+      const parentChange = changedElements.get(ancestor)
+      if (parentChange && parentChange.animation === entry.animation) {
+        covered = true
+        break
+      }
+      ancestor = ancestor.parentElement
+    }
+    if (!covered) animateDomLayout(entry.element, entry.before, entry.after, entry.animation)
+  }
 }
 
 function shallowRecordEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
@@ -101,6 +366,45 @@ function markBoundaryOutput(output: Node, key: string, runtime: DomViewRuntime):
 function bindCandidateNode(candidate: Node, live: Node, context: DomRenderContext): void {
   const runtime = runtimeFor(context)
   if (!runtime) return
+
+  // Compiled-template bindings are renderer metadata just like View-boundary
+  // identities. Transfer them before the boundary early-return so text-only
+  // templates also work outside defineView() boundaries and during hydration.
+  const rootBinding = runtime.compiledTemplateRoots.get(candidate)
+  if (rootBinding) {
+    const instance = runtime.compiledTemplates.get(rootBinding.key)
+    if (instance && rootBinding.index < instance.roots.length) instance.roots[rootBinding.index] = live
+    runtime.compiledTemplateRoots.set(live, rootBinding)
+  }
+  const slotBinding = runtime.compiledTemplateTextSlots.get(candidate)
+  if (slotBinding && live.nodeType === 3) {
+    const instance = runtime.compiledTemplates.get(slotBinding.key)
+    if (instance && slotBinding.index < instance.textSlots.length) instance.textSlots[slotBinding.index] = live as Text
+    runtime.compiledTemplateTextSlots.set(live, slotBinding)
+  }
+  const viewSlotBinding = runtime.compiledTemplateViewSlots.get(candidate)
+  if (viewSlotBinding) {
+    const instance = runtime.compiledTemplates.get(viewSlotBinding.key)
+    const nodes = instance?.viewSlots[viewSlotBinding.index]
+    if (instance && nodes) {
+      const position = nodes.indexOf(candidate)
+      if (position >= 0 && candidate !== live) {
+        const nextNodes = [...nodes]
+        nextNodes[position] = live
+        instance.viewSlots[viewSlotBinding.index] = nextNodes
+      }
+    }
+    runtime.compiledTemplateViewSlots.set(live, viewSlotBinding)
+  }
+  const candidateMotion = runtime.motionStates.get(candidate)
+  if (candidateMotion && live.nodeType === 1) {
+    runtime.motionStates.set(live, {
+      pendingProperties: new Set(candidateMotion.pendingProperties),
+      domains: candidateMotion.domains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+      partial: false,
+    })
+  }
+
   const candidateKeys = runtime.nodeKeys.get(candidate)
   if (!candidateKeys || candidateKeys.size === 0) return
   const liveKeys = runtime.nodeKeys.get(live) ?? new Set<string>()
@@ -173,6 +477,13 @@ function copyCandidateMetadata(source: Node, target: Node, context: DomRenderCon
   if (runtime) {
     const boundaryKeys = runtime.nodeKeys.get(source)
     if (boundaryKeys) runtime.nodeKeys.set(target, new Set(boundaryKeys))
+    const rootBinding = runtime.compiledTemplateRoots.get(source)
+    if (rootBinding) runtime.compiledTemplateRoots.set(target, rootBinding)
+    const slotBinding = runtime.compiledTemplateTextSlots.get(source)
+    if (slotBinding) runtime.compiledTemplateTextSlots.set(target, slotBinding)
+    const viewSlotBinding = runtime.compiledTemplateViewSlots.get(source)
+    if (viewSlotBinding) runtime.compiledTemplateViewSlots.set(target, viewSlotBinding)
+    copyMotionRenderState(source, target, runtime)
     runtime.reuseCandidates.set(target, source)
   }
 }
@@ -185,6 +496,22 @@ function reusableBoundaryCandidate(current: Node, context: DomRenderContext): No
   return candidate
 }
 
+function cloneStoredDomProps(value: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!value) return null
+  const style = value.style && typeof value.style === "object" ? value.style as Record<string, unknown> : undefined
+  return { ...value, ...(style ? { style: { ...style } } : {}) }
+}
+
+function reusableCompiledTemplateCandidate(
+  current: Node,
+  baseProps: Record<string, unknown> | null,
+  context: DomRenderContext,
+): Node {
+  const candidate = reusableBoundaryCandidate(current, context)
+  runtimeFor(context)?.reuseCandidateBaseProps.set(candidate, cloneStoredDomProps(baseProps))
+  return candidate
+}
+
 function reusableBoundaryOutput(boundary: DomViewBoundary, context: DomRenderContext): Node {
   if (boundary.currentNodes.length === 1) return reusableBoundaryCandidate(boundary.currentNodes[0], context)
   const fragment = context.document.createDocumentFragment()
@@ -193,11 +520,19 @@ function reusableBoundaryOutput(boundary: DomViewBoundary, context: DomRenderCon
 }
 
 function promoteReusableCandidate(candidate: Node, context: DomRenderContext): Node {
-  const live = runtimeFor(context)?.reuseCandidates.get(candidate)
+  const runtime = runtimeFor(context)
+  const live = runtime?.reuseCandidates.get(candidate)
   if (candidate.nodeType !== 8 || !live || live.nodeType !== 1) return candidate
   const element = live as Element
   const promoted = context.document.createElementNS(element.namespaceURI, element.localName)
   copyCandidateMetadata(live, promoted, context)
+  if (runtime?.reuseCandidateBaseProps.has(candidate)) {
+    const baseProps = runtime.reuseCandidateBaseProps.get(candidate) ?? null
+    if (baseProps) context.domProps.set(promoted, cloneStoredDomProps(baseProps)!)
+    else context.domProps.delete(promoted)
+  }
+  const patch = runtime?.compiledTemplatePatches.get(candidate)
+  if (patch) runtime?.compiledTemplatePatches.set(promoted, patch)
   if (candidate.parentNode) candidate.parentNode.replaceChild(promoted, candidate)
   return promoted
 }
@@ -208,6 +543,76 @@ function promoteReusableContent(content: Node, context: DomRenderContext): Node 
   for (const child of [...content.childNodes]) promoteReusableCandidate(child, context)
   return content
 }
+
+function mergeReusableCandidateProps(
+  previous: Record<string, unknown> | null,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const before = previous ?? {}
+  const previousStyle = before.style && typeof before.style === "object" ? before.style as Record<string, unknown> : undefined
+  const nextStyle = incoming.style && typeof incoming.style === "object" ? incoming.style as Record<string, unknown> : undefined
+  const merged: Record<string, unknown> = {
+    ...before,
+    ...incoming,
+    ...(nextStyle ? { style: { ...(previousStyle ?? {}), ...nextStyle } } : {}),
+  }
+  const hasClass = Object.prototype.hasOwnProperty.call(incoming, "class") || Object.prototype.hasOwnProperty.call(incoming, "className")
+  if (hasClass) {
+    const beforeClass = classNameOf(before.class ?? before.className)
+    const incomingClass = classNameOf(incoming.class ?? incoming.className)
+    const combined = [beforeClass, incomingClass].filter(Boolean).join(" ")
+    delete merged.className
+    if (combined) merged.class = combined
+    else delete merged.class
+  }
+  return Object.keys(merged).length > 0 ? merged : null
+}
+
+/**
+ * Stage non-structural modifier changes directly on a compiler-template reuse
+ * carrier. The live DOM is not mutated until reconciliation succeeds, but we
+ * avoid allocating a shallow clone merely to carry the next props snapshot.
+ */
+function stageReusableModifierPatch(
+  content: Node,
+  modifier: ViewModifierNode,
+  extraProps: Record<string, unknown>,
+  baseStyle: Record<string, unknown> | undefined,
+  context: DomRenderContext,
+): boolean {
+  if (modifier.name === "frame" || modifier.name === "keyed" || modifier.name === "withProps" || modifier.name === "elementRef") return false
+  const runtime = runtimeFor(context)
+  if (!runtime) return false
+  const candidates = content.nodeType === 8
+    ? [content]
+    : content.nodeType === 11
+      ? [...content.childNodes]
+      : []
+  if (candidates.length === 0) return false
+
+  const targets: Array<{ readonly candidate: Node; readonly live: Element; readonly props: Record<string, unknown> | null }> = []
+  for (const candidate of candidates) {
+    const live = runtime.reuseCandidates.get(candidate)
+    if (candidate.nodeType !== 8 || live?.nodeType !== 1 || !runtime.reuseCandidateBaseProps.has(candidate)) return false
+    targets.push({ candidate, live: live as Element, props: runtime.reuseCandidateBaseProps.get(candidate) ?? null })
+  }
+
+  for (const { candidate, live, props: previous } of targets) {
+    const style = baseStyle ? { ...baseStyle } : undefined
+    if (style && typeof style.transform === "string") {
+      const remembered = previous?.style
+      const currentTransform = remembered && typeof remembered === "object"
+        ? (remembered as Record<string, unknown>).transform
+        : undefined
+      if (typeof currentTransform === "string" && currentTransform) style.transform = `${currentTransform} ${style.transform}`
+    }
+    const props = { ...extraProps, ...(style ? { style } : {}) }
+    const appliedProps = live.localName.includes("-") ? props : nativeElementProps(props)
+    runtime.reuseCandidateBaseProps.set(candidate, mergeReusableCandidateProps(previous, appliedProps))
+  }
+  return true
+}
+
 
 function markUnsafeViewAncestors(context: DomRenderContext): void {
   const runtime = runtimeFor(context)
@@ -438,6 +843,7 @@ function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRen
 
 function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, context: DomRenderContext): void {
   const currentNodes = parent.childNodes
+  if (currentNodes.length !== nextChildren.length || context.hasDomKeys) captureLayoutChildren(parent, undefined, context)
   if (nextChildren.length === 0) {
     if (currentNodes.length > 0) removeNodeBatch(parent, [...currentNodes], context)
     return
@@ -521,14 +927,25 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
 }
 
 function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
-  const stagedReuse = runtimeFor(context)?.reuseCandidates.get(next)
+  const runtime = runtimeFor(context)
+  const stagedReuse = runtime?.reuseCandidates.get(next)
   if (stagedReuse === current && next.nodeType === 8) {
+    const resolvedMotion = current.nodeType === 1 ? resolveMotionState(current as Element, next, context) : undefined
+    if (current.nodeType === 1) captureLayoutNeighborhood(current as Element, resolvedMotion?.layoutAnimation, context)
+    if (runtime?.reuseCandidateBaseProps.has(next) && current.nodeType === 1) {
+      patchDomProps(current as Element, runtime.reuseCandidateBaseProps.get(next) ?? undefined, context, resolvedMotion?.policy)
+    }
+    runtime?.compiledTemplatePatches.get(next)?.()
     bindCandidateNode(next, current, context)
+    if (current.nodeType === 1 && resolvedMotion) commitResolvedMotionState(current as Element, resolvedMotion, context)
     return current
   }
   if (current.nodeType !== next.nodeType) return replaceDomNode(parent, current, next, context)
   if (current.nodeType === 3 && next.nodeType === 3) {
-    if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue
+    if (current.nodeValue !== next.nodeValue) {
+      if (current.parentElement) captureLayoutNeighborhood(current.parentElement, undefined, context)
+      current.nodeValue = next.nodeValue
+    }
     bindCandidateNode(next, current, context)
     return current
   }
@@ -541,7 +958,9 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   const reusable = runtimeFor(context)?.reuseCandidates.get(next)
   const lazyKey = context.lazyKeys.get(nextElement)
   if (lazyKey) context.lazyKeys.set(currentElement, lazyKey)
-  patchDomProps(currentElement, context.domProps.get(nextElement), context)
+  const resolvedMotion = resolveMotionState(currentElement, nextElement, context)
+  captureLayoutNeighborhood(currentElement, resolvedMotion.layoutAnimation, context)
+  patchDomProps(currentElement, context.domProps.get(nextElement), context, resolvedMotion.policy)
   const nextKey = nodeKey(nextElement, context)
   if (nextKey !== undefined) {
     context.hasDomKeys = true
@@ -549,6 +968,8 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   }
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
   bindCandidateNode(next, current, context)
+  commitResolvedMotionState(currentElement, resolvedMotion, context)
+  if (reusable === current) runtime?.compiledTemplatePatches.get(next)?.()
   if (reusable !== current) {
     const currentContent = domContentContainer(currentElement)
     const nextContent = domContentContainer(nextElement)
@@ -557,7 +978,10 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
     if (currentChildren.length === 1 && nextChildren.length === 1 && currentChildren[0].nodeType === 3 && nextChildren[0].nodeType === 3) {
       const currentText = currentChildren[0]
       const nextText = nextChildren[0]
-      if (currentText.nodeValue !== nextText.nodeValue) currentText.nodeValue = nextText.nodeValue
+      if (currentText.nodeValue !== nextText.nodeValue) {
+        captureLayoutNeighborhood(currentElement, resolvedMotion.layoutAnimation, context)
+        currentText.nodeValue = nextText.nodeValue
+      }
       bindCandidateNode(nextText, currentText, context)
     } else if (currentChildren.length !== 0 || nextChildren.length !== 0) {
       reconcileDomChildren(currentContent, nextChildren, context)
@@ -567,21 +991,23 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   return current
 }
 
-function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNodes: readonly Node[], context: DomRenderContext): void {
+function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNodes: readonly Node[], context: DomRenderContext): Node[] {
   const current = currentNodes.filter(node => node.parentNode === parent)
+  if (current.length !== nextNodes.length || context.hasDomKeys) captureLayoutChildren(parent, undefined, context)
   if (current.length === 0) {
     for (const next of nextNodes) commitStagedSubtree(next, context)
     appendNodeBatch(parent, nextNodes)
     for (const next of nextNodes) bindInsertedSubtree(next, context)
-    return
+    return [...nextNodes]
   }
   if (nextNodes.length === 0) {
     removeNodeBatch(parent, current, context)
-    return
+    return []
   }
   const after = current[current.length - 1].nextSibling
   const keyed = new Map<string | number, Node>()
   const used = new Set<Node>()
+  const liveNodes: Node[] = []
   const unkeyed = current.filter(node => nodeKey(node, context) === undefined)
   for (const node of current) {
     const key = nodeKey(node, context)
@@ -601,8 +1027,9 @@ function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNode
       bindInsertedSubtree(next, context)
     } else {
       if (live !== cursor) parent.insertBefore(live, cursor ?? after)
-      reconcileDomNode(parent, live, next, context)
+      live = reconcileDomNode(parent, live, next, context)
     }
+    liveNodes.push(live)
     cursor = live.nextSibling
   }
   for (const node of current) {
@@ -610,6 +1037,7 @@ function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNode
     releaseDomSubtree(node, context)
     parent.removeChild(node)
   }
+  return liveNodes
 }
 
 function safeBoundingRect(element: Element): DOMRect | undefined {
@@ -886,6 +1314,13 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
 
   const applyModifier = (content: Node, modifier: ViewModifierNode): Node => {
     recordDirectModifiers(content, modifier)
+    if (modifier.name === "animation") {
+      const animation = modifier.arguments[0] instanceof Object
+        ? modifier.arguments[0] as Animation
+        : modifier.arguments[0] === null ? null : null
+      recordAnimationDomain(content, animation, modifier.arguments[1], context)
+      return content
+    }
     if (modifier.name === "keyed") {
       const key = typeof modifier.arguments[0] === "string" || typeof modifier.arguments[0] === "number"
         ? modifier.arguments[0]
@@ -898,15 +1333,19 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     if (modifier.name === "frame") {
       const wrapper = context.document.createElement("div")
       applyDomProps(wrapper, { style: frameStyle(modifier.arguments[0] && typeof modifier.arguments[0] === "object" ? modifier.arguments[0] : {}) }, context)
+      recordMotionStyleProperties(wrapper, Object.keys(styleOf(modifier, false)), context)
       appendDomChild(wrapper, content, context)
       return wrapper
     }
-    const extraStyle = styleOf(modifier)
+    const extraStyle = styleOf(modifier, false)
     const extraProps = propsOf(modifier)
     if (Object.keys(extraProps).length === 0 && Object.keys(extraStyle).length === 0) return content
     const baseStyle = Object.keys(extraStyle).length > 0 || extraProps.style
       ? { ...extraStyle, ...(extraProps.style && typeof extraProps.style === "object" ? extraProps.style : {}) }
       : undefined
+    if (baseStyle) recordMotionStyleProperties(content, Object.keys(baseStyle).map(cssPropertyName), context)
+    if ((Object.keys(extraProps).length > 0 || baseStyle)
+      && stageReusableModifierPatch(content, modifier, extraProps, baseStyle, context)) return content
     if (Object.keys(extraProps).length > 0 || baseStyle) content = promoteReusableContent(content, context)
     const nodes = outputNodes(content)
     nodes.forEach(node => {
@@ -1058,13 +1497,95 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     value(value) {
       return context.document.createTextNode(value === null || value === undefined || value === false ? "" : String(value))
     },
-    template(node, renderSlot) {
+    template(node, renderSlot, identity) {
       let factory = templateFactories.get(node.template)
       if (!factory) {
         factory = compileTemplate(node.template.root)
         templateFactories.set(node.template, factory)
       }
-      return factory(renderSlot)
+
+      const key = viewIdentityKey([...identity, "compiled-template"])
+      const textOnly = node.template.slotKinds.length === node.template.slotCount
+        && node.template.slotKinds.every(kind => kind === "text")
+      const previous = runtime?.compiledTemplates.get(key)
+
+      // Compiler-proven text-only templates do not need their immutable host
+      // tree rebuilt on every evaluation. Render only the dynamic primitive
+      // slots, carry the existing roots through reconciliation as tiny comment
+      // identities, and patch the bound live Text nodes in place. Static
+      // zero-slot templates take this path too and allocate no candidate DOM.
+      if (runtime && textOnly && previous?.template === node.template
+        && previous.roots.length > 0
+        && previous.roots.every(root => root.parentNode !== null)
+        && previous.textSlots.length === node.template.slotCount
+        && previous.textSlots.every(slot => slot?.parentNode !== null)) {
+        const nextText = new Array<string>(node.template.slotCount)
+        let valid = true
+        for (let index = 0; index < node.template.slotCount; index += 1) {
+          // The compiler proved this slot came from Text's primitive value
+          // initializer. Read the graph slot directly instead of materializing a
+          // throwaway Text node just to discover the next text payload.
+          const slot = compiledTextSlotValue(node.slots[index])
+          if (!slot.ok) {
+            valid = false
+            break
+          }
+          nextText[index] = slot.value
+        }
+        if (valid) {
+          let patched = false
+          const patch = () => {
+            if (patched) return
+            patched = true
+            for (let index = 0; index < nextText.length; index += 1) {
+              const live = previous.textSlots[index]
+              if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
+            }
+          }
+          if (previous.roots.length === 1) {
+            const candidate = reusableCompiledTemplateCandidate(previous.roots[0], previous.rootProps[0] ?? null, context)
+            runtime.compiledTemplatePatches.set(candidate, patch)
+            return candidate
+          }
+          const fragment = context.document.createDocumentFragment()
+          for (let index = 0; index < previous.roots.length; index += 1) {
+            const candidate = reusableCompiledTemplateCandidate(previous.roots[index], previous.rootProps[index] ?? null, context)
+            runtime.compiledTemplatePatches.set(candidate, patch)
+            fragment.appendChild(candidate)
+          }
+          return fragment
+        }
+      }
+
+      const renderedSlots = new Array<Node | undefined>(node.template.slotCount)
+      const slotNodes = new Array<Text | undefined>(node.template.slotCount)
+      const viewSlotNodes = new Array<Node[] | undefined>(node.template.slotCount)
+      const renderCachedSlot = (index: number): Node => {
+        const cached = renderedSlots[index]
+        if (cached) return cached
+        const slot = renderSlot(index)
+        renderedSlots[index] = slot
+        if (runtime && node.template.slotKinds[index] === "text" && slot.nodeType === 3) {
+          slotNodes[index] = slot as Text
+          runtime.compiledTemplateTextSlots.set(slot, { key, index })
+        } else if (runtime && node.template.slotKinds[index] === "view") {
+          const nodes = outputNodes(slot)
+          viewSlotNodes[index] = nodes
+          for (const root of nodes) runtime.compiledTemplateViewSlots.set(root, { key, index })
+        }
+        return slot
+      }
+      const output = factory(renderCachedSlot)
+      if (runtime) {
+        const roots = outputNodes(output)
+        const rootProps = roots.map(root => root.nodeType === 1
+          ? cloneStoredDomProps(context.domProps.get(root as Element))
+          : null)
+        const instance: DomCompiledTemplateInstance = { template: node.template, roots: [...roots], rootProps, textSlots: slotNodes, viewSlots: viewSlotNodes }
+        runtime.compiledTemplates.set(key, instance)
+        roots.forEach((root, index) => runtime.compiledTemplateRoots.set(root, { key, index }))
+      }
+      return output
     },
     lazy(node, render, identity) {
       markUnsafeViewAncestors(context)
@@ -1208,6 +1729,14 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       boundaries: new Map(),
       nodeKeys: new WeakMap(),
       reuseCandidates: new WeakMap(),
+      reuseCandidateBaseProps: new WeakMap(),
+      compiledTemplates: new Map(),
+      compiledTemplateRoots: new WeakMap(),
+      compiledTemplateTextSlots: new WeakMap(),
+      compiledTemplateViewSlots: new WeakMap(),
+      compiledTemplatePatches: new WeakMap(),
+      motionStates: new WeakMap(),
+      layoutSnapshots: new Map(),
       stack: [],
       renderedKeys: new Set(),
       passVisitedStates: new Set(),
@@ -1320,6 +1849,14 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         }
         viewRuntime.rootChildren.clear()
         viewRuntime.rootNextChildren.forEach(child => viewRuntime.rootChildren.add(child))
+      }
+      // Identity-keyed template instances are retained only while at least one
+      // of their live roots is still mounted. This keeps the fast-path cache
+      // bounded when keyed/list branches disappear.
+      for (const [key, instance] of viewRuntime.compiledTemplates) {
+        if (instance.roots.length === 0 || instance.roots.every(root => root.parentNode === null)) {
+          viewRuntime.compiledTemplates.delete(key)
+        }
       }
       viewRuntime.boundaryRootKey = undefined
     }
@@ -1458,6 +1995,137 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
       return positions
     }
+    const patchCompiledBoundary = (boundary: DomViewBoundary, transaction?: Transaction): boolean => {
+      const plan = boundary.node.compiledBody
+      if (!plan || boundary.node.dependenciesComplete !== true) return false
+      // Outer modifiers are applied after the View body. Safe non-structural
+      // modifiers can be replayed directly on top of the compiled body plan;
+      // anything structural or effectful keeps the conservative generic path.
+      const directOuterModifiers = plan.patchesModifiers ? boundary.outerModifiers : []
+      if (directOuterModifiers.some(modifier => !directCompiledBodyModifierNames.has(modifier.name))) return false
+      const template = plan.template
+      if (template.slotKinds.length !== template.slotCount || template.slotKinds.some(kind => kind !== "text")) return false
+
+      const templateKey = viewIdentityKey([...boundary.identity, "body", "compiled-template"])
+      const instance = viewRuntime.compiledTemplates.get(templateKey)
+      if (!instance || instance.template !== template
+        || instance.roots.length === 0
+        || instance.roots.some(root => root.parentNode === null)
+        || instance.textSlots.length !== template.slotCount
+        || instance.textSlots.some(slot => slot?.parentNode === null)) return false
+
+      const previousTransaction = context.activeTransaction
+      context.activeTransaction = transaction
+      try {
+        for (const root of instance.roots) {
+          if (root.nodeType === 1) captureLayoutNeighborhood(root as Element, undefined, context)
+        }
+        const patched = withRenderTransaction(transaction, () => {
+          const evaluation = plan.evaluate(boundary.resolvedProps)
+          if (!evaluation || typeof evaluation !== "object" || !Array.isArray(evaluation.slots)
+            || evaluation.slots.length !== template.slotCount) return false
+
+          const nextText = new Array<string>(template.slotCount)
+          for (let index = 0; index < template.slotCount; index += 1) {
+            const value = compiledTextSlotValue(evaluation.slots[index])
+            if (!value.ok) return false
+            nextText[index] = value.value
+          }
+
+          let nextRootProps: Array<Record<string, unknown> | null> | undefined
+          let nextMotionStates: Array<DomMotionRenderState | null> | undefined
+          if (plan.patchesModifiers) {
+            if (evaluation.modifiers !== undefined && !Array.isArray(evaluation.modifiers)) return false
+            nextRootProps = instance.roots.map((root, index) => root.nodeType === 1
+              ? cloneStoredDomProps(instance.rootProps[index] ?? null)
+              : null)
+            nextMotionStates = instance.roots.map(root => root.nodeType === 1
+              ? { pendingProperties: new Set<string>(), domains: [], partial: false }
+              : null)
+
+            const mergeModifier = (modifier: ViewModifierNode): void => {
+              if (modifier.name === "animation") {
+                const raw = modifier.arguments[0]
+                const animation = raw && typeof raw === "object" ? raw as Animation : null
+                const trigger = modifier.arguments[1]
+                for (const state of nextMotionStates!) {
+                  if (!state) continue
+                  state.domains.push({ animation, trigger, properties: [...state.pendingProperties] })
+                  state.pendingProperties.clear()
+                }
+                return
+              }
+
+              const extraStyle = styleOf(modifier, false)
+              const extraProps = propsOf(modifier)
+              const motionProperties = Object.keys(extraStyle).map(cssPropertyName)
+              for (const state of nextMotionStates!) {
+                if (!state) continue
+                for (const property of motionProperties) state.pendingProperties.add(property)
+              }
+              for (let index = 0; index < instance.roots.length; index += 1) {
+                const root = instance.roots[index]
+                if (root.nodeType !== 1) continue
+                const element = root as Element
+                const previous = nextRootProps![index]
+                const style = Object.keys(extraStyle).length > 0 ? { ...extraStyle } : undefined
+                if (style && typeof style.transform === "string") {
+                  const remembered = previous?.style
+                  const currentTransform = remembered && typeof remembered === "object"
+                    ? (remembered as Record<string, unknown>).transform
+                    : undefined
+                  if (typeof currentTransform === "string" && currentTransform) style.transform = `${currentTransform} ${style.transform}`
+                }
+                const incoming = { ...extraProps, ...(style ? { style } : {}) }
+                const applied = element.localName.includes("-") ? incoming : nativeElementProps(incoming)
+                nextRootProps![index] = mergeReusableCandidateProps(previous, applied)
+              }
+            }
+
+            for (const spec of evaluation.modifiers ?? []) {
+              if (!Array.isArray(spec) || spec.length !== 2 || typeof spec[0] !== "string"
+                || !directCompiledBodyModifierNames.has(spec[0]) || !Array.isArray(spec[1])) return false
+              mergeModifier({ name: spec[0], arguments: spec[1] } as ViewModifierNode)
+            }
+            // Preserve normal modifier precedence: template props → body
+            // modifiers → modifiers attached to the View at the call site.
+            for (const modifier of directOuterModifiers) mergeModifier(modifier)
+          } else if (evaluation.modifiers !== undefined) {
+            return false
+          }
+
+          const resolvedRootMotion = instance.roots.map((root, index) => {
+            if (root.nodeType !== 1 || !nextMotionStates?.[index]) return undefined
+            const resolved = resolveMotionRenderState(root as Element, nextMotionStates[index]!, context)
+            captureLayoutNeighborhood(root as Element, resolved.layoutAnimation, context)
+            return resolved
+          })
+
+          for (let index = 0; index < nextText.length; index += 1) {
+            const live = instance.textSlots[index]
+            if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
+          }
+          if (nextRootProps) {
+            for (let index = 0; index < instance.roots.length; index += 1) {
+              const root = instance.roots[index]
+              if (root.nodeType !== 1) continue
+              const resolved = resolvedRootMotion[index]
+              patchDomProps(root as Element, nextRootProps[index], context, resolved?.policy)
+              if (resolved) commitResolvedMotionState(root as Element, resolved, context)
+            }
+          }
+          return true
+        })
+        if (!patched) return false
+        flushLayoutMotion(context)
+      } finally {
+        context.activeTransaction = previousTransaction
+      }
+      boundary.scheduled = false
+      boundary.pendingTransaction = undefined
+      return true
+    }
+
     const updateBoundary = (boundary: DomViewBoundary): void => {
       if (stopped || viewRuntime.boundaries.get(boundary.key) !== boundary || !boundary.scheduled) return
       let parentKey = boundary.parentKey
@@ -1474,6 +2142,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         return
       }
       const renderTransaction = boundary.pendingTransaction
+      if (patchCompiledBoundary(boundary, renderTransaction)) return
       context.activeTransaction = renderTransaction
       beginViewPass(boundary.key)
       context.hasRefs = false
@@ -1488,10 +2157,15 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         // A branch introduced GeometryReader/Lazy content that was not present
         // when this boundary was classified. Do not commit with local indexes;
         // rerun it through the root transaction instead.
+        // Discard any pre-mutation layout captures from the abandoned local
+        // pass. The root pass will take a fresh coherent snapshot.
+        viewRuntime.layoutSnapshots.clear()
+        context.activeTransaction = undefined
         requestRootUpdate(renderTransaction, false)
         return
       }
       reconcileDomRange(parent, currentNodes, outputNodes(output), context)
+      flushLayoutMotion(context)
       commitViewPass(false)
       commitRefs()
       context.activeTransaction = undefined
@@ -1500,6 +2174,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     update = () => {
       if (stopped) return
       scheduled = false
+      // A root pass owns its before/after geometry snapshot as one atomic
+      // unit. Never let a capture from an aborted local pass leak into it.
+      viewRuntime.layoutSnapshots.clear()
       const scrollPositions = captureLazyScrollPositions()
       context.geometryIndex = 0
       context.hasRefs = false
@@ -1558,6 +2235,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           reconcileDomChildren(container, outputChildren, context)
         }
       }
+      flushLayoutMotion(context)
       commitViewPass(true)
       for (const [parent, position] of scrollPositions) {
         parent.scrollTop = position.top
@@ -1607,6 +2285,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         boundary.subscriptions.clear()
       }
       viewRuntime.boundaries.clear()
+      viewRuntime.layoutSnapshots.clear()
       activeRefs.forEach(entry => cleanup(entry.cleanup))
       activeRefs.clear()
       lazyViewportCleanups.forEach(action => cleanup(action))

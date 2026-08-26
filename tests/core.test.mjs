@@ -136,6 +136,10 @@ test("@vune-ui/core compiled templates preserve generic rendering, native fast p
   assert.deepEqual(template.root.props, { className: "card", style: { display: "flex" } })
   assert.equal(Object.isFrozen(value.slots), true)
   assert.deepEqual(template.slotIdentities, [["element", 1, "element", 0]])
+  assert.deepEqual(template.slotKinds, ["view"])
+  const textTemplate = defineCompiledTemplate({ kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["text"] }] }, 1, ["text"])
+  assert.deepEqual(textTemplate.slotKinds, ["text"])
+  assert.throws(() => defineCompiledTemplate({ kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["text"] }] }, 1, []), /slot kinds/i)
   assert.throws(() => compiledTemplate(template, []), /expected 1 slots/i)
   assert.throws(() => defineCompiledTemplate({
     kind: "fragment",

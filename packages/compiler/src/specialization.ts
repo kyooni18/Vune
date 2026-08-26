@@ -24,6 +24,26 @@ interface CachedSourceFile {
 const externalSourceFiles = new Map<string, CachedSourceFile>()
 const previousPrograms = new Map<string, ts.Program>()
 const maximumProgramCacheSize = 32
+const maximumExternalSourceFileCacheSize = 4096
+const staticSyntaxSourceFiles = new Map<string, ts.SourceFile>()
+const maximumStaticSyntaxSourceFileCacheSize = 32
+
+function staticSyntaxSourceFile(source: string): ts.SourceFile {
+  const cached = staticSyntaxSourceFiles.get(source)
+  if (cached) {
+    staticSyntaxSourceFiles.delete(source)
+    staticSyntaxSourceFiles.set(source, cached)
+    return cached
+  }
+  const file = ts.createSourceFile("vune-static-plan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  staticSyntaxSourceFiles.set(source, file)
+  while (staticSyntaxSourceFiles.size > maximumStaticSyntaxSourceFileCacheSize) {
+    const oldest = staticSyntaxSourceFiles.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    staticSyntaxSourceFiles.delete(oldest)
+  }
+  return file
+}
 
 function rememberProgram(root: string, program: ts.Program): void {
   previousPrograms.delete(root)
@@ -32,6 +52,20 @@ function rememberProgram(root: string, program: ts.Program): void {
     const oldest = previousPrograms.keys().next().value as string | undefined
     if (!oldest) break
     previousPrograms.delete(oldest)
+  }
+}
+
+function rememberExternalSourceFile(key: string, cached: CachedSourceFile): void {
+  // TypeScript can touch a very large dependency graph in a long-lived Vite
+  // process. Keep hot SourceFiles reusable without letting the compiler cache
+  // grow forever as projects, generated declarations, or package versions
+  // change underneath the dev server.
+  externalSourceFiles.delete(key)
+  externalSourceFiles.set(key, cached)
+  while (externalSourceFiles.size > maximumExternalSourceFileCacheSize) {
+    const oldest = externalSourceFiles.keys().next().value as string | undefined
+    if (!oldest) break
+    externalSourceFiles.delete(oldest)
   }
 }
 
@@ -62,7 +96,11 @@ function createVuneTypeScriptProgram(source: string, fileName: string): VuneType
     const cacheKey = normalize(requested)
     const languageVersionKey = typeof languageVersion === "number" ? String(languageVersion) : JSON.stringify(languageVersion)
     const cached = externalSourceFiles.get(cacheKey)
-    if (cached && cached.text === text && cached.languageVersionKey === languageVersionKey) return cached.sourceFile
+    if (cached && cached.text === text && cached.languageVersionKey === languageVersionKey) {
+      // Touch on hit so eviction is LRU rather than insertion-order FIFO.
+      rememberExternalSourceFile(cacheKey, cached)
+      return cached.sourceFile
+    }
     const extension = requested.toLowerCase().split(".").pop()
     const scriptKind = extension === "tsx" ? ts.ScriptKind.TSX
       : extension === "jsx" ? ts.ScriptKind.JSX
@@ -70,7 +108,7 @@ function createVuneTypeScriptProgram(source: string, fileName: string): VuneType
           : extension === "json" ? ts.ScriptKind.JSON
             : ts.ScriptKind.TS
     const sourceFile = ts.createSourceFile(requested, text, languageVersion, true, scriptKind)
-    externalSourceFiles.set(cacheKey, { text, languageVersionKey, sourceFile })
+    rememberExternalSourceFile(cacheKey, { text, languageVersionKey, sourceFile })
     return sourceFile
   }
 
@@ -520,6 +558,267 @@ export function lowerStaticImportedCalls(source: string, fileName: string): stri
   return result
 }
 
+
+interface SemanticSpecializationSnapshot {
+  readonly sourceFile: ts.SourceFile
+  readonly checker: ts.TypeChecker
+  readonly runtimeImports: ReadonlyMap<string, string>
+}
+
+type StaticSemanticCandidate =
+  | { readonly kind: "modifier"; readonly node: ts.CallExpression; readonly chain: { readonly base: ts.Expression; readonly calls: readonly StaticModifierCall[] } }
+  | { readonly kind: "imported"; readonly node: ts.CallExpression; readonly plan: ImportedCallCandidate }
+
+function createSemanticSpecializationSnapshot(source: string, fileName: string): SemanticSpecializationSnapshot | undefined {
+  const program = createVuneTypeScriptProgram(source, fileName)
+  if (!program) return undefined
+  return {
+    sourceFile: program.sourceFile,
+    checker: program.checker,
+    runtimeImports: runtimeViewImports(program.sourceFile),
+  }
+}
+
+function collectSemanticImportedCandidates(
+  source: string,
+  snapshot: SemanticSpecializationSnapshot,
+): readonly StaticSemanticCandidate[] {
+  const { sourceFile, checker, runtimeImports } = snapshot
+  const hasRestParameter = (signature: ts.Signature): boolean => signature.parameters.some(parameter => (
+    parameter.declarations?.some(declaration => ts.isParameter(declaration) && declaration.dotDotDotToken) ?? false
+  ))
+  const result: StaticSemanticCandidate[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const type = checker.getTypeAtLocation(node.expression)
+      const viewType = checker.getPropertyOfType(type, "viewType")
+      const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call)
+      const resolved = checker.getResolvedSignature(node)
+      const initializerIndex = resolved
+        ? signatures.findIndex(signature => signature === resolved || signature.declaration === resolved.declaration)
+        : -1
+      const selected = initializerIndex < 0 ? undefined : signatures[initializerIndex]
+      if (viewType && selected && !hasRestParameter(selected)) {
+        const runtimeName = runtimeImports.get(node.expression.text)
+        const runtimeInitializers = runtimeName ? initializersOf((Core as Record<string, unknown>)[runtimeName]) : []
+        let runtimeIndex = initializerIndex
+        let runtimeParameters = runtimeInitializers[runtimeIndex]?.parameters
+        if (node.arguments.some(isNamedArgumentsCarrier) && runtimeInitializers.length > 0) {
+          const matches = runtimeInitializers.flatMap((initializer, index) => initializer.parameters
+            && canNormalizeCompiledArguments(node.arguments, initializer.parameters, checker)
+            ? [{ index, parameters: initializer.parameters }]
+            : [])
+          if (matches.length === 1) {
+            runtimeIndex = matches[0].index
+            runtimeParameters = matches[0].parameters
+          }
+        }
+        const normalized = canNormalizeCompiledArguments(node.arguments, runtimeParameters, checker)
+        const safeTypes = node.arguments.every((argument, argumentIndex) => {
+          if (isNamedArgumentsCarrier(argument)) return normalized
+          if (isViewBuilderParameter(checker, selected, argumentIndex, argument)) {
+            const rendered = source.slice(argument.getStart(sourceFile), argument.end)
+            if (stripSimpleViewBuilder(rendered) !== undefined) return true
+          }
+          return !containsUnsafeCompiledType(checker.getTypeAtLocation(argument), checker)
+        })
+        result.push({
+          kind: "imported",
+          node,
+          plan: { initializerIndex: runtimeIndex, signature: selected, compiled: normalized && safeTypes, runtimeParameters },
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return result
+}
+
+function collectSemanticModifierCandidates(snapshot: SemanticSpecializationSnapshot): readonly StaticSemanticCandidate[] {
+  const { sourceFile, checker } = snapshot
+  const result: StaticSemanticCandidate[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const chain = staticModifierChain(node)
+      const parent = node.parent
+      const isNestedChain = ts.isCallExpression(parent)
+        && ts.isPropertyAccessExpression(parent.expression)
+        && parent.expression.expression === node
+        && staticModifierNames.has(parent.expression.name.text)
+      if (chain && !isNestedChain && isVuneViewType(checker, checker.getTypeAtLocation(chain.base))) {
+        result.push({ kind: "modifier", node, chain })
+        // Only maximal chains are semantic candidates. Imported constructor
+        // candidates are collected by the independent traversal above, so
+        // descending into this chain would create overlapping modifier roots.
+        return
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return result
+}
+
+function semanticCandidateStart(candidate: StaticSemanticCandidate, sourceFile: ts.SourceFile): number {
+  return candidate.node.getStart(sourceFile)
+}
+
+function semanticCandidateEnd(candidate: StaticSemanticCandidate): number {
+  return candidate.node.end
+}
+
+/**
+ * Run every TypeChecker-dependent specialization from one immutable semantic
+ * snapshot. Candidates are arranged by source containment before emission, so
+ * imported constructor lowering and modifier lowering can freely nest without
+ * reparsing the rewritten source or dropping an overlapping child rewrite.
+ */
+export function lowerStaticSemanticSpecializations(source: string, fileName: string): string {
+  const hasModifierHint = Array.from(staticModifierNames).some(name => new RegExp(`\\.${name}\\s*\\(`).test(source))
+  // Imported constructor specialization only recognizes the canonical runtime
+  // modules below. Avoid constructing a TypeScript Program for ordinary helper
+  // modules merely because they contain function calls; modifier chains remain
+  // eligible because their View type can arrive through a local/transitive import.
+  const hasRuntimeImportHint = /(?:from\s*|import\s*\()\s*["'](?:vune-ui|@vune-ui\/(?:core|react))["']/.test(source)
+  if (!hasModifierHint && !hasRuntimeImportHint) return source
+
+  const snapshot = createSemanticSpecializationSnapshot(source, fileName)
+  if (!snapshot) return source
+  const imported = collectSemanticImportedCandidates(source, snapshot)
+  const modifiers = hasModifierHint ? collectSemanticModifierCandidates(snapshot) : []
+  const candidates = [...imported, ...modifiers]
+  if (candidates.length === 0) return source
+
+  const { sourceFile, checker } = snapshot
+  const ordered = [...candidates].sort((left, right) => {
+    const startDelta = semanticCandidateStart(left, sourceFile) - semanticCandidateStart(right, sourceFile)
+    return startDelta || semanticCandidateEnd(right) - semanticCandidateEnd(left)
+  })
+  const children = new Map<StaticSemanticCandidate | undefined, StaticSemanticCandidate[]>()
+  const stack: StaticSemanticCandidate[] = []
+  for (const candidate of ordered) {
+    const start = semanticCandidateStart(candidate, sourceFile)
+    const end = semanticCandidateEnd(candidate)
+    while (stack.length > 0) {
+      const parent = stack[stack.length - 1]
+      if (start >= semanticCandidateStart(parent, sourceFile) && end <= semanticCandidateEnd(parent)) break
+      stack.pop()
+    }
+    const parent = stack[stack.length - 1]
+    const siblings = children.get(parent) ?? []
+    siblings.push(candidate)
+    children.set(parent, siblings)
+    stack.push(candidate)
+  }
+
+  const replacements = new Map<StaticSemanticCandidate, string>()
+  let renderCandidate!: (candidate: StaticSemanticCandidate) => string
+  const renderRange = (start: number, end: number, owner: StaticSemanticCandidate | undefined): string => {
+    let rendered = source.slice(start, end)
+    const nested = (children.get(owner) ?? [])
+      .filter(candidate => semanticCandidateStart(candidate, sourceFile) >= start && semanticCandidateEnd(candidate) <= end)
+      .sort((left, right) => semanticCandidateStart(right, sourceFile) - semanticCandidateStart(left, sourceFile))
+    for (const child of nested) {
+      const childStart = semanticCandidateStart(child, sourceFile)
+      const childEnd = semanticCandidateEnd(child)
+      rendered = rendered.slice(0, childStart - start) + renderCandidate(child) + rendered.slice(childEnd - start)
+    }
+    return rendered
+  }
+
+  renderCandidate = (candidate): string => {
+    const cached = replacements.get(candidate)
+    if (cached !== undefined) return cached
+
+    if (candidate.kind === "modifier") {
+      const { node, chain } = candidate
+      const base = renderRange(chain.base.getStart(sourceFile), chain.base.end, candidate)
+      const modifiersSource = chain.calls.map(({ name, node: call }) => {
+        const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
+          ? "0"
+          : call.arguments.map(argument => {
+            let start = argument.getStart(sourceFile)
+            let cursor = start - 1
+            while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
+            if (source[cursor] === "." && !(cursor > 0 && /[A-Za-z0-9_$.)"'\]]/.test(source[cursor - 1]))) start = cursor
+            const raw = renderRange(start, argument.end, candidate)
+            return lowerImplicitMemberShorthand(lowerShorthand(raw))
+          }).join(", ")
+        return `[${JSON.stringify(name)}, [${argumentsSource}]]`
+      }).join(", ")
+      const replacement = `modifiedContentCompiled(${base}, [${modifiersSource}])`
+      replacements.set(candidate, replacement)
+      return replacement
+    }
+
+    const { node, plan } = candidate
+    const renderNode = (argument: ts.Expression): string => renderRange(argument.getStart(sourceFile), argument.end, candidate)
+    const renderedArguments = node.arguments.map(renderNode)
+    let compiledArguments: string[] | undefined
+    if (plan.compiled && plan.runtimeParameters) {
+      const carrierIndex = node.arguments.findIndex(isNamedArgumentsCarrier)
+      if (carrierIndex >= 0) {
+        const carrierProperties = namedCarrierProperties(node.arguments[carrierIndex])
+        if (carrierProperties) {
+          const values = Array<string | undefined>(plan.runtimeParameters.length).fill(undefined)
+          const keys = new Set(carrierProperties.map(property => property.key))
+          const optionIndex = plan.runtimeParameters.findIndex(parameter => {
+            const allowed = parameter.properties
+            return !!allowed && keys.size > 0 && [...keys].every(key => allowed.includes(key))
+          })
+          if (optionIndex >= 0) {
+            values[optionIndex] = `{ ${carrierProperties.map(property => `${JSON.stringify(property.key)}: ${renderNode(property.value)}`).join(", ")} }`
+          } else {
+            for (const property of carrierProperties) {
+              const parameterIndex = plan.runtimeParameters.findIndex(parameter => parameter.label === property.key)
+              if (parameterIndex >= 0) values[parameterIndex] = renderNode(property.value)
+            }
+          }
+          let positionalIndex = 0
+          for (let index = 0; index < plan.runtimeParameters.length; index += 1) {
+            if (values[index] !== undefined) continue
+            while (positionalIndex < node.arguments.length && positionalIndex === carrierIndex) positionalIndex += 1
+            if (positionalIndex < node.arguments.length) {
+              values[index] = renderedArguments[positionalIndex]
+              positionalIndex += 1
+              while (positionalIndex < node.arguments.length && positionalIndex === carrierIndex) positionalIndex += 1
+            } else if (plan.runtimeParameters[index].required === false) {
+              values[index] = "undefined"
+            }
+          }
+          if (values.every(value => value !== undefined)) compiledArguments = values as string[]
+        }
+      }
+    }
+
+    if (!compiledArguments) {
+      compiledArguments = renderedArguments.map((rendered, argumentIndex) => {
+        const argument = node.arguments[argumentIndex]
+        return plan.compiled && isViewBuilderParameter(checker, plan.signature, argumentIndex, argument)
+          ? stripSimpleViewBuilder(rendered) ?? rendered
+          : rendered
+      })
+    } else {
+      compiledArguments = compiledArguments.map((rendered, argumentIndex) => (
+        plan.runtimeParameters?.[argumentIndex]?.kind === "viewBuilder" ? stripSimpleViewBuilder(rendered) ?? rendered : rendered
+      ))
+    }
+
+    const method = plan.compiled ? "createNodeCompiled" : "createNodeSpecialized"
+    const replacement = `${node.expression.getText(sourceFile)}.viewType.${method}(${plan.initializerIndex}, [${compiledArguments.join(", ")}])`
+    replacements.set(candidate, replacement)
+    return replacement
+  }
+
+  let result = source
+  for (const candidate of (children.get(undefined) ?? []).sort((left, right) => semanticCandidateStart(right, sourceFile) - semanticCandidateStart(left, sourceFile))) {
+    const start = semanticCandidateStart(candidate, sourceFile)
+    result = result.slice(0, start) + renderCandidate(candidate) + result.slice(semanticCandidateEnd(candidate))
+  }
+  return result
+}
+
 function importedBindingsOf(sourceFile: ts.SourceFile): ReadonlySet<string> {
   const bindings = new Set<string>()
   for (const statement of sourceFile.statements) {
@@ -530,6 +829,62 @@ function importedBindingsOf(sourceFile: ts.SourceFile): ReadonlySet<string> {
     if (named && ts.isNamespaceImport(named)) bindings.add(named.name.text)
   }
   return bindings
+}
+
+interface AnimationBindings {
+  readonly named: ReadonlySet<string>
+  readonly namespaces: ReadonlySet<string>
+}
+
+function animationBindingsOf(sourceFile: ts.SourceFile): AnimationBindings {
+  const named = new Set<string>()
+  const namespaces = new Set<string>()
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !statement.importClause || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const moduleName = statement.moduleSpecifier.text
+    if (moduleName !== "vune-ui" && !moduleName.startsWith("@vune-ui/")) continue
+    const bindings = statement.importClause.namedBindings
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName?.text ?? element.name.text) === "Animation") named.add(element.name.text)
+      }
+    } else if (bindings && ts.isNamespaceImport(bindings)) {
+      namespaces.add(bindings.name.text)
+    }
+  }
+  return { named, namespaces }
+}
+
+const staticAnimationFactories = new Set([
+  "linear", "easeIn", "easeOut", "easeInOut", "spring", "interactiveSpring", "smooth", "snappy", "bouncy",
+])
+const staticAnimationTransforms = new Set(["delay", "speed", "repeatCount", "repeatForever"])
+
+function isAnimationTypeExpression(node: ts.Expression, bindings: AnimationBindings): boolean {
+  if (ts.isIdentifier(node)) return bindings.named.has(node.text)
+  return ts.isPropertyAccessExpression(node)
+    && node.name.text === "Animation"
+    && ts.isIdentifier(node.expression)
+    && bindings.namespaces.has(node.expression.text)
+}
+
+function hasOnlyStaticArguments(node: ts.CallExpression): boolean {
+  return node.arguments.every(argument => !ts.isSpreadElement(argument) && staticExpressionValue(argument).ok)
+}
+
+/** True only for immutable Animation values whose entire descriptor is known at compile time. */
+function isStaticAnimationExpression(node: ts.Expression, bindings: AnimationBindings): boolean {
+  let expression = node
+  while (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression) || ts.isNonNullExpression(expression) || ts.isSatisfiesExpression(expression)) {
+    expression = expression.expression
+  }
+  if (ts.isPropertyAccessExpression(expression) && expression.name.text === "default") {
+    return isAnimationTypeExpression(expression.expression, bindings)
+  }
+  if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression) || !hasOnlyStaticArguments(expression)) return false
+  const access = expression.expression
+  if (staticAnimationFactories.has(access.name.text)) return isAnimationTypeExpression(access.expression, bindings)
+  return staticAnimationTransforms.has(access.name.text) && isStaticAnimationExpression(access.expression, bindings)
 }
 
 function isStaticLiteralExpression(node: ts.Expression, imported: ReadonlySet<string>): boolean {
@@ -612,14 +967,33 @@ type CompilerTemplateIR =
   | { readonly kind: "element"; readonly type: string; readonly props: Record<string, unknown> | null; readonly children: readonly CompilerTemplateIR[] }
   | { readonly kind: "fragment"; readonly children: readonly CompilerTemplateIR[] }
 
+interface CompilerTemplateSlotPlan {
+  readonly source: string
+  readonly kind: "view" | "text"
+}
+
 interface CompilerTemplatePlan {
   readonly root: CompilerTemplateIR
-  readonly slots: readonly string[]
+  readonly slots: readonly CompilerTemplateSlotPlan[]
 }
 
 interface StaticExpressionResult {
   readonly ok: boolean
   readonly value?: unknown
+}
+
+function staticPrimitiveSource(value: unknown): string | undefined {
+  if (value === undefined) return "undefined"
+  if (value === null) return "null"
+  if (typeof value === "string") return JSON.stringify(value)
+  if (typeof value === "boolean") return value ? "true" : "false"
+  if (typeof value === "bigint") return `${value}n`
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined
+    if (Object.is(value, -0)) return "-0"
+    return String(value)
+  }
+  return undefined
 }
 
 function staticExpressionValue(node: ts.Expression): StaticExpressionResult {
@@ -628,16 +1002,69 @@ function staticExpressionValue(node: ts.Expression): StaticExpressionResult {
   }
   if (ts.isStringLiteralLike(node)) return { ok: true, value: node.text }
   if (ts.isNumericLiteral(node)) return { ok: true, value: Number(node.text) }
+  if (ts.isBigIntLiteral(node)) return { ok: true, value: BigInt(node.text.slice(0, -1).replaceAll("_", "")) }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return { ok: true, value: true }
   if (node.kind === ts.SyntaxKind.FalseKeyword) return { ok: true, value: false }
   if (node.kind === ts.SyntaxKind.NullKeyword) return { ok: true, value: null }
   if (ts.isIdentifier(node) && node.text === "undefined") return { ok: true, value: undefined }
   if (ts.isPrefixUnaryExpression(node)) {
     const operand = staticExpressionValue(node.operand)
-    if (!operand.ok || typeof operand.value !== "number") return { ok: false }
-    if (node.operator === ts.SyntaxKind.MinusToken) return { ok: true, value: -operand.value }
-    if (node.operator === ts.SyntaxKind.PlusToken) return { ok: true, value: operand.value }
+    if (!operand.ok) return { ok: false }
+    if (node.operator === ts.SyntaxKind.ExclamationToken) return { ok: true, value: !operand.value }
+    if (node.operator === ts.SyntaxKind.TildeToken && (typeof operand.value === "number" || typeof operand.value === "bigint")) return { ok: true, value: ~operand.value as number }
+    if (node.operator === ts.SyntaxKind.MinusToken && (typeof operand.value === "number" || typeof operand.value === "bigint")) return { ok: true, value: -operand.value as number }
+    if (node.operator === ts.SyntaxKind.PlusToken && typeof operand.value === "number") return { ok: true, value: operand.value }
     return { ok: false }
+  }
+  if (ts.isTemplateExpression(node)) {
+    let value = node.head.text
+    for (const span of node.templateSpans) {
+      const expression = staticExpressionValue(span.expression)
+      if (!expression.ok || (typeof expression.value === "symbol")) return { ok: false }
+      value += String(expression.value) + span.literal.text
+    }
+    return { ok: true, value }
+  }
+  if (ts.isConditionalExpression(node)) {
+    const condition = staticExpressionValue(node.condition)
+    return condition.ok ? staticExpressionValue(condition.value ? node.whenTrue : node.whenFalse) : { ok: false }
+  }
+  if (ts.isBinaryExpression(node)) {
+    const left = staticExpressionValue(node.left)
+    if (!left.ok) return { ok: false }
+    const operator = node.operatorToken.kind
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken) return left.value ? staticExpressionValue(node.right) : left
+    if (operator === ts.SyntaxKind.BarBarToken) return left.value ? left : staticExpressionValue(node.right)
+    if (operator === ts.SyntaxKind.QuestionQuestionToken) return left.value !== null && left.value !== undefined ? left : staticExpressionValue(node.right)
+    const right = staticExpressionValue(node.right)
+    if (!right.ok) return { ok: false }
+    try {
+      switch (operator) {
+        case ts.SyntaxKind.PlusToken: return { ok: true, value: (left.value as any) + (right.value as any) }
+        case ts.SyntaxKind.MinusToken: return { ok: true, value: (left.value as any) - (right.value as any) }
+        case ts.SyntaxKind.AsteriskToken: return { ok: true, value: (left.value as any) * (right.value as any) }
+        case ts.SyntaxKind.SlashToken: return { ok: true, value: (left.value as any) / (right.value as any) }
+        case ts.SyntaxKind.PercentToken: return { ok: true, value: (left.value as any) % (right.value as any) }
+        case ts.SyntaxKind.AsteriskAsteriskToken: return { ok: true, value: (left.value as any) ** (right.value as any) }
+        case ts.SyntaxKind.LessThanLessThanToken: return { ok: true, value: (left.value as any) << (right.value as any) }
+        case ts.SyntaxKind.GreaterThanGreaterThanToken: return { ok: true, value: (left.value as any) >> (right.value as any) }
+        case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken: return { ok: true, value: (left.value as any) >>> (right.value as any) }
+        case ts.SyntaxKind.AmpersandToken: return { ok: true, value: (left.value as any) & (right.value as any) }
+        case ts.SyntaxKind.BarToken: return { ok: true, value: (left.value as any) | (right.value as any) }
+        case ts.SyntaxKind.CaretToken: return { ok: true, value: (left.value as any) ^ (right.value as any) }
+        case ts.SyntaxKind.LessThanToken: return { ok: true, value: (left.value as any) < (right.value as any) }
+        case ts.SyntaxKind.LessThanEqualsToken: return { ok: true, value: (left.value as any) <= (right.value as any) }
+        case ts.SyntaxKind.GreaterThanToken: return { ok: true, value: (left.value as any) > (right.value as any) }
+        case ts.SyntaxKind.GreaterThanEqualsToken: return { ok: true, value: (left.value as any) >= (right.value as any) }
+        case ts.SyntaxKind.EqualsEqualsToken: return { ok: true, value: (left.value as any) == (right.value as any) }
+        case ts.SyntaxKind.ExclamationEqualsToken: return { ok: true, value: (left.value as any) != (right.value as any) }
+        case ts.SyntaxKind.EqualsEqualsEqualsToken: return { ok: true, value: left.value === right.value }
+        case ts.SyntaxKind.ExclamationEqualsEqualsToken: return { ok: true, value: left.value !== right.value }
+        default: return { ok: false }
+      }
+    } catch {
+      return { ok: false }
+    }
   }
   if (ts.isArrayLiteralExpression(node)) {
     const values: unknown[] = []
@@ -664,6 +1091,30 @@ function staticExpressionValue(node: ts.Expression): StaticExpressionResult {
     return { ok: true, value }
   }
   return { ok: false }
+}
+
+/** Fold side-effect-free expressions whose actual primitive result is known. */
+export function foldStaticResults(source: string): string {
+  const sourceFile = staticSyntaxSourceFile(source)
+  const edits: Array<{ readonly start: number; readonly end: number; readonly replacement: string }> = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpression(node)) {
+      const composite = ts.isPrefixUnaryExpression(node) || ts.isBinaryExpression(node) || ts.isConditionalExpression(node) || ts.isTemplateExpression(node)
+      if (composite) {
+        const result = staticExpressionValue(node)
+        const replacement = result.ok ? staticPrimitiveSource(result.value) : undefined
+        if (replacement !== undefined) {
+          edits.push({ start: node.getStart(sourceFile), end: node.end, replacement })
+          return
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  let result = source
+  for (const edit of edits.sort((left, right) => right.start - left.start)) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+  return result
 }
 
 function compiledViewCallShape(
@@ -752,6 +1203,137 @@ function compilerTemplateSource(value: CompilerTemplateIR): string | undefined {
   return staticTemplateDataSource(value)
 }
 
+
+interface CompilerTemplateCost {
+  readonly staticNodes: number
+  readonly staticProps: number
+  readonly primitiveLeaves: number
+}
+
+function compilerTemplateCost(value: CompilerTemplateIR): CompilerTemplateCost {
+  if (value !== null && typeof value === "object") {
+    if (value.kind === "slot") return { staticNodes: 0, staticProps: 0, primitiveLeaves: 0 }
+    if (value.kind === "fragment") {
+      return value.children.reduce<CompilerTemplateCost>((total, child) => {
+        const cost = compilerTemplateCost(child)
+        return {
+          staticNodes: total.staticNodes + cost.staticNodes,
+          staticProps: total.staticProps + cost.staticProps,
+          primitiveLeaves: total.primitiveLeaves + cost.primitiveLeaves,
+        }
+      }, { staticNodes: 0, staticProps: 0, primitiveLeaves: 0 })
+    }
+    const childCost = value.children.reduce<CompilerTemplateCost>((total, child) => {
+      const cost = compilerTemplateCost(child)
+      return {
+        staticNodes: total.staticNodes + cost.staticNodes,
+        staticProps: total.staticProps + cost.staticProps,
+        primitiveLeaves: total.primitiveLeaves + cost.primitiveLeaves,
+      }
+    }, { staticNodes: 0, staticProps: 0, primitiveLeaves: 0 })
+    return {
+      staticNodes: childCost.staticNodes + 1,
+      staticProps: childCost.staticProps + Object.keys(value.props ?? {}).length,
+      primitiveLeaves: childCost.primitiveLeaves,
+    }
+  }
+  return { staticNodes: 0, staticProps: 0, primitiveLeaves: 1 }
+}
+
+/**
+ * Tiny cost model used as the compiler's path selector. Runtime allocation and
+ * reconciliation work intentionally outweigh a modest code-size increase in
+ * the default production-oriented profile. A rejected outer template is still
+ * traversed so profitable nested templates can be selected independently.
+ */
+function shouldCompileTemplatePlan(plan: CompilerTemplatePlan, node: ts.CallExpression, sourceFile: ts.SourceFile): boolean {
+  const rootSource = compilerTemplateSource(plan.root)
+  if (rootSource === undefined) return false
+  const cost = compilerTemplateCost(plan.root)
+  const textSlots = plan.slots.filter(slot => slot.kind === "text").length
+  // Zero-slot templates are still valuable: the DOM renderer can carry their
+  // live roots through later dynamic modifier updates without recreating the
+  // immutable host subtree. This is especially common for static Text/Image
+  // content wrapped by a dynamic opacity/frame/style chain.
+  const reusableStaticRoot = plan.slots.length === 0 && cost.staticNodes > 0
+  const runtimeSavings = cost.staticNodes * 14
+    + cost.staticProps * 3
+    + cost.primitiveLeaves * 2
+    + textSlots * 4
+    + (reusableStaticRoot ? 8 : 0)
+  const slotOverhead = plan.slots.length * 2
+  const originalBytes = Math.max(1, node.end - node.getStart(sourceFile))
+  const emittedGrowth = Math.max(0, rootSource.length - originalBytes) / 48
+  return runtimeSavings - slotOverhead - emittedGrowth > 0
+}
+
+function propertyNameText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
+  return undefined
+}
+
+function exactReturnedExpression(expression: ts.Expression): ts.Expression | undefined {
+  let current = expression
+  while (true) {
+    if (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)
+      || ts.isNonNullExpression(current) || ts.isSatisfiesExpression(current)) {
+      current = current.expression
+      continue
+    }
+    if (ts.isCallExpression(current) && current.arguments.length === 0) {
+      let callee: ts.Expression = current.expression
+      while (ts.isParenthesizedExpression(callee)) callee = callee.expression
+      if (ts.isArrowFunction(callee) && callee.parameters.length === 0) {
+        const returned = exactFunctionReturn(callee)
+        if (!returned) return undefined
+        current = returned
+        continue
+      }
+    }
+    return current
+  }
+}
+
+function exactFunctionReturn(fn: ts.ArrowFunction): ts.Expression | undefined {
+  if (!ts.isBlock(fn.body)) return exactReturnedExpression(fn.body)
+  if (fn.body.statements.length === 0) return undefined
+  const statements = [...fn.body.statements]
+  const last = statements.pop()
+  if (!last || !ts.isReturnStatement(last) || !last.expression) return undefined
+  // The slot evaluator is produced by replacing only the final compiled View
+  // expression in the original body source. Restrict the prelude to linear
+  // statements so no alternate return/control-flow path can be skipped.
+  if (statements.some(statement => !ts.isVariableStatement(statement) && !ts.isExpressionStatement(statement))) return undefined
+  return exactReturnedExpression(last.expression)
+}
+
+const directCompiledBodyModifierNames = new Set([
+  "padding", "margin", "gap", "font", "fontSize", "bold",
+  "foreground", "foregroundStyle", "background", "opacity",
+  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation",
+])
+
+function directCompiledModifierSpecs(node: ts.Expression): node is ts.ArrayLiteralExpression {
+  if (!ts.isArrayLiteralExpression(node)) return false
+  return node.elements.every(element => {
+    if (!ts.isArrayLiteralExpression(element) || element.elements.length !== 2) return false
+    const [name, arguments_] = element.elements
+    return ts.isStringLiteral(name)
+      && directCompiledBodyModifierNames.has(name.text)
+      && ts.isArrayLiteralExpression(arguments_)
+      && arguments_.elements.every(argument => !ts.isSpreadElement(argument))
+  })
+}
+
+function compilerGeneratedViewDefinition(node: ts.ObjectLiteralExpression): boolean {
+  if (!ts.isCallExpression(node.parent)) return false
+  const call = node.parent
+  if (!ts.isIdentifier(call.expression)) return false
+  if (call.expression.text === "view") return call.arguments[0] === node
+  if (call.expression.text === "defineView" || call.expression.text === "structView") return call.arguments[1] === node
+  return false
+}
+
 /**
  * Turn compiled intrinsic View construction into an immutable host template plus
  * runtime graph/value slots. The pass evaluates only the already-proven builtin
@@ -764,11 +1346,11 @@ function compilerTemplateSource(value: CompilerTemplateIR): string | undefined {
  */
 export function lowerCompiledViewTemplates(source: string): string {
   if (!source.includes("createNodeCompiled")) return source
-  const sourceFile = ts.createSourceFile("vune-template-specialization.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const sourceFile = staticSyntaxSourceFile(source)
   const runtimeImports = runtimeViewImports(sourceFile)
   if (runtimeImports.size === 0) return source
 
-  type Marker = { readonly token: object; readonly slot?: string; readonly nested?: CompilerTemplatePlan }
+  type Marker = { readonly token: object; readonly slot?: CompilerTemplateSlotPlan; readonly nested?: CompilerTemplatePlan }
   const memo = new Map<ts.CallExpression, CompilerTemplatePlan | null>()
   const building = new Set<ts.CallExpression>()
 
@@ -789,7 +1371,7 @@ export function lowerCompiledViewTemplates(source: string): string {
     try {
       const markers = new Map<object, Marker>()
       const runtimeArgs: unknown[] = []
-      const slotMarker = (slot: string): object => {
+      const slotMarker = (slot: CompilerTemplateSlotPlan): object => {
         const token = Object.freeze({ __vuneCompilerTemplateSlot: markers.size })
         markers.set(token, { token, slot })
         return token
@@ -822,7 +1404,7 @@ export function lowerCompiledViewTemplates(source: string): string {
               children.push(literal.value)
               continue
             }
-            children.push(viewMarker({ slot: source.slice(child.getStart(sourceFile), child.end) }))
+            children.push(viewMarker({ slot: { source: source.slice(child.getStart(sourceFile), child.end), kind: "view" } }))
           }
           runtimeArgs.push(children)
           continue
@@ -830,7 +1412,7 @@ export function lowerCompiledViewTemplates(source: string): string {
         if (shape.runtimeName === "Text" && shape.initializerIndex === 0 && index === 0) {
           const literal = staticExpressionValue(argument)
           if (literal.ok && (typeof literal.value === "string" || typeof literal.value === "number")) runtimeArgs.push(literal.value)
-          else runtimeArgs.push(slotMarker(source.slice(argument.getStart(sourceFile), argument.end)))
+          else runtimeArgs.push(slotMarker({ source: source.slice(argument.getStart(sourceFile), argument.end), kind: "text" }))
           continue
         }
         const literal = staticExpressionValue(argument)
@@ -845,7 +1427,7 @@ export function lowerCompiledViewTemplates(source: string): string {
         memo.set(node, null)
         return undefined
       }
-      const slots: string[] = []
+      const slots: CompilerTemplateSlotPlan[] = []
       const serialize = (value: unknown, identity: readonly (string | number)[] = []): CompilerTemplateIR | undefined => {
         if (typeof value === "object" && value !== null) {
           const marker = markers.get(value)
@@ -895,7 +1477,7 @@ export function lowerCompiledViewTemplates(source: string): string {
   const visit = (node: ts.Node, templatedAncestor = false): void => {
     if (ts.isCallExpression(node)) {
       const plan = build(node)
-      if (plan && plan.slots.length > 0 && !templatedAncestor) {
+      if (plan && !templatedAncestor && shouldCompileTemplatePlan(plan, node, sourceFile)) {
         roots.push({ node, plan })
         return
       }
@@ -916,51 +1498,155 @@ export function lowerCompiledViewTemplates(source: string): string {
     return name
   }
 
-  const declarations: string[] = []
-  const edits = roots.map(({ node, plan }) => {
+  const compiledRoots = roots.map(({ node, plan }) => {
     const rootSource = compilerTemplateSource(plan.root)
     if (rootSource === undefined) return undefined
-    const name = nextName()
-    declarations.push(`const ${name} = defineCompiledTemplate(${rootSource}, ${plan.slots.length})`)
-    return {
-      start: node.getStart(sourceFile),
-      end: node.end,
-      replacement: `compiledTemplate(${name}, [${plan.slots.join(", ")}])`,
+    return { node, plan, rootSource, name: nextName() }
+  }).filter((value): value is {
+    node: ts.CallExpression
+    plan: CompilerTemplatePlan
+    rootSource: string
+    name: string
+  } => value !== undefined)
+  if (compiledRoots.length === 0) return source
+
+  const declarations = compiledRoots.map(({ name, rootSource, plan }) =>
+    `const ${name} = defineCompiledTemplate(${rootSource}, ${plan.slots.length}, [${plan.slots.map(slot => JSON.stringify(slot.kind)).join(", ")}])`)
+  const edits: Array<{ start: number; end: number; replacement: string }> = compiledRoots.map(({ node, plan, name }) => ({
+    start: node.getStart(sourceFile),
+    end: node.end,
+    replacement: `compiledTemplate(${name}, [${plan.slots.map(slot => slot.source).join(", ")}])`,
+  }))
+
+  // A View whose dependency set is compiler-proven exhaustive and whose body
+  // returns one compiled template can skip the body/reconciliation path on
+  // State-only updates. Reuse the exact original body as the slot evaluator,
+  // replacing only the final View constructor with its slot array. This keeps
+  // generated aliases/IIFEs and any linear prelude semantically identical.
+  const rootsByNode = new Map<ts.CallExpression, typeof compiledRoots[number]>()
+  for (const root of compiledRoots) rootsByNode.set(root.node, root)
+  const visitDefinitions = (node: ts.Node): void => {
+    if (ts.isObjectLiteralExpression(node) && compilerGeneratedViewDefinition(node)) {
+      const properties = new Map<string, ts.ObjectLiteralElementLike>()
+      for (const property of node.properties) {
+        if (!property.name) continue
+        const name = propertyNameText(property.name)
+        if (name) properties.set(name, property)
+      }
+      const complete = properties.get("dependenciesComplete")
+      const body = properties.get("body")
+      if (!properties.has("compiledBody")
+        && complete && ts.isPropertyAssignment(complete) && complete.initializer.kind === ts.SyntaxKind.TrueKeyword
+        && body && ts.isPropertyAssignment(body) && ts.isArrowFunction(body.initializer)) {
+        const returned = exactFunctionReturn(body.initializer)
+        let root = returned && ts.isCallExpression(returned) ? rootsByNode.get(returned) : undefined
+        let replaceExpression: ts.Expression | undefined = root?.node
+        let modifiersSource: string | undefined
+        if (!root && returned && ts.isCallExpression(returned)) {
+          const callee = exactReturnedExpression(returned.expression)
+          const content = returned.arguments[0]
+          const modifierSpecs = returned.arguments[1]
+          if (callee && ts.isIdentifier(callee) && callee.text === "modifiedContentCompiled"
+            && content && ts.isCallExpression(content)
+            && modifierSpecs && directCompiledModifierSpecs(modifierSpecs)) {
+            root = rootsByNode.get(content)
+            if (root) {
+              replaceExpression = returned
+              modifiersSource = source.slice(modifierSpecs.getStart(sourceFile), modifierSpecs.end)
+            }
+          }
+        }
+        if (root && replaceExpression && root.plan.slots.every(slot => slot.kind === "text")) {
+          const functionStart = body.initializer.getStart(sourceFile)
+          const functionEnd = body.initializer.end
+          const replacementStart = replaceExpression.getStart(sourceFile)
+          const bodySource = source.slice(functionStart, functionEnd)
+          const slotArray = `[${root.plan.slots.map(slot => slot.source).join(", ")}]`
+          const evaluation = `({ slots: ${slotArray}${modifiersSource ? `, modifiers: ${modifiersSource}` : ""} })`
+          const evaluator = bodySource.slice(0, replacementStart - functionStart)
+            + evaluation
+            + bodySource.slice(replaceExpression.end - functionStart)
+          edits.push({
+            start: body.getStart(sourceFile),
+            end: body.getStart(sourceFile),
+            replacement: `compiledBody: { template: ${root.name}${modifiersSource ? ", patchesModifiers: true" : ""}, evaluate: ${evaluator} }, `,
+          })
+        }
+      }
     }
-  }).filter((value): value is { start: number; end: number; replacement: string } => value !== undefined)
-  if (edits.length === 0) return source
+    ts.forEachChild(node, visitDefinitions)
+  }
+  visitDefinitions(sourceFile)
 
   let result = source
   for (const edit of edits.sort((left, right) => right.start - left.start)) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
-  const reparsed = ts.createSourceFile("vune-template-output.ts", result, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const importEnd = reparsed.statements.filter(ts.isImportDeclaration).at(-1)?.end ?? 0
+  const importEnd = sourceFile.statements.filter(ts.isImportDeclaration).at(-1)?.end ?? 0
   const prefix = `${importEnd > 0 ? "\n" : ""}${declarations.join("\n")}\n`
   return result.slice(0, importEnd) + prefix + result.slice(importEnd)
 }
 
 export function hoistStaticViewSubtrees(source: string): string {
-  const sourceFile = ts.createSourceFile("vune-static-hoist.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  // No graph constructor or Animation binding means neither hoist class can
+  // possibly match. Avoid allocating a full AST for ordinary helper modules.
+  if (!source.includes("createNodeCompiled")
+    && !source.includes("modifiedContentCompiled")
+    && !/\bAnimation\b/.test(source)) return source
+
+  const sourceFile = staticSyntaxSourceFile(source)
   const imported = importedBindingsOf(sourceFile)
-  if (imported.size === 0) return source
-  const candidates: ts.Expression[] = []
+  const animationBindings = animationBindingsOf(sourceFile)
+  if (imported.size === 0 && animationBindings.named.size === 0 && animationBindings.namespaces.size === 0) return source
+
+  type HoistCandidate = { readonly node: ts.Expression; readonly kind: "view" | "motion" }
+  const candidates: HoistCandidate[] = []
   const visit = (node: ts.Node): void => {
-    if (ts.isExpression(node) && isStaticGraphExpression(node, imported)) {
-      if (!isTopLevelInitializer(node)) candidates.push(node)
-      return
+    if (ts.isExpression(node)) {
+      if (imported.size > 0 && isStaticGraphExpression(node, imported)) {
+        if (!isTopLevelInitializer(node)) candidates.push({ node, kind: "view" })
+        return
+      }
+      if ((animationBindings.named.size > 0 || animationBindings.namespaces.size > 0)
+        && isStaticAnimationExpression(node, animationBindings)) {
+        if (!isTopLevelInitializer(node)) candidates.push({ node, kind: "motion" })
+        // A maximal immutable Animation chain subsumes its factory/base call.
+        return
+      }
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
   if (candidates.length === 0) return source
 
-  let suffix = 0
-  const nextName = (): string => {
+  const names = new Set<string>()
+  const collectNames = (node: ts.Node): void => { if (ts.isIdentifier(node)) names.add(node.text); ts.forEachChild(node, collectNames) }
+  collectNames(sourceFile)
+  let staticSuffix = 0
+  let motionSuffix = 0
+  const nextName = (kind: HoistCandidate["kind"]): string => {
+    const prefix = kind === "motion" ? "__vuneMotion" : "__vuneStatic"
     let name: string
-    do name = `__vuneStatic${suffix++}`
-    while (new RegExp(`\\b${name}\\b`).test(source))
+    do name = `${prefix}${kind === "motion" ? motionSuffix++ : staticSuffix++}`
+    while (names.has(name))
+    names.add(name)
     return name
   }
-  const hoists = candidates.map(node => ({ node, name: nextName(), expression: source.slice(node.getStart(sourceFile), node.end) }))
+
+  // Immutable Animation values may be shared safely. Deduplicating identical
+  // descriptors is particularly valuable because the Web motion planner caches
+  // its compiled execution plan by Animation object identity.
+  const motionNames = new Map<string, string>()
+  const hoists = candidates.map(candidate => {
+    const expression = source.slice(candidate.node.getStart(sourceFile), candidate.node.end)
+    if (candidate.kind === "motion") {
+      const existing = motionNames.get(expression)
+      if (existing) return { ...candidate, name: existing, expression, declaration: false }
+      const name = nextName(candidate.kind)
+      motionNames.set(expression, name)
+      return { ...candidate, name, expression, declaration: true }
+    }
+    return { ...candidate, name: nextName(candidate.kind), expression, declaration: true }
+  })
+
   let result = source
   for (const { node, name } of [...hoists].sort((left, right) => right.node.getStart(sourceFile) - left.node.getStart(sourceFile))) {
     result = result.slice(0, node.getStart(sourceFile)) + name + result.slice(node.end)
@@ -971,9 +1657,9 @@ export function hoistStaticViewSubtrees(source: string): string {
     if (!ts.isImportDeclaration(statement)) break
     insertion = statement.end
   }
-  // Edits before the insertion point are impossible: candidates are expressions
-  // and imports contain none. The original insertion offset therefore remains
-  // valid after right-to-left replacements.
-  const declarations = hoists.map(({ name, expression }) => `\nconst ${name} = ${expression}`).join("") + "\n"
+  const declarations = hoists
+    .filter(candidate => candidate.declaration)
+    .map(({ name, expression }) => `\nconst ${name} = ${expression}`)
+    .join("") + "\n"
   return result.slice(0, insertion) + declarations + result.slice(insertion)
 }

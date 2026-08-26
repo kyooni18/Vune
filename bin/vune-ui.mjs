@@ -19,7 +19,7 @@ const options = {
   help: false,
   local: false,
   localRoot: undefined,
-  renderer: 'react',
+  renderer: undefined,
   editor: 'all',
   global: false,
   projectRoot: undefined,
@@ -83,10 +83,10 @@ const projectFiles = [
   ['templates/project/package.json', 'package.json'],
   ['templates/project/tsconfig.json', 'tsconfig.json'],
   ['templates/project/vite.config.ts', 'vite.config.ts'],
-  ['templates/project/src/App.tsx', 'src/App.tsx'],
+  ['templates/project/src/App.vune.ts', 'src/App.vune.ts'],
   ['templates/project/src/App.css', 'src/App.css'],
   ['templates/project/src/index.css', 'src/index.css'],
-  ['templates/project/src/main.tsx', 'src/main.tsx'],
+  ['templates/project/src/main.ts', 'src/main.ts'],
 ]
 
 const localPackagePaths = {
@@ -179,7 +179,7 @@ function linkSpecifier(path) {
   return `link:${path.split(sep).join('/')}`
 }
 
-function configureLocalDependencies(projectRoot, localRoot, renderer = 'react') {
+function configureLocalDependencies(projectRoot, localRoot, renderer = 'react', { includeRootPackage = true } = {}) {
   if (!['react', 'vue', 'web'].includes(renderer)) {
     throw new Error(`Unsupported Vune renderer: ${renderer}. Use react, vue, or web.`)
   }
@@ -190,7 +190,7 @@ function configureLocalDependencies(projectRoot, localRoot, renderer = 'react') 
   manifest.dependencies ??= {}
   manifest.devDependencies ??= {}
 
-  manifest.dependencies['vune-ui'] = linkSpecifier(localRoot)
+  if (includeRootPackage) manifest.dependencies['vune-ui'] = linkSpecifier(localRoot)
   manifest.dependencies[`@vune-ui/${renderer}`] = linkSpecifier(resolve(localRoot, `packages/${renderer}`))
   manifest.devDependencies['@vune-ui/vite'] = linkSpecifier(resolve(localRoot, 'packages/vite'))
 
@@ -208,8 +208,11 @@ function configureLocalDependencies(projectRoot, localRoot, renderer = 'react') 
     delete manifest.pnpm.overrides
     if (Object.keys(manifest.pnpm).length === 0) delete manifest.pnpm
   }
+  const overridePaths = includeRootPackage
+    ? localPackagePaths
+    : Object.fromEntries(['@vune-ui/core', '@vune-ui/compiler', '@vune-ui/web', '@vune-ui/vite'].map(name => [name, localPackagePaths[name]]))
   const overrides = Object.fromEntries(
-    Object.entries(localPackagePaths).map(([name, relativePath]) => [
+    Object.entries(overridePaths).map(([name, relativePath]) => [
       name,
       linkSpecifier(resolve(localRoot, relativePath)),
     ]),
@@ -245,7 +248,7 @@ Initializer aliases after publishing:
   npm create vune-ui <directory>
   pnpm create vune-ui <directory>
 
-create scaffolds a ready-to-run React + Vite + TypeScript Vune app.
+create scaffolds a renderer-independent Web + Vite + TypeScript Vune app.
 --local rewrites Vune dependencies to link: paths pointing at the source checkout.
 link adds the same local links and pnpm-workspace.yaml overrides to an existing project.`)
 }
@@ -274,13 +277,13 @@ function scaffold(projectRoot, commandName) {
     return 1
   }
 
-  if (options.renderer !== 'react') {
-    throw new Error('The built-in project template currently targets React. Use `vune-ui link` for Vue or Web projects.')
+  if (options.renderer && options.renderer !== 'web') {
+    throw new Error('The built-in project template uses the renderer-independent Web adapter. Use `vune-ui link` to connect an existing React or Vue project.')
   }
 
   mkdirSync(projectRoot, { recursive: true })
   writeTemplates(projectRoot, projectFiles)
-  if (options.local) configureLocalDependencies(projectRoot, normalizeLocalRoot(options.localRoot), 'react')
+  if (options.local) configureLocalDependencies(projectRoot, normalizeLocalRoot(options.localRoot), 'web', { includeRootPackage: false })
   console.log(`Created canonical Vune app in ${projectRoot}`)
   if (!options.noInstall) installDependencies(projectRoot)
   else console.log('Skipped dependency installation (--no-install).')
@@ -291,7 +294,7 @@ function linkProject(target) {
   assertLocalPackageManager()
   const projectRoot = resolve(process.cwd(), target)
   const localRoot = normalizeLocalRoot(options.localRoot)
-  configureLocalDependencies(projectRoot, localRoot, options.renderer)
+  configureLocalDependencies(projectRoot, localRoot, options.renderer ?? 'react')
   if (!options.noInstall) installDependencies(projectRoot)
   else console.log('Skipped dependency installation (--no-install).')
   return 0

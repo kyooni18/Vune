@@ -1,7 +1,7 @@
 {
   "name": "create-vune-ui",
-  "version": "0.1.19",
-  "description": "Create a ready-to-run Vune UI project with Vite, React, and TypeScript.",
+  "version": "0.1.20",
+  "description": "Create a ready-to-run renderer-independent Vune UI project with Vite and TypeScript.",
   "type": "module",
   "files": [
     "bin"

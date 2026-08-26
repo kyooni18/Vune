@@ -235,7 +235,7 @@ export function animationCSSStyle(animation: Animation | null | undefined): Anim
         : descriptor.kind === "spring" ? "cubic-bezier(0.34, 1.56, 0.64, 1)"
           : "cubic-bezier(0.42, 0, 0.58, 1)"
   return {
-    transitionProperty: "opacity, transform, color, background-color, width, height, min-width, min-height, max-width, max-height",
+    transitionProperty: "opacity, transform, translate, scale, rotate, color, background-color, width, height, min-width, min-height, max-width, max-height",
     transitionDuration: `${duration}s`,
     transitionTimingFunction: timing,
     transitionDelay: `${delay}s`,

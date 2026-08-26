@@ -1,9 +1,17 @@
-import { classNameOf } from "@vune-ui/core"
+import { classNameOf, type Animation } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, normalizedTextAreaValue, type DomRenderContext } from "./shared.js"
-import { animateDomStyle } from "./motion.js"
+import { animateDomStyles, cancelDomAnimations, cancelDomStyleAnimation, type DomStyleMotionChange } from "./motion.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"
 const XML_NS = "http://www.w3.org/XML/1998/namespace"
+
+export interface DomStyleMotionPolicy {
+  /**
+   * Return an Animation to override the current transaction for this property,
+   * null to force a discrete patch, or undefined to inherit the transaction.
+   */
+  animationForProperty(property: string, from: unknown, to: unknown): Animation | null | undefined
+}
 
 function styleDeclaration(element: Element): CSSStyleDeclaration | undefined {
   return (element as Element & { style?: CSSStyleDeclaration }).style
@@ -330,7 +338,12 @@ function canFastPatchPrimitive(key: string, value: unknown): boolean {
   return value === undefined || value === null || (typeof value !== "object" && typeof value !== "function")
 }
 
-export function patchDomProps(element: Element, next: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+export function patchDomProps(
+  element: Element,
+  next: Record<string, unknown> | null | undefined,
+  context: DomRenderContext,
+  motionPolicy?: DomStyleMotionPolicy,
+): void {
   const previousStored = context.domProps.get(element)
   const nextKeys = next ? Object.keys(next) : []
   if (!previousStored && nextKeys.length === 0) return
@@ -357,7 +370,10 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
     if (key === "ref" || key === "key" || key === "children") continue
     if (next && Object.prototype.hasOwnProperty.call(next, key)) continue
     if (/^on[A-Za-z]/.test(key)) setDomEvent(element, key, undefined, context, false)
-    else removeDomProp(element, key)
+    else {
+      if (key === "style") cancelDomAnimations(element)
+      removeDomProp(element, key)
+    }
   }
   for (const [key, value] of Object.entries(next ?? {})) {
     if (key === "children" || key === "key") continue
@@ -378,26 +394,51 @@ export function patchDomProps(element: Element, next: Record<string, unknown> | 
           const after = value as Record<string, unknown>
           for (const styleKey of Object.keys(before)) {
             if (Object.prototype.hasOwnProperty.call(after, styleKey)) continue
-            style.removeProperty(cssPropertyName(styleKey))
+            const cssName = cssPropertyName(styleKey)
+            cancelDomStyleAnimation(element, cssName)
+            style.removeProperty(cssName)
           }
+          const motionChanges: DomStyleMotionChange[] = []
+          const discreteChanges: Array<{ readonly property: string; readonly value: unknown }> = []
           for (const [styleKey, styleValue] of Object.entries(after)) {
             if (styleValue === undefined || styleValue === null) {
-              if (before[styleKey] !== undefined && before[styleKey] !== null) style.removeProperty(cssPropertyName(styleKey))
+              if (before[styleKey] !== undefined && before[styleKey] !== null) {
+                const cssName = cssPropertyName(styleKey)
+                cancelDomStyleAnimation(element, cssName)
+                style.removeProperty(cssName)
+              }
               continue
             }
             if (Object.is(before[styleKey], styleValue)) continue
             const cssName = cssPropertyName(styleKey)
-            const animation = context.activeTransaction?.animation
+            const explicitAnimation = motionPolicy?.animationForProperty(cssName, before[styleKey], styleValue)
+            const animation = explicitAnimation === undefined ? context.activeTransaction?.animation : explicitAnimation
             const currentValue = style.getPropertyValue(cssName) || before[styleKey]
-            const animated = animation
+            if (animation
               && !context.activeTransaction?.disablesAnimations
               && currentValue !== undefined
-              && currentValue !== null
-              && animateDomStyle(element, cssName, currentValue, styleValue, animation)
-            if (!animated) style.setProperty(cssName, String(styleValue))
+              && currentValue !== null) {
+              motionChanges.push({ property: cssName, from: currentValue, to: styleValue, animation })
+            } else {
+              discreteChanges.push({ property: cssName, value: styleValue })
+            }
+          }
+          // Start every eligible channel together. Each change still carries its
+          // own Animation, so a spring width and linear opacity can share one
+          // engine frame without sharing curve state or cancelling each other.
+          const animated = animateDomStyles(element, motionChanges)
+          for (const change of motionChanges) {
+            if (animated.has(change.property)) continue
+            cancelDomStyleAnimation(element, change.property)
+            style.setProperty(change.property, String(change.to))
+          }
+          for (const change of discreteChanges) {
+            cancelDomStyleAnimation(element, change.property)
+            style.setProperty(change.property, String(change.value))
           }
         }
       } else if (!Object.is(previousStyle, value)) {
+        cancelDomAnimations(element)
         element.removeAttribute("style")
         domStyle(element, value)
       }

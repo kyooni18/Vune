@@ -58,7 +58,7 @@ function renderCompiledTemplateValue<Output>(
   return renderer.value ? renderer.value(value) : value as Output
 }
 
-function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
+export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
   if (arrayCheck(value) === true) return renderer.fragment(snapshotArrayValues(value as readonly unknown[]).map((item, index) => renderViewNodeAt(item as ViewGraphValue, renderer, [...identity, "array", index])))
   if (!isViewNode(value)) {
     if (value === null || value === undefined || typeof value === "boolean") {

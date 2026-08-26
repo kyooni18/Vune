@@ -34,6 +34,33 @@ test("Web DOM animation adapter executes o0o0o timing and spring specs", async (
   dom.window.close()
 })
 
+test("Web motion channels honor delay/repeat and retarget from the live presentation value", async () => {
+  const dom = new JSDOM('<div style="opacity:0"></div>')
+  const element = dom.window.document.querySelector("div")
+  assert.ok(element)
+
+  const repeated = Animation.linear(0.01).delay(0.01).repeatCount(2, false)
+  assert.equal(animateDomStyle(element, "opacity", "0", 1, repeated), true)
+  await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(element.style.opacity, "0")
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.equal(element.style.opacity, "1")
+
+  element.style.opacity = "0"
+  assert.equal(animateDomStyle(element, "opacity", "0", 1, Animation.spring(0.12, 0.82)), true)
+  await new Promise(resolve => setTimeout(resolve, 35))
+  const presentation = Number(element.style.opacity)
+  assert.ok(presentation > 0 && presentation < 1)
+  // `from` deliberately supplies the logical previous target (1). A persistent
+  // channel must continue from the live presentation value instead of jumping.
+  assert.equal(animateDomStyle(element, "opacity", 1, 0, Animation.spring(0.12, 0.82)), true)
+  const immediatelyAfterRetarget = Number(element.style.opacity)
+  assert.ok(Math.abs(immediatelyAfterRetarget - presentation) < 0.2)
+  await new Promise(resolve => setTimeout(resolve, 220))
+  assert.ok(Number(element.style.opacity) < 0.02)
+  dom.window.close()
+})
+
 test("Web mount routes animated State patches through o0o0o", async () => {
   const dom = new JSDOM('<div id="app"></div>')
   const container = dom.window.document.querySelector("#app")
@@ -90,7 +117,7 @@ test("withTransaction preserves animation suppression metadata", () => {
   assert.equal(snapshot.isContinuous, true)
 })
 
-test("animatable modifiers stay renderer-neutral and Web wrapper composes transforms", () => {
+test("animatable modifiers stay renderer-neutral and Web wrapper preserves independent transform channels", () => {
   const animation = Animation.easeInOut(0.25)
   const graph = Text("Motion")
     .opacity(0.5)
@@ -109,7 +136,10 @@ test("animatable modifiers stay renderer-neutral and Web wrapper composes transf
 
   const html = renderToHTML(graph)
   assert.match(html, /opacity:0\.5/)
-  assert.match(html, /transform:scale\(1\.2, 0\.8\) rotate\(45deg\) translate\(10px, 5px\)/)
+  assert.match(html, /scale:1\.2 0\.8/)
+  assert.match(html, /rotate:45deg/)
+  assert.match(html, /translate:10px 5px/)
+  assert.doesNotMatch(html, /transform:scale/)
   assert.match(html, /transition-duration:0\.25s/)
 })
 
@@ -121,7 +151,7 @@ test("render Transactions feed the initial Web animation wrapper", () => {
   )
   assert.match(html, /transition-property:/)
   assert.match(html, /transition-duration:0\.4s/)
-  assert.match(html, /transform:scale\(0\.9\)/)
+  assert.match(html, /scale:0\.9/)
 })
 
 import { diagnoseVuneSource, transformVuneSource } from "../packages/compiler/dist/index.js"

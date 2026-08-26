@@ -18,6 +18,7 @@ import { decorate } from "./modifiers.js"
 import { isViewNode, viewFragment, viewHost } from "./nodes.js"
 import { vuneInitializers, vuneNamedArguments, vuneView, vuneViewNodeFactory } from "./symbols.js"
 import type {
+  CompiledViewBodyPlan,
   ModifiableViewNode,
   ViewGraphChild,
   ViewGraphValue,
@@ -166,6 +167,8 @@ export interface ViewDefinition<Props extends object = Record<string, unknown>> 
   readonly dependencies?: (props: Props) => readonly StateRef<unknown>[]
   /** True only when the compiler has proven the dependency list is exhaustive. */
   readonly dependenciesComplete?: boolean
+  /** Compiler-emitted immutable template plus its dynamic slot evaluator. */
+  readonly compiledBody?: CompiledViewBodyPlan<Props>
   readonly intrinsic?: boolean
   readonly body: (props: Props) => ViewValue
 }
@@ -781,6 +784,7 @@ export class ViewType<Props extends object = Record<string, unknown>> {
       this.definition.state as ((props: Record<string, unknown>) => Record<string, unknown>) | undefined,
       this.definition.dependencies as ((props: Record<string, unknown>) => readonly StateRef<unknown>[]) | undefined,
       this.definition.dependenciesComplete,
+      this.definition.compiledBody as CompiledViewBodyPlan<Record<string, unknown>> | undefined,
     )
   }
 

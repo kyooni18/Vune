@@ -567,23 +567,44 @@ test("compiler specializes imported Views from a unique typed call signature", (
   const source = `import { Text } from "@vune-ui/core"
 const value = Text("Hello")`
   const output = transformVuneSource(source, "ImportedText.vune.ts")
-  assert.match(output, /Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\)/)
+  assert.match(output, /defineCompiledTemplate\(\{ kind: "element", type: "span", props: null, children: \["Hello"\] \}, 0, \[\]\)/)
+  assert.match(output, /const value = compiledTemplate\(__vuneTemplate0, \[\]\)/)
+  assert.doesNotMatch(output, /Text\(\"Hello\"\)/)
   assert.equal(ts.createSourceFile("ImportedText.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/, "")
-  const value = Function("Text", `${generated}; return value`)(Text)
-  assert.equal(value.kind, "element")
+  const value = Function("compiledTemplate", "defineCompiledTemplate", `${generated}; return value`)(compiledTemplate, defineCompiledTemplate)
+  assert.equal(value.kind, "template")
+  assert.equal(value.template.root.type, "span")
+})
+
+test("compiler precomputes static expression results before runtime", () => {
+  const source = `import { Text, VStack } from "@vune-ui/core"
+export function App() {
+  return VStack(spacing: 2 * (3 + 1)) {
+    Text(\`Total: \${1 + 2}\`)
+    Text(true ? "ready" : expensive())
+  }
+}`
+  const output = transformVuneSource(source, "StaticResults.vune.ts")
+  assert.doesNotMatch(output, /2 \* \(3 \+ 1\)|1 \+ 2|expensive/)
+  assert.match(output, /defineCompiledTemplate\(\{ kind: "element", type: "div"/)
+  assert.match(output, /"gap": "8px"/)
+  assert.match(output, /children: \[\{ kind: "element", type: "span", props: null, children: \["Total: 3"\] \}, \{ kind: "element", type: "span", props: null, children: \["ready"\] \}\]/)
+  assert.match(output, /return compiledTemplate\(__vuneTemplate0, \[\]\)/)
+  assert.equal(ts.createSourceFile("StaticResults.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("compiler normalizes proven Swift-style labels into the compiled runtime payload", () => {
   const source = `import { Text, VStack } from "@vune-ui/core"
 const value = VStack(spacing: 12) { Text("Hello") }`
   const output = transformVuneSource(source, "NamedCompiledStack.vune.ts")
-  assert.match(output, /VStack\.viewType\.createNodeCompiled\(1, \[\{ "spacing": 12 \}, \[/)
+  assert.match(output, /defineCompiledTemplate\(/)
+  assert.match(output, /"gap": "12px"/)
   assert.doesNotMatch(output, /namedArguments\(/)
   const generated = output.replace(/^import [^\n]+\n/, "")
-  const value = Function("Text", "VStack", `${generated}; return value`)(Text, VStack)
-  assert.equal(value.props.style.gap, "12px")
-  assert.equal(value.children[0].children[0], "Hello")
+  const value = Function("Text", "VStack", "compiledTemplate", "defineCompiledTemplate", `${generated}; return value`)(Text, VStack, compiledTemplate, defineCompiledTemplate)
+  assert.equal(value.template.root.props.style.gap, "12px")
+  assert.equal(value.template.root.children[0].children[0], "Hello")
 })
 
 test("compiler lowers immutable host structure into a compiled template with dynamic slots", () => {
@@ -619,29 +640,120 @@ struct Counter: View {
   var body: some View { Text(String(count.value)) }
 }`
   const output = transformVuneSource(source, "StaticDependencies.vune.ts")
-  assert.match(output, /dependencies: \(props: any\) => \[props\.count\]/)
+  assert.match(output, /dependencies: \(props: any\) => \[props\.count\], dependenciesComplete: true/)
   assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
+  assert.match(output, /defineCompiledTemplate\([^\n]+, 1, \["text"\]\)/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, evaluate: \(props: any\) => \{ const \{ count \} = props; return \(\{ slots: \[String\(count\.value\)\] \}\) \} \}/)
   assert.match(output, /compiledTemplate\(__vuneTemplate0, \[String\(count\.value\)\]\)/)
   assert.equal(ts.createSourceFile("StaticDependencies.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler plans direct modifier patches for exhaustive State-backed struct Views", () => {
+  const source = `import { Text, State } from "@vune-ui/core"
+struct Counter: View {
+  @State var count: number = 0
+  var body: some View { Text(String(count.value)).opacity(count.value > 0 ? 1 : 0.25).className(count.value > 1 ? "hot" : "cold") }
+}`
+  const output = transformVuneSource(source, "CompiledModifierPlan.vune.ts")
+  assert.match(output, /dependenciesComplete: true/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, patchesModifiers: true, evaluate:/)
+  assert.match(output, /modifiers: \[\["opacity", \[count\.value > 0 \? 1 : 0\.25\]\], \["className", \[count\.value > 1 \? "hot" : "cold"\]\]\]/)
+  assert.equal(ts.createSourceFile("CompiledModifierPlan.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler keeps independent animation domains inside direct compiled modifier plans", () => {
+  const source = `import { Animation, Text, State } from "@vune-ui/core"
+struct Counter: View {
+  @State var count: number = 0
+  var body: some View {
+    Text(String(count.value))
+      .opacity(count.value > 0 ? 1 : 0.2)
+      .animation(Animation.linear(0.18), count.value > 0)
+      .scaleEffect(count.value > 2 ? 1.4 : 1)
+      .animation(Animation.spring(0.3, 0.8), count.value > 2)
+  }
+}`
+  const output = transformVuneSource(source, "CompiledIndependentMotion.vune.ts")
+  assert.match(output, /dependenciesComplete: true/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, patchesModifiers: true, evaluate:/)
+  assert.match(output, /\["opacity", \[count\.value > 0 \? 1 : 0\.2\]\]/)
+  assert.match(output, /\["animation", \[[^\]]+, count\.value > 0\]\]/)
+  assert.match(output, /\["scaleEffect", \[count\.value > 2 \? 1\.4 : 1\]\]/)
+  assert.match(output, /\["animation", \[[^\]]+, count\.value > 2\]\]/)
+  assert.equal(ts.createSourceFile("CompiledIndependentMotion.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler emits a direct compiled body plan for exhaustive State-backed template Views", () => {
+  const source = `import { Text, State, view } from "@vune-ui/core"
+const count = State(0)
+export const App = view(() => Text(String(count.value)))`
+  const output = transformVuneSource(source, "CompiledBodyPlan.vune.ts")
+  assert.match(output, /dependenciesComplete: true/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, evaluate: \(\{ count \}\) => \(\(\(\) => \(\{ slots: \[String\(count\.value\)\] \}\)\)\(\)\) \}/)
+  assert.match(output, /body: \(\{ count \}\) => \(\(\(\) => compiledTemplate\(__vuneTemplate0, \[String\(count\.value\)\]\)\)\(\)\)/)
+  assert.equal(ts.createSourceFile("CompiledBodyPlan.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler keeps struct dependency discovery dynamic when body reads external State", () => {
+  const source = `import { Text, State } from "@vune-ui/core"
+const external = State(1)
+struct Counter: View {
+  @State var count: number = 0
+  var body: some View { Text(String(count.value + external.value)) }
+}`
+  const output = transformVuneSource(source, "ExternalStateDependencies.vune.ts")
+  assert.match(output, /dependencies: \(props: any\) => \[props\.count\]/)
+  assert.doesNotMatch(output, /dependenciesComplete: true/)
+  assert.doesNotMatch(output, /compiledBody:/)
+  assert.match(output, /compiledTemplate\(__vuneTemplate0, \[String\(count\.value \+ external\.value\)\]\)/)
+})
+
+test("compiler emits reusable zero-slot host templates under dynamic modifiers", () => {
+  const source = `import { Text } from "@vune-ui/core"
+export function App(active: boolean) {
+  return Text("Static").opacity(active ? 1 : 0.25)
+}`
+  const output = transformVuneSource(source, "StaticModifierTemplate.vune.ts")
+  assert.match(output, /defineCompiledTemplate\(\{ kind: "element", type: "span", props: null, children: \["Static"\] \}, 0, \[\]\)/)
+  assert.match(output, /modifiedContentCompiled\(compiledTemplate\(__vuneTemplate0, \[\]\), \[\["opacity", \[active \? 1 : 0\.25\]\]\]\)/)
+  assert.doesNotMatch(output, /const __vuneStatic/)
+  assert.equal(ts.createSourceFile("StaticModifierTemplate.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler hoists and deduplicates immutable Animation plans out of render paths", () => {
+  const source = `import { Animation, Text } from "@vune-ui/core"
+export function App(active: boolean) {
+  const first = Text("A").opacity(active ? 1 : 0.5).animation(Animation.easeInOut(0.2).delay(0.05), active)
+  const second = Text("B").opacity(active ? 0.8 : 0.2).animation(Animation.easeInOut(0.2).delay(0.05), active)
+  return [first, second]
+}`
+  const output = transformVuneSource(source, "MotionHoist.vune.ts")
+  assert.match(output, /const __vuneMotion0 = Animation\.easeInOut\(0\.2\)\.delay\(0\.05\)/)
+  assert.equal((output.match(/const __vuneMotion/g) ?? []).length, 1)
+  assert.equal((output.match(/\[__vuneMotion0, active\]/g) ?? []).length, 2)
+  assert.equal(ts.createSourceFile("MotionHoist.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("compiler specializes a resolved imported ViewBuilder overload by declaration order", () => {
   const source = `import { Text, VStack } from "@vune-ui/core"
 const value = VStack() { Text("Hello") }`
   const output = transformVuneSource(source, "ImportedVStack.vune.ts")
-  assert.match(output, /VStack\.viewType\.createNodeCompiled\(0, \[\[/)
-  assert.match(output, /Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\)/)
+  assert.match(output, /defineCompiledTemplate\(\{ kind: "element", type: "div"/)
+  assert.match(output, /children: \[\{ kind: "element", type: "span", props: null, children: \["Hello"\] \}\]/)
+  assert.match(output, /const value = compiledTemplate\(__vuneTemplate0, \[\]\)/)
+  assert.doesNotMatch(output, /createNode(?:Compiled|Specialized)/)
 })
 
 test("compiler lowers a statically typed modifier chain into one flat graph construction", () => {
   const source = `import { Text } from "@vune-ui/core"
 const value = Text("Hello").padding(8).background("red").bold()`
   const output = transformVuneSource(source, "StaticModifiers.vune.ts")
-  assert.match(output, /modifiedContentCompiled\(Text\.viewType\.createNodeCompiled\(0, \["Hello"\]\), \[\["padding", \[8\]\], \["background", \["red"\]\], \["bold", \[\]\]\]\)/)
+  assert.match(output, /modifiedContentCompiled\(compiledTemplate\(__vuneTemplate0, \[\]\), \[\["padding", \[8\]\], \["background", \["red"\]\], \["bold", \[\]\]\]\)/)
+  assert.match(output, /defineCompiledTemplate\(\{ kind: "element", type: "span", props: null, children: \["Hello"\] \}, 0, \[\]\)/)
   assert.doesNotMatch(output, /\.padding\(|\.background\(|\.bold\(/)
   assert.equal(ts.createSourceFile("StaticModifiers.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
   const generated = output.replace(/^import [^\n]+\n/gm, "")
-  const value = Function("Text", "modifiedContentCompiled", `${generated}; return value`)(Text, modifiedContentCompiled)
+  const value = Function("modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", `${generated}; return value`)(modifiedContentCompiled, compiledTemplate, defineCompiledTemplate)
   assert.deepEqual(modifierGraphOf(value).map(item => [item.name, item.arguments]), [["padding", [8]], ["background", ["red"]], ["bold", []]])
 })
 

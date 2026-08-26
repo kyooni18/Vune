@@ -107,6 +107,20 @@ export default view(() => count.value > 0 ? helper.padding(8) : Text(String(coun
   parses(output)
 })
 
+test("top-level State proof rejects shadowed pure globals", () => {
+  const source = `import { State, Text } from "@vune-ui/core"
+import { view } from "@vune-ui/react"
+const external = State("outside")
+const count = State(0)
+const String = (_value: unknown) => external.value
+export default view(() => Text(String(count.value)))`
+  const output = transformVuneSource(source, "ShadowedPureGlobal.vune.ts")
+  assert.match(output, /dependencies: \(\{ count \}\) => \[count\]/)
+  assert.doesNotMatch(output, /dependenciesComplete: true/)
+  assert.match(output, /^const external = State\("outside"\)/m)
+  parses(output)
+})
+
 test("top-level State ownership respects outer references and lexical shadowing", () => {
   const outside = `import { State } from "vune-ui"
 import { view } from "@vune-ui/react"
@@ -261,6 +275,17 @@ LazyGrid({ columns: 2, estimatedItemSize: 44 }) { Text("B") }`
   const output = transformVuneSource(source, "GridSpecialization.vune.ts")
   assert.match(output, /Grid\.viewType\.createNodeCompiled\(0,/)
   assert.match(output, /LazyGrid\.viewType\.createNodeCompiled\(0,/)
+  parses(output)
+})
+
+test("Switch static specialization indices match runtime initializer order", () => {
+  const source = `import { Binding, State, Switch } from "vune-ui"
+const isOn = State(false)
+Switch("Switch", Binding(isOn))
+Switch(Binding(isOn))`
+  const output = transformVuneSource(source, "SwitchSpecialization.vune.ts")
+  assert.match(output, /Switch\.viewType\.createNodeCompiled\(0, \["Switch", Binding\(isOn\)\]\)/)
+  assert.match(output, /Switch\.viewType\.createNodeCompiled\(1, \[Binding\(isOn\)\]\)/)
   parses(output)
 })
 

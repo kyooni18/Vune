@@ -43,8 +43,9 @@ export interface SwitchOptions {
 }
 export interface SwitchProps extends SwitchOptions { readonly isOn: BindingRef<boolean>; readonly title?: string }
 interface SwitchCall {
-  (isOn: BindingRef<boolean>, options?: SwitchOptions): ModifiableViewNode
+  // Keep overload order aligned with the runtime initializer table below.
   (title: string, isOn: BindingRef<boolean>, options?: SwitchOptions): ModifiableViewNode
+  (isOn: BindingRef<boolean>, options?: SwitchOptions): ModifiableViewNode
 }
 
 export const Switch = defineBuiltinView<SwitchProps>(

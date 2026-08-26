@@ -22,7 +22,7 @@ import {
 import * as Core from "@vune-ui/core"
 import { resolveSemanticCall, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerImplicitMemberShorthand, lowerNamedAnimationFactoryCalls, lowerShorthand } from "./shorthand.js"
-import { hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
+import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"
 
 // Nested named calls are uncommon in ordinary argument expressions. Keep the
 // recursive lowering path behind a cheap lexical hint so every positional
@@ -152,8 +152,16 @@ function validateKnownCalls(program: VuneBuilderProgram, registry: InitializerSy
   for (const node of program.statements) visit(node)
 }
 
-function validateKnownTypeScriptCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
-  const file = validationSourceFile(source)
+function validateKnownTypeScriptCalls(
+  source: string,
+  registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
+  parsedSource?: ts.SourceFile,
+): void {
+  // This TypeScript-side validator currently only resolves the positional
+  // Button form; scanner-owned labelled/trailing-closure calls are validated
+  // by validateKnownCalls(). Skip the AST entirely for every other module.
+  if (!/\bButton\s*\(/.test(source)) return
+  const file = parsedSource ?? validationSourceFile(source)
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && registry.has(node.expression.text)) {
       // The Vune scanner owns trailing closures. TypeScript sees the call
@@ -799,41 +807,70 @@ function delegatedStructInitializer(
   return `initializer(${JSON.stringify(signature)}, args => args.length >= ${required} && args.length <= ${maximum}${checks.length ? ` && ${checks.join(" && ")}` : ""}, args => { ${parameters.map((parameter, parameterIndex) => `const ${parameter.name} = args[${parameterIndex}]${parameter.defaultValue ? ` === undefined ? (${parameter.defaultValue}) : args[${parameterIndex}]` : ""}` ).join("; ")}; return { ${values.join(", ")} } }, ${metadata})`
 }
 
-function lowerStructDefinition(declaration: ReturnType<typeof parseVuneStructs>[number], registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
-    const fields: StructField[] = declaration.fields.map(field => ({
-      name: field.name,
-      kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
-      type: field.type,
-      defaultValue: field.initializer,
-    }))
-    const plans = structInitializerPlans(declaration)
-    const initializers = plans.map((plan, index) => delegatedStructInitializer(declaration.name, plan, fields, plans, index))
-    const stateFields = fields.filter(field => field.kind === "state")
-    const state = stateFields.length === 0
-      ? ""
-      : `, state: () => ({ ${stateFields.map(field => `${field.name}: ${field.defaultValue !== undefined && /^State\s*\(/.test(field.defaultValue) ? field.defaultValue : `State(${field.defaultValue ?? "undefined"})`}`).join(", ")} })`
-    const dependencies = stateFields.length === 0
-      ? ""
-      : `, dependencies: (props: any) => [${stateFields.map(field => `props.${field.name}`).join(", ")}]`
-    const bodySource = declaration.bodyExpressionSource.trim().replace(/^return\s+/, "").replace(/;\s*$/, "")
-    const fieldMetadata = `fields: [${declaration.fields.map(field => `{ name: ${JSON.stringify(field.name)}, kind: ${JSON.stringify(field.kind)}, type: ${field.type === undefined ? "undefined" : JSON.stringify(field.type)}, defaultValue: ${field.initializer === undefined ? "undefined" : JSON.stringify(field.initializer)} }`).join(", ")}]`
-    const definitionMetadata = [
-      declaration.genericParameters === undefined ? undefined : `genericParameters: ${JSON.stringify(declaration.genericParameters)}`,
-      fieldMetadata,
-    ].filter((item): item is string => item !== undefined).join(", ")
-    return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}${dependencies}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${lowerRange(bodySource, registry)} } })`
+interface StructStateProofContext {
+  readonly values: ReadonlySet<string>
+  readonly namespaces: ReadonlySet<string>
 }
 
-function lowerStructs(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
+function parsedCompilerExpression(source: string): ts.Expression | undefined {
+  const file = ts.createSourceFile("vune-struct-body.ts", `const __vuneBody = (${source})`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  if (((file as ts.SourceFile & { readonly parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics?.length ?? 0) > 0) return undefined
+  const statement = file.statements[0]
+  if (!statement || !ts.isVariableStatement(statement)) return undefined
+  const initializer = statement.declarationList.declarations[0]?.initializer
+  return initializer ? unwrapTsExpression(initializer) : undefined
+}
+
+function lowerStructDefinition(
+  declaration: ReturnType<typeof parseVuneStructs>[number],
+  registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
+  stateProof?: StructStateProofContext,
+): string {
+  const fields: StructField[] = declaration.fields.map(field => ({
+    name: field.name,
+    kind: field.kind === "state" ? "state" : field.kind === "binding" ? "binding" : "value",
+    type: field.type,
+    defaultValue: field.initializer,
+  }))
+  const plans = structInitializerPlans(declaration)
+  const initializers = plans.map((plan, index) => delegatedStructInitializer(declaration.name, plan, fields, plans, index))
+  const stateFields = fields.filter(field => field.kind === "state")
+  const state = stateFields.length === 0
+    ? ""
+    : `, state: () => ({ ${stateFields.map(field => `${field.name}: ${field.defaultValue !== undefined && /^State\s*\(/.test(field.defaultValue) ? field.defaultValue : `State(${field.defaultValue ?? "undefined"})`}`).join(", ")} })`
+  const bodySource = declaration.bodyExpressionSource.trim().replace(/^return\s+/, "").replace(/;\s*$/, "")
+  const loweredBody = lowerRange(bodySource, registry)
+  const stateNames = new Set(stateFields.map(field => field.name))
+  const bodyExpression = stateFields.length > 0 && stateProof ? parsedCompilerExpression(loweredBody) : undefined
+  const dependenciesComplete = bodyExpression && stateProof
+    ? hasCompleteStaticStateDependencies(bodyExpression, stateNames, stateNames, stateProof.values, stateProof.namespaces)
+    : false
+  const dependencies = stateFields.length === 0
+    ? ""
+    : `, dependencies: (props: any) => [${stateFields.map(field => `props.${field.name}`).join(", ")}]${dependenciesComplete ? ", dependenciesComplete: true" : ""}`
+  const fieldMetadata = `fields: [${declaration.fields.map(field => `{ name: ${JSON.stringify(field.name)}, kind: ${JSON.stringify(field.kind)}, type: ${field.type === undefined ? "undefined" : JSON.stringify(field.type)}, defaultValue: ${field.initializer === undefined ? "undefined" : JSON.stringify(field.initializer)} }`).join(", ")}]`
+  const definitionMetadata = [
+    declaration.genericParameters === undefined ? undefined : `genericParameters: ${JSON.stringify(declaration.genericParameters)}`,
+    fieldMetadata,
+  ].filter((item): item is string => item !== undefined).join(", ")
+  return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}${dependencies}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${loweredBody} } })`
+}
+
+function lowerStructs(
+  source: string,
+  registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
+  stateProof?: StructStateProofContext,
+): string {
   const declarations = parseVuneStructs(source)
   if (declarations.length === 0) return source
+  const proof = stateProof ?? importedVuneValueBindings(validationSourceFile(source))
   let output = source
   for (const declaration of [...declarations].sort((left, right) => right.range.start - left.range.start)) {
-    const definition = lowerStructDefinition(declaration, registry)
+    const definition = lowerStructDefinition(declaration, registry, proof)
     const nested = declaration.nested ?? []
     const replacement = nested.length === 0
       ? `const ${declaration.name} = ${definition}`
-      : `const ${declaration.name} = (() => { ${nested.map(item => `const ${item.name} = ${lowerStructDefinition(item)}`).join("; ")}; return Object.assign(${definition}, { ${nested.map(item => item.name).join(", ")} }); })()`
+      : `const ${declaration.name} = (() => { ${nested.map(item => `const ${item.name} = ${lowerStructDefinition(item, registry, proof)}`).join("; ")}; return Object.assign(${definition}, { ${nested.map(item => item.name).join(", ")} }); })()`
     output = output.slice(0, declaration.range.start) + replacement + output.slice(declaration.range.end)
   }
   return output
@@ -1119,6 +1156,63 @@ const compilerPureCallNames = new Set([
   "namedArguments", "overloadClosure", "resolveBuilderInput", "Element",
 ])
 
+const compilerAnimationFactoryNames = new Set([
+  "linear", "easeIn", "easeOut", "easeInOut", "spring",
+  "interactiveSpring", "smooth", "snappy", "bouncy",
+])
+const compilerAnimationTransformNames = new Set(["delay", "speed", "repeatCount", "repeatForever"])
+
+function isProvenAnimationExpression(expression: ts.Expression, vuneValues: ReadonlySet<string>): boolean {
+  const value = unwrapTsExpression(expression)
+  if (!ts.isCallExpression(value)) return false
+  const callee = unwrapTsExpression(value.expression)
+  if (!ts.isPropertyAccessExpression(callee)) return false
+  const owner = unwrapTsExpression(callee.expression)
+  if (compilerAnimationFactoryNames.has(callee.name.text)) return ts.isIdentifier(owner) && vuneValues.has(owner.text)
+  return compilerAnimationTransformNames.has(callee.name.text) && isProvenAnimationExpression(owner, vuneValues)
+}
+
+function isProvenAnimationMember(expression: ts.PropertyAccessExpression, vuneValues: ReadonlySet<string>): boolean {
+  const owner = unwrapTsExpression(expression.expression)
+  if (compilerAnimationFactoryNames.has(expression.name.text)) return ts.isIdentifier(owner) && vuneValues.has(owner.text)
+  return compilerAnimationTransformNames.has(expression.name.text) && isProvenAnimationExpression(owner, vuneValues)
+}
+
+function valueBindingNames(root: ts.Node): Set<string> {
+  const names = new Set<string>()
+  const addBinding = (name: ts.BindingName): void => {
+    for (const value of bindingNames(name)) names.add(value)
+  }
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) addBinding(node.name)
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isEnumDeclaration(node)) && node.name) names.add(node.name.text)
+    else if (ts.isCatchClause(node) && node.variableDeclaration) addBinding(node.variableDeclaration.name)
+    else if (ts.isImportClause(node) && node.name && !node.isTypeOnly) names.add(node.name.text)
+    else if (ts.isNamespaceImport(node)) names.add(node.name.text)
+    else if (ts.isImportSpecifier(node) && !node.isTypeOnly) names.add(node.name.text)
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+  return names
+}
+
+function isProvenVuneViewExpression(
+  expression: ts.Expression,
+  vuneValues: ReadonlySet<string>,
+  vuneNamespaces: ReadonlySet<string>,
+): boolean {
+  const value = unwrapTsExpression(expression)
+  if (!ts.isCallExpression(value)) return false
+  const callee = unwrapTsExpression(value.expression)
+  if (ts.isIdentifier(callee)) return vuneValues.has(callee.text) && canonicalInitializerSymbols.has(callee.text)
+  if (!ts.isPropertyAccessExpression(callee)) return false
+  const owner = unwrapTsExpression(callee.expression)
+  if (staticModifierNames.has(callee.name.text)) return isProvenVuneViewExpression(owner, vuneValues, vuneNamespaces)
+  return ts.isIdentifier(owner)
+    && vuneNamespaces.has(owner.text)
+    && canonicalInitializerSymbols.has(callee.name.text)
+}
+
 /**
  * Prove a deliberately small closed world for State reads. A false result is
  * not an error; it simply keeps runtime dependency discovery enabled. This
@@ -1131,9 +1225,14 @@ function hasCompleteStaticStateDependencies(
   allStateNames: ReadonlySet<string>,
   vuneValues: ReadonlySet<string>,
   vuneNamespaces: ReadonlySet<string>,
+  shadowedPureCalls: ReadonlySet<string> = new Set(),
 ): boolean {
   const directlyReferenced = referencedStateNames(root, allStateNames)
   if ([...directlyReferenced].some(name => !ownedStateNames.has(name))) return false
+  const localBindings = valueBindingNames(root)
+  const pureCallAllowed = (name: string): boolean => compilerPureCallNames.has(name)
+    && !shadowedPureCalls.has(name)
+    && !localBindings.has(name)
 
   let safe = true
   const visit = (node: ts.Node): void => {
@@ -1142,22 +1241,27 @@ function hasCompleteStaticStateDependencies(
       const expression = unwrapTsExpression(node.expression)
       const ownedStateValue = node.name.text === "value" && ts.isIdentifier(expression) && ownedStateNames.has(expression.text)
       const vuneNamespaceMember = ts.isIdentifier(expression) && vuneNamespaces.has(expression.text)
-      // Do not prove arbitrary `.modifier()` calls pure merely from the member
-      // name. A user object can expose a method named `padding`, `opacity`, etc.
-      // and hide State reads inside it. Modifier-heavy Views simply keep the
-      // normal runtime dependency collector until the compiler has a typed
-      // proof that the receiver is a Vune View.
-      if (!ownedStateValue && !vuneNamespaceMember) { safe = false; return }
+      const provenViewModifier = staticModifierNames.has(node.name.text)
+        && isProvenVuneViewExpression(node.expression, vuneValues, vuneNamespaces)
+      const provenAnimationMember = isProvenAnimationMember(node, vuneValues)
+      // Modifier names alone are not enough: a user object may expose an
+      // `opacity()`/`padding()` method. Only a chain rooted in an imported Vune
+      // View constructor is admitted into the static dependency proof. Immutable
+      // Animation factory/configuration chains are also closed and pure.
+      if (!ownedStateValue && !vuneNamespaceMember && !provenViewModifier && !provenAnimationMember) { safe = false; return }
     }
     if (ts.isElementAccessExpression(node)) { safe = false; return }
     if (ts.isCallExpression(node)) {
       const callee = unwrapTsExpression(node.expression)
       if (ts.isIdentifier(callee)) {
-        if (!vuneValues.has(callee.text) && !compilerPureCallNames.has(callee.text)) { safe = false; return }
+        if (!vuneValues.has(callee.text) && !pureCallAllowed(callee.text)) { safe = false; return }
       } else if (ts.isPropertyAccessExpression(callee)) {
         const owner = unwrapTsExpression(callee.expression)
         const namespaceCall = ts.isIdentifier(owner) && vuneNamespaces.has(owner.text)
-        if (!namespaceCall) { safe = false; return }
+        const modifierCall = staticModifierNames.has(callee.name.text)
+          && isProvenVuneViewExpression(owner, vuneValues, vuneNamespaces)
+        const animationCall = isProvenAnimationMember(callee, vuneValues)
+        if (!namespaceCall && !modifierCall && !animationCall) { safe = false; return }
       } else { safe = false; return }
     }
     ts.forEachChild(node, visit)
@@ -1184,9 +1288,13 @@ function transitiveStateClosure(
 }
 
 function lowerTopLevelState(source: string): string {
+  // Aliases still contain the exported name in their import declaration
+  // (`State as LocalState`), so this is a safe conservative preflight.
+  if (!/\bState\b/.test(source)) return source
   const file = ts.createSourceFile("vune-state.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const bindings = vuneApiBindings(file)
   const vuneValues = importedVuneValueBindings(file)
+  const fileValueBindings = valueBindingNames(file)
   const states = collectTopLevelStates(file, bindings)
   const eligibleStates = states.filter((state): state is TopLevelStateDeclaration & { readonly name: string } => state.eligible && state.name !== undefined)
   if (eligibleStates.length === 0) return source
@@ -1308,7 +1416,9 @@ function lowerTopLevelState(source: string): string {
       const bodyParameters = hasProps ? `({ ${names.join(", ")} }, props)` : `({ ${names.join(", ")} })`
       const dependencyParameters = `({ ${names.join(", ")} })`
       const ownedNames = new Set(names)
-      const dependenciesComplete = !hasProps && hasCompleteStaticStateDependencies(argument, ownedNames, allNames, vuneValues.values, vuneValues.namespaces)
+      const dependenciesComplete = !hasProps && hasCompleteStaticStateDependencies(
+        argument, ownedNames, allNames, vuneValues.values, vuneValues.namespaces, fileValueBindings,
+      )
       const completeness = dependenciesComplete ? `, dependenciesComplete: true` : ""
       const replacement = `${callee}({ state: () => { ${declarations} return { ${names.join(", ")} } }, dependencies: ${dependencyParameters} => [${names.join(", ")}]${completeness}, body: ${bodyParameters} => ${renderedBody} })`
       return { start: call.getStart(file), end: call.end, replacement }
@@ -1481,6 +1591,7 @@ function initializerRegistryFor(declarations: readonly VuneStruct[]): Map<string
 }
 
 function lowerVueComponentImports(source: string): string {
+  if (!/\.vue["']/.test(source)) return source
   const file = ts.createSourceFile("vune-vue-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const existingNames = new Set<string>()
   const collectNames = (node: ts.Node): void => {
@@ -1518,6 +1629,7 @@ function lowerVueComponentImports(source: string): string {
 }
 
 function lowerReactComponentImports(source: string): string {
+  if (!/\.(?:tsx|jsx)["']/.test(source)) return source
   const file = ts.createSourceFile("vune-react-imports.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   const existingNames = new Set<string>()
   const collectNames = (node: ts.Node): void => {
@@ -1558,23 +1670,35 @@ export function transformVuneSource(source: string, fileName = "vune-source.ts")
   const withModifierArguments = lowerNamedModifierCalls(withAnimationArguments)
   const declarations = parseVuneStructs(withModifierArguments)
   const registry = initializerRegistryFor(declarations)
+  // Button validation and struct dependency proof both need the same pre-lowered
+  // TypeScript syntax snapshot. Build it at most once and share it rather than
+  // reparsing the module independently in two compiler stages.
+  const needsValidationSyntax = declarations.length > 0 || /\bButton\s*\(/.test(withModifierArguments)
+  const validationSyntax = needsValidationSyntax ? validationSourceFile(withModifierArguments) : undefined
   validateKnownCalls(parseVuneBuilder(withModifierArguments), registry)
-  validateKnownTypeScriptCalls(withModifierArguments, registry)
+  validateKnownTypeScriptCalls(withModifierArguments, registry, validationSyntax)
   for (const declaration of declarations) {
     validateKnownCalls(parseVuneBuilder(declaration.bodyExpressionSource, declaration.bodyExpressionRange.start), registry)
   }
-  const withStructs = lowerStructs(withModifierArguments, registry)
+  const structStateProof = declarations.length > 0 && validationSyntax
+    ? importedVuneValueBindings(validationSyntax)
+    : undefined
+  const withStructs = lowerStructs(withModifierArguments, registry, structStateProof)
   const withNamedArguments = lowerNamedVuneCalls(withStructs, registry)
   const withBuilderSyntax = lowerRange(withNamedArguments, registry)
   // State ownership is resolved only after Vune-only syntax has become valid
   // TypeScript. This lets the TypeScript AST see complete view() arguments
   // instead of truncating them at trailing builder blocks.
   const lowered = lowerTopLevelState(withBuilderSyntax)
-  const withStaticStructCalls = lowerStaticStructCalls(lowered, declarations)
-  const withStaticModifiers = lowerStaticModifierChains(withStaticStructCalls, fileName)
-  const withStaticImportedCalls = lowerStaticImportedCalls(withStaticModifiers, fileName)
-  const withCompiledTemplates = lowerCompiledViewTemplates(withStaticImportedCalls)
-  return hoistStaticViewSubtrees(ensureImports(withCompiledTemplates))
+  const withStaticResults = foldStaticResults(lowered)
+  const withStaticStructCalls = lowerStaticStructCalls(withStaticResults, declarations)
+  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)
+  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)
+  // Hoisting only needs the imports authored/retained by the source. Injecting
+  // compiler helper imports first makes the final static pass parse a larger
+  // module and can only add irrelevant bindings to its candidate set.
+  const withStaticHoists = hoistStaticViewSubtrees(withCompiledTemplates)
+  return ensureImports(withStaticHoists)
 }
 
 function hasNamedVuneArguments(source: string): boolean {
