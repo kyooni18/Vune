@@ -1,6 +1,6 @@
 {
   "name": "vune-ui",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "packageManager": "pnpm@11.22.0",
   "description": "Vune UI authoring package and React compatibility entry point.",
   "type": "module",

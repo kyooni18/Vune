@@ -1,10 +1,24 @@
 import { createVuneSourceMap } from "./source-map.js"
 import { hasVuneSyntax, transformVuneSource } from "./pipeline.js"
-import type { VuneTransformResult, VuneVitePluginOptions } from "./types.js"
+import { staticModifierNames } from "./specialization.js"
+import type { VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
 const VUNE_SOURCE_RE = /\.vune(?:\.tsx?)?$/i
 const HOST_SCRIPT_RE = /\.[cm]?[jt]sx?$/i
 const DEFAULT_RESOLVE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"]
+const VUNE_BINDING_HINT_RE = /\$[A-Za-z_$]/
+const VUNE_STRUCT_HINT_RE = /\bstruct\s+[A-Z][A-Za-z0-9_$]*(?:\s*<[^>{}]*>)?\s*:\s*View\b/
+const VUNE_BUILDER_HINT_RE = /\b[A-Z][A-Za-z0-9_$]*(?:\.[A-Z][A-Za-z0-9_$]*)?\s*\([^{}\n]*\)\s*\{/
+const VUNE_LABELED_CALL_HINT_RE = /\b[A-Z][A-Za-z0-9_$]*(?:\.[A-Z][A-Za-z0-9_$]*)?\s*\([^()\n]*:[^()\n]*\)/
+const VUNE_MODIFIER_HINT_RE = new RegExp(`\\.(?:${[...staticModifierNames].join("|")})\\s*\\(`)
+
+function hasCheapVuneHint(source: string, fileName: string, allowRawHtml: boolean): boolean {
+  if (VUNE_SOURCE_RE.test(fileName)) return true
+  if (VUNE_BINDING_HINT_RE.test(source) || VUNE_STRUCT_HINT_RE.test(source)
+    || VUNE_BUILDER_HINT_RE.test(source) || VUNE_LABELED_CALL_HINT_RE.test(source)
+    || VUNE_MODIFIER_HINT_RE.test(source)) return true
+  return allowRawHtml && /<[A-Za-z][^>]*>/.test(source)
+}
 
 function isVuneVueScript(attributes: string): boolean {
   const language = /\blang\s*=\s*(["'])([^"']+)\1/i.exec(attributes)?.[2]
@@ -36,8 +50,31 @@ function transformVueSfcSource(source: string, fileName: string): string {
   return changed ? output : source
 }
 
+function emptySourceMap(id: string): VuneSourceMap {
+  return {
+    version: 3,
+    file: id,
+    sources: [id],
+    sourcesContent: [],
+    names: [],
+    mappings: "",
+    x_vune: { lineMappings: [], segments: [] },
+  }
+}
+
 export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
   const cache = new Map<string, { source: string; result: VuneTransformResult | null }>()
+  const maximumCacheEntries = 128
+  const remember = (key: string, value: { source: string; result: VuneTransformResult | null }): void => {
+    cache.delete(key)
+    cache.set(key, value)
+    while (cache.size > maximumCacheEntries) {
+      const oldest = cache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      cache.delete(oldest)
+    }
+  }
+  let sourceMapEnabled = options.sourceMap !== false
   const transform = (source: string, id: string): VuneTransformResult | null => {
     const fileName = id.split("?", 1)[0]
     const query = id.slice(fileName.length + (id.includes("?") ? 1 : 0))
@@ -58,19 +95,51 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
       if (!options.include.test(fileName)) return null
     }
     if (isVue && (isVueTemplate || isVueStyle)) return null
-    if (isVueScript && isGeneratedVueScript(source)) return null
+    const cacheKey = isVue ? id : fileName
+    // Check the exact-source cache before any parser-backed syntax probe. This
+    // is especially important for Vite's dependency scan, which can invoke
+    // the same transform hook again for unchanged plain TS/JS modules.
+    const cached = cache.get(cacheKey)
+    if (cached?.source === source) {
+      remember(cacheKey, cached)
+      return cached.result
+    }
+    if (isVueScript && isGeneratedVueScript(source)) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
     const vueSource = isVue && !isVueScript
       ? transformVueSfcSource(source, fileName)
       : source
-    if (!isVue && !VUNE_SOURCE_RE.test(fileName) && !hasVuneSyntax(source, false)) return null
-    if (isVue && vueSource === source && !isVueScript) return null
-    if (isVueScript && !hasVuneSyntax(source, !/(?:^|&)lang\.(?:tsx|jsx)(?:&|$)/.test(query))) return null
-    const cacheKey = isVue ? id : fileName
-    const cached = cache.get(cacheKey)
-    if (cached?.source === source) return cached.result
+    const allowRawHtml = isVueScript
+      ? !/(?:^|&)lang\.(?:tsx|jsx)(?:&|$)/.test(query)
+      : false
+    if (!isVue && !hasCheapVuneHint(source, fileName, false)) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
+    if (!isVue && !VUNE_SOURCE_RE.test(fileName) && !hasVuneSyntax(source, false)) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
+    if (isVue && vueSource === source && !isVueScript) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
+    if (isVueScript && !hasCheapVuneHint(source, fileName, allowRawHtml)) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
+    if (isVueScript && !hasVuneSyntax(source, allowRawHtml)) {
+      remember(cacheKey, { source, result: null })
+      return null
+    }
     const code = isVue && !isVueScript ? vueSource : transformVuneSource(source, fileName)
-    const transformed = code === source ? null : { code, map: createVuneSourceMap(source, code, fileName) }
-    cache.set(cacheKey, { source, result: transformed })
+    const transformed = code === source ? null : {
+      code,
+      map: sourceMapEnabled ? createVuneSourceMap(source, code, fileName) : emptySourceMap(fileName),
+    }
+    remember(cacheKey, { source, result: transformed })
     return transformed
   }
   const dependencyScanPlugin = {
@@ -80,6 +149,12 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
   return {
     name: "vune-compiler",
     enforce: "pre" as const,
+    configResolved(resolvedConfig: { build?: { sourcemap?: boolean | "inline" | "hidden" } }) {
+      // Direct unit tests and non-Vite callers have no resolved config, so the
+      // option defaults to the historical detailed-map behavior. In a real
+      // Vite build, honor build.sourcemap unless explicitly overridden.
+      if (options.sourceMap === undefined) sourceMapEnabled = Boolean(resolvedConfig.build?.sourcemap)
+    },
     config(userConfig: { resolve?: { extensions?: readonly string[] } } = {}) {
       const hostExtensions = userConfig.resolve?.extensions ?? DEFAULT_RESOLVE_EXTENSIONS
       return {

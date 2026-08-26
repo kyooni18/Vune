@@ -442,6 +442,28 @@ function deterministicIdentityPart(value: unknown, seen = new Set<object>(), dep
   }
 }
 
+// Frozen records with only primitive enumerable fields cannot change between
+// renders. Keep their structural identity string so ForEach does not repeat
+// descriptor traversal for every unchanged frame; mutable objects continue to
+// use the exact uncached path above.
+const primitiveIdentityCache = new WeakMap<object, string>()
+
+function cacheablePrimitiveIdentity(value: object): boolean {
+  try {
+    if (!Object.isFrozen(value)) return false
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || !("value" in descriptor)) return false
+      const item = descriptor.value
+      if (item !== null && typeof item === "object") return false
+      if (typeof item === "function" || typeof item === "symbol") return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 function primitiveCollectionKey(value: unknown): InferredCollectionKey | typeof noPrimitiveCollectionKey {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" || value === null || value === undefined) return value
   return noPrimitiveCollectionKey
@@ -473,7 +495,11 @@ function collectionKey<Item>(item: Item, index: number, selector?: CollectionKey
     const explicit = explicitCollectionKey(id === noOwnDataProperty ? undefined : id)
       ?? explicitCollectionKey(key === noOwnDataProperty ? undefined : key)
     if (explicit !== undefined) return explicit
-    const deterministic = deterministicIdentityPart(item)
+    const cached = primitiveIdentityCache.get(item)
+    const deterministic = cached ?? deterministicIdentityPart(item)
+    if (cached === undefined && deterministic !== undefined && cacheablePrimitiveIdentity(item)) {
+      primitiveIdentityCache.set(item, deterministic)
+    }
     if (deterministic !== undefined) {
       warnForEachIdentity("ForEach item has no id/key; inferred identity is value-based and cannot distinguish equal duplicate objects.")
       return `object:${deterministic}`

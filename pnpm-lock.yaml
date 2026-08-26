@@ -157,8 +157,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       o0o0o:
-        specifier: ^0.2.1
-        version: 0.2.1
+        specifier: ^0.2.2
+        version: 0.2.2
 
 packages:
 
@@ -875,8 +875,8 @@ packages:
   nwsapi@2.2.24:
     resolution: {integrity: sha512-7YRhZ3jS45LwmSCT4b2sVFHt/WuovaktDU07QrtOBY2PXskss5a9jfmR9jptyumwXST+rFjrmppMY1KT/yn35A==}
 
-  o0o0o@0.2.1:
-    resolution: {integrity: sha512-xgjuQDlysb/ZjrbRX6+Go27/D6SEK8kbP0gckreum7JfPhu9VGesorO9dFUERTz5KE0AjXJGgEXhuqBEDV+ylw==}
+  o0o0o@0.2.2:
+    resolution: {integrity: sha512-8F3k1f2M/F2P5LE+/SLYKPx+pExl7xshQFtvK18Yo4qJDZ+LN6ZVXdg/xTm7PcY11kTCFBj6Fa7RPT9hgenK1Q==}
     engines: {node: '>=20'}
 
   parse5@7.3.0:
@@ -1645,7 +1645,7 @@ snapshots:
 
   nwsapi@2.2.24: {}
 
-  o0o0o@0.2.1: {}
+  o0o0o@0.2.2: {}
 
   parse5@7.3.0:
     dependencies:

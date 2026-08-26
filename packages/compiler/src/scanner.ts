@@ -176,13 +176,14 @@ function isRawHtmlCandidate(source: string, start: number): boolean {
   let cursor = start - 1
   while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
   if (cursor < 0) return true
+  const startsNewLine = source.lastIndexOf("\n", start - 1) > cursor
   const openingName = /^[A-Za-z][A-Za-z0-9:._-]*/.exec(source.slice(start + 1))?.[0]
   const openingClose = source.indexOf(">", start + 1)
-  if (source.slice(cursor + 1, start).includes("\n") && openingName && openingClose >= 0
+  if (startsNewLine && openingName && openingClose >= 0
     && source.slice(openingClose + 1).includes(`</${openingName}`)) return true
   // A tag at the beginning of a new statement may follow a completed call,
   // array, or object expression on the previous line.
-  if (source.slice(cursor + 1, start).includes("\n") && rawHtmlAfterExpressionCharacters.includes(source[cursor])) return true
+  if (startsNewLine && rawHtmlAfterExpressionCharacters.includes(source[cursor])) return true
   if ("([{=,:;!?&|+-*%^~;".includes(source[cursor])) return true
   if (!/[A-Za-z0-9_$.)\]]/.test(source[cursor])) return true
   const end = cursor + 1
@@ -192,11 +193,26 @@ function isRawHtmlCandidate(source: string, start: number): boolean {
 }
 
 
-function previousSignificantCharacter(source: string, index: number): string | undefined {
+export function previousSignificantCharacter(source: string, index: number): string | undefined {
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (!/\s/.test(source[cursor])) return source[cursor]
   }
   return undefined
+}
+
+/**
+ * Read only the immediately preceding identifier. Callers use this instead
+ * of materializing `source.slice(0, index).trimEnd()` for every candidate in
+ * a source-wide scan. The result is intentionally lexical and does not skip
+ * comments; it matches the old prefix check while keeping the work bounded
+ * by the size of one token.
+ */
+export function previousWord(source: string, index: number): string | undefined {
+  let cursor = index - 1
+  while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
+  const end = cursor + 1
+  while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
+  return end > cursor + 1 ? source.slice(cursor + 1, end) : undefined
 }
 
 type BraceContext = "class" | "object" | "block"
@@ -244,8 +260,10 @@ function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCa
     cursor = identifier.end - 1
     if (excludedBuilderNames.has(identifier.name)) continue
     if (uppercaseOnly && !/^[A-Z]/.test(identifier.name)) continue
-    const preceding = source.slice(0, start).trimEnd()
-    if (/\bfunction\s*\*?$/.test(preceding)) continue
+    const previous = previousSignificantCharacter(source, start)
+    const previousWordValue = previousWord(source, start)
+    const wordBeforeStar = previous === "*" ? previousWord(source, start - 2) : undefined
+    if (previousWordValue === "function" || wordBeforeStar === "function") continue
     const open = skipTrivia(source, identifier.end)
     if (source[open] !== "(") continue
     const close = matching(source, open, "(", ")")

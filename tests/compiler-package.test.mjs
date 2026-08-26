@@ -413,6 +413,20 @@ test("the Vite adapter caches unchanged modules and leaves CSS to Vite", () => {
   assert.equal(scoped.transform(source, "/src/Other.vune.ts"), null)
 })
 
+test("named-argument lowering scans maximal calls once and lowers nested arguments", () => {
+  const output = transformVuneSource("Outer(value: Inner(label: 1))", "NestedNamed.vune.ts")
+  assert.match(output, /Outer\(namedArguments\(\{ value: Inner\(namedArguments\(\{ label: 1 \}\)\) \}\)\)/)
+  assert.equal(ts.createSourceFile("NestedNamed.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("the Vite adapter skips detailed source-map tokenization when disabled", () => {
+  const plugin = createVuneVitePlugin({ sourceMap: false })
+  const result = plugin.transform("VStack() { Text(\"Hi\") }", "/src/NoMap.vune.ts")
+  assert.ok(result)
+  assert.equal(result.map.mappings, "")
+  assert.deepEqual(result.map.x_vune?.segments, [])
+})
+
 test("the Vite adapter lowers Vune only inside Vue SFC script blocks", () => {
   const plugin = createVuneVitePlugin()
   const sfc = `<template><VStack /></template>

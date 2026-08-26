@@ -5,6 +5,8 @@ import {
   findRawHtml,
   identifierAt,
   matching,
+  previousSignificantCharacter,
+  previousWord,
   regexCanStart,
   rawHtmlAt,
   skipComment,
@@ -21,6 +23,30 @@ import * as Core from "@vune-ui/core"
 import { resolveSemanticCall, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerImplicitMemberShorthand, lowerNamedAnimationFactoryCalls, lowerShorthand } from "./shorthand.js"
 import { hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticImportedCalls, lowerStaticModifierChains, staticModifierNames } from "./specialization.js"
+
+// Nested named calls are uncommon in ordinary argument expressions. Keep the
+// recursive lowering path behind a cheap lexical hint so every positional
+// argument does not rescan itself with the full balanced-call scanner.
+const nestedNamedVuneCallHint = /\b(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*\s*\([^()\n]*:[^()\n]*\)/
+const validationSourceFileCache = new Map<string, ts.SourceFile>()
+const maximumValidationSourceFiles = 32
+
+function validationSourceFile(source: string): ts.SourceFile {
+  const cached = validationSourceFileCache.get(source)
+  if (cached) {
+    validationSourceFileCache.delete(source)
+    validationSourceFileCache.set(source, cached)
+    return cached
+  }
+  const file = ts.createSourceFile("vune-call-validation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  validationSourceFileCache.set(source, file)
+  while (validationSourceFileCache.size > maximumValidationSourceFiles) {
+    const oldest = validationSourceFileCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    validationSourceFileCache.delete(oldest)
+  }
+  return file
+}
 
 /** Compiler-facing view metadata is read from the same ViewType as runtime. */
 const canonicalInitializerSymbols = new Map<string, readonly SemanticInitializerSymbol[]>()
@@ -127,7 +153,7 @@ function validateKnownCalls(program: VuneBuilderProgram, registry: InitializerSy
 }
 
 function validateKnownTypeScriptCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): void {
-  const file = ts.createSourceFile("vune-call-validation.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = validationSourceFile(source)
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && registry.has(node.expression.text)) {
       // The Vune scanner owns trailing closures. TypeScript sees the call
@@ -355,7 +381,13 @@ function lowerArguments(source: string, calleeName?: string, registry: Initializ
 function lowerClosureOrExpression(source: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const value = source.trim()
   if (value.startsWith("{") && matching(value, 0, "{", "}") === value.length - 1 && !/^(?:\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|["'][^"']*["']|-?\d+(?:\.\d+)?)\s*:)/.test(value.slice(1, -1))) return lowerClosure(value, role, registry)
-  return lowerImplicitMemberShorthand(lowerShorthand(lowerRange(value, registry)))
+  // Named Vune calls can be nested inside an argument expression. Lower them
+  // from the already-isolated argument rather than restarting a global scan
+  // over the whole module for each inner call.
+  const lowered = lowerRange(value, registry)
+  return lowerImplicitMemberShorthand(lowerShorthand(
+    nestedNamedVuneCallHint.test(lowered) ? lowerNamedVuneCalls(lowered, registry) : lowered,
+  ))
 }
 
 function lowerForEachIdentityOptions(source: string, call: VuneCallExpression, argumentIndex: number, registry: InitializerSymbolRegistry): string {
@@ -1308,29 +1340,51 @@ function ensureImports(source: string): string {
 }
 
 function lowerNamedVuneCalls(source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
-  let output = source
-  let iterations = 0
-  while (true) {
-    if (++iterations > output.length + 1) throw syntaxError("Vune named-argument lowering did not advance", output.length)
-    const calls = [...output.matchAll(/\b(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*\s*\(/g)]
-    let replacement: { start: number; end: number; value: string } | undefined
-    for (const match of calls.reverse()) {
-      const start = match.index ?? 0
-      const callee = /^(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*/.exec(match[0])?.[0]
-      if (!callee) continue
-      const name = callee.split(".").at(-1)!
-      const preceding = output.slice(0, start).trimEnd()
-      if (/\b(?:function|class|interface|type|new)$/.test(preceding) || preceding.endsWith(".")) continue
-      const open = output.indexOf("(", start + callee.length)
-      const close = matching(output, open, "(", ")")
-      const argumentSource = output.slice(open + 1, close)
-      if (!splitTopLevel(argumentSource).some(argument => topLevelColon(argument) >= 0)) continue
-      replacement = { start, end: close + 1, value: `${callee}(${lowerArguments(argumentSource, name, registry)})` }
-      break
-    }
-    if (!replacement) return output
-    output = output.slice(0, replacement.start) + replacement.value + output.slice(replacement.end)
+  // A labeled call must contain a colon. Most host TypeScript modules do not,
+  // so avoid even collecting uppercase call candidates in that common case.
+  if (!source.includes(":")) return source
+  const candidates: Array<{ start: number; end: number; callee: string; open: number; close: number }> = []
+  for (const match of source.matchAll(/\b(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*\s*\(/g)) {
+    const start = match.index ?? 0
+    const callee = /^(?:[A-Z][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*/.exec(match[0])?.[0]
+    if (!callee) continue
+    const previous = previousSignificantCharacter(source, start)
+    const word = previousWord(source, start)
+    const wordBeforeStar = previous === "*" ? previousWord(source, start - 2) : undefined
+    if (previous === "." || word === "function" || word === "class" || word === "interface" || word === "type" || word === "new" || wordBeforeStar === "function") continue
+    const open = source.indexOf("(", start + callee.length)
+    const close = matching(source, open, "(", ")")
+    const argumentSource = source.slice(open + 1, close)
+    if (!splitTopLevel(argumentSource).some(argument => topLevelColon(argument) >= 0)) continue
+    candidates.push({ start, end: close + 1, callee, open, close })
   }
+  if (candidates.length === 0) return source
+  if (candidates.length === 1) {
+    const candidate = candidates[0]
+    const value = `${candidate.callee}(${lowerArguments(source.slice(candidate.open + 1, candidate.close), candidate.callee.split(".").at(-1), registry)})`
+    return source.slice(0, candidate.start) + value + source.slice(candidate.end)
+  }
+
+  // An outer labeled call owns any nested labeled calls in its arguments.
+  // lowerArguments recursively lowers those isolated expressions, so only
+  // the maximal candidates become edits and no overlapping slices are kept.
+  const maximal: typeof candidates = []
+  const active: typeof candidates = []
+  for (const candidate of candidates) {
+    while (active.length > 0 && candidate.start >= active.at(-1)!.end) active.pop()
+    if (active.length === 0) maximal.push(candidate)
+    active.push(candidate)
+  }
+  const edits = maximal
+    .map(candidate => ({
+      start: candidate.start,
+      end: candidate.end,
+      value: `${candidate.callee}(${lowerArguments(source.slice(candidate.open + 1, candidate.close), candidate.callee.split(".").at(-1), registry)})`,
+    }))
+    .sort((left, right) => right.start - left.start)
+  let output = source
+  for (const edit of edits) output = output.slice(0, edit.start) + edit.value + output.slice(edit.end)
+  return output
 }
 
 /**
@@ -1529,7 +1583,7 @@ function hasNamedVuneArguments(source: string): boolean {
   while ((match = calls.exec(source))) {
     const open = source.indexOf("(", match.index)
     const close = matching(source, open, "(", ")")
-    if (/\bfunction$/.test(source.slice(0, match.index).trimEnd())) {
+    if (previousWord(source, match.index) === "function") {
       calls.lastIndex = close + 1
       continue
     }

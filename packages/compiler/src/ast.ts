@@ -173,7 +173,9 @@ function findMatching(source: string, openIndex: number, open: Delimiter): numbe
 }
 
 function lineBreakBoundary(source: string, index: number): boolean {
-  const previous = source.slice(0, index).trimEnd().at(-1)
+  let previousIndex = index - 1
+  while (previousIndex >= 0 && /\s/.test(source[previousIndex])) previousIndex -= 1
+  const previous = previousIndex >= 0 ? source[previousIndex] : undefined
   const nextIndex = skipTrivia(source, index + 1)
   const next = source[nextIndex]
   if (!previous || !next) return true

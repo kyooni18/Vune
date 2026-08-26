@@ -38,21 +38,49 @@ interface Token {
   readonly order: number
 }
 
-function tokens(line: string): Array<{ value: string; column: number }> {
-  return [...line.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)].map(match => ({
-    value: match[0],
-    column: match.index ?? 0,
-  }))
+const maximumTokenCacheEntries = 64
+const lineTokenCache = new Map<string, readonly { value: string; column: number }[]>()
+const sourceTokenCache = new Map<string, readonly Token[]>()
+
+function rememberTokenCache<T>(cache: Map<string, T>, value: string, tokens_: T): T {
+  cache.delete(value)
+  cache.set(value, tokens_)
+  while (cache.size > maximumTokenCacheEntries) {
+    const oldest = cache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+  return tokens_
 }
 
-function allTokens(source: string): Token[] {
+function tokens(line: string): readonly { value: string; column: number }[] {
+  const cached = lineTokenCache.get(line)
+  if (cached) {
+    lineTokenCache.delete(line)
+    lineTokenCache.set(line, cached)
+    return cached
+  }
+  return rememberTokenCache(lineTokenCache, line, Object.freeze([...line.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)].map(match => ({
+    value: match[0],
+    column: match.index ?? 0,
+  }))))
+}
+
+function allTokens(source: string): readonly Token[] {
+  const cached = sourceTokenCache.get(source)
+  if (cached) {
+    sourceTokenCache.delete(source)
+    sourceTokenCache.set(source, cached)
+    return cached
+  }
   let order = 0
-  return source.split("\n").flatMap((line, lineIndex) => tokens(line).map(token => ({
+  const result = source.split("\n").flatMap((line, lineIndex) => tokens(line).map(token => ({
     value: token.value,
     line: lineIndex,
     column: token.column,
     order: order++,
   })))
+  return rememberTokenCache(sourceTokenCache, source, Object.freeze(result))
 }
 
 function key(line: number, column: number): string {
@@ -104,9 +132,22 @@ function contextualScore(generated: readonly Token[], generatedIndex: number, or
   return score
 }
 
-function alignTokens(source: string, generated: string): Map<string, { line: number; column: number }> {
-  const original = allTokens(source)
-  const generatedTokens = allTokens(generated)
+const maximumContextCandidates = 128
+
+function candidateWindow(candidates: readonly Token[], cursor: number): readonly Token[] {
+  if (candidates.length <= maximumContextCandidates) return candidates
+  let low = 0
+  let high = candidates.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (candidates[middle].order < cursor) low = middle + 1
+    else high = middle
+  }
+  const start = Math.max(0, Math.min(low - maximumContextCandidates / 2, candidates.length - maximumContextCandidates))
+  return candidates.slice(start, start + maximumContextCandidates)
+}
+
+function alignTokens(original: readonly Token[], generatedTokens: readonly Token[]): Map<string, { line: number; column: number }> {
   const originalByValue = tokensByValue(original)
   const originalIndex = new Map<number, number>(original.map((token, index) => [token.order, index]))
   const anchors = new Map<string, { line: number; column: number }>()
@@ -115,7 +156,7 @@ function alignTokens(source: string, generated: string): Map<string, { line: num
 
   for (let generatedIndex = 0; generatedIndex < generatedTokens.length; generatedIndex += 1) {
     const token = generatedTokens[generatedIndex]
-    const candidates = originalByValue.get(token.value) ?? []
+    const candidates = candidateWindow(originalByValue.get(token.value) ?? [], monotonicCursor)
     let best: Token | undefined
     let bestScore = Number.NEGATIVE_INFINITY
     for (const candidate of candidates) {
@@ -144,16 +185,6 @@ function alignTokens(source: string, generated: string): Map<string, { line: num
   return anchors
 }
 
-function sourceTokensByValue(source: string): Map<string, Array<{ line: number; column: number }>> {
-  const result = new Map<string, Array<{ line: number; column: number }>>()
-  for (const token of allTokens(source)) {
-    const values = result.get(token.value) ?? []
-    values.push({ line: token.line, column: token.column })
-    result.set(token.value, values)
-  }
-  return result
-}
-
 function fallbackAnchor(sourceLines: number, line: number): { line: number; column: number } {
   return { line: Math.min(Math.max(0, line), sourceLines - 1), column: 0 }
 }
@@ -162,24 +193,24 @@ function lineAnchors(
   generatedLine: string,
   line: number,
   sourceLines: number,
-  sourceTokens: ReadonlyMap<string, readonly { line: number; column: number }[]>,
+  sourceTokens: ReadonlyMap<string, readonly Token[]>,
   aligned: ReadonlyMap<string, { line: number; column: number }>,
 ): VuneSourceMapAnchor[] {
   const generatedTokens = tokens(generatedLine)
   if (generatedTokens.length === 0) return [{ ...fallbackAnchor(sourceLines, line), generatedColumn: 0 }]
-  return generatedTokens.map(token => ({
-    ...(aligned.get(key(line, token.column))
-      ?? sourceTokens.get(token.value)?.[0]
-      ?? fallbackAnchor(sourceLines, line)),
-    generatedColumn: token.column,
-  }))
+  return generatedTokens.map(token => {
+    const anchor = aligned.get(key(line, token.column)) ?? sourceTokens.get(token.value)?.[0] ?? fallbackAnchor(sourceLines, line)
+    return { line: anchor.line, column: anchor.column, generatedColumn: token.column }
+  })
 }
 
 /** Create a context-anchored VLQ map for the Vune lowering pipeline. */
 export function createVuneSourceMap(source: string, generated: string, id: string): VuneSourceMap {
   const sourceLines = Math.max(1, source.split("\n").length)
-  const aligned = alignTokens(source, generated)
-  const sourceByValue = sourceTokensByValue(source)
+  const originalTokens = allTokens(source)
+  const generatedTokens = allTokens(generated)
+  const aligned = alignTokens(originalTokens, generatedTokens)
+  const sourceByValue = tokensByValue(originalTokens)
   const segments = generated.split("\n").map((line, index) => lineAnchors(line, index, sourceLines, sourceByValue, aligned))
   let previousLine = 0
   let previousColumn = 0

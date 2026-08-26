@@ -37,4 +37,6 @@ export interface VuneLanguageService {
 
 export interface VuneVitePluginOptions {
   readonly include?: RegExp
+  /** Generate detailed compiler maps for transformed modules (default: true). */
+  readonly sourceMap?: boolean
 }

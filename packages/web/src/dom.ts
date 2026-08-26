@@ -1115,7 +1115,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
   return renderer
 }
 
-function geometryFromElement(element: Element): GeometryProxy {
+function geometryFromElement(element: Element, persistentProbe?: HTMLElement): GeometryProxy {
   const rect = safeBoundingRect(element)
   if (!rect) return zeroGeometry
   const frame = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left }
@@ -1123,19 +1123,24 @@ function geometryFromElement(element: Element): GeometryProxy {
   const view = document.defaultView
   const fallback = { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets: zeroGeometry.safeAreaInsets }
   if (!view?.getComputedStyle || !document.body) return fallback
-  const probe = document.createElement("div")
+  const probe = persistentProbe ?? document.createElement("div")
+  const ownsProbe = persistentProbe === undefined
+  let measured = false
   probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
   try {
-    document.body.appendChild(probe)
+    if (!probe.parentNode) document.body.appendChild(probe)
     const style = view.getComputedStyle(probe)
     const safeAreaInsets = edgeInsetsFromCss({ top: style.paddingTop, right: style.paddingRight, bottom: style.paddingBottom, left: style.paddingLeft })
+    measured = true
     return { frame, size: { width: rect.width, height: rect.height }, safeAreaInsets }
   } catch {
     // Geometry is still useful when CSSOM access is unavailable (sandboxed or
     // synthetic documents). Safe-area measurement is optional, not fatal.
     return fallback
   } finally {
-    try { probe.remove() } catch { /* detached/synthetic DOM cleanup is best-effort */ }
+    if (ownsProbe || !measured) {
+      try { probe.remove() } catch { /* detached/synthetic DOM cleanup is best-effort */ }
+    }
   }
 }
 
@@ -1220,6 +1225,10 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     const lazyViewportCleanups: Array<() => void> = []
     let hasMounted = false
     let update: () => void
+    // Reuse one hidden safe-area probe for every GeometryReader in this mount.
+    // Appending/removing a probe per reader forces avoidable style/layout work.
+    const geometryProbe = document.createElement("div")
+    geometryProbe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none"
 
     const preservedStatePrefixes = () => [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
     const isPreservedStateKey = (key: string): boolean => preservedStatePrefixes().some(prefix => key === prefix || key.startsWith(`${prefix}|`))
@@ -1350,7 +1359,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         const index = Number(element.dataset.vuneGeometry)
         if (!Number.isInteger(index)) return
         seen.add(index)
-        const next = geometryFromElement(element)
+        const next = geometryFromElement(element, geometryProbe)
         const previous = context.geometries.get(index)
         if (!previous || !sameGeometry(previous, next)) {
           context.geometries.set(index, next)
@@ -1602,6 +1611,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       activeRefs.clear()
       lazyViewportCleanups.forEach(action => cleanup(action))
       lazyViewportCleanups.length = 0
+      cleanup(() => geometryProbe.remove())
       for (const child of [...container.childNodes]) cleanup(() => releaseDomSubtree(child, context))
       cleanup(() => (container as Element & { replaceChildren(...nodes: Node[]): void }).replaceChildren())
       if (failed) throw failure
