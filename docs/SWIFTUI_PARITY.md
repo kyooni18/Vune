@@ -113,7 +113,7 @@ State writes snapshot the active mutation transaction, so asynchronous renderer
 updates do not lose the animation selected at mutation time. React, Vue, and DOM
 renderers consume the same render transaction.
 
-The DOM renderer now uses `o0o0o@0.2` for numeric, color, and transform values.
+The DOM renderer now uses `o0o0o@0.2.1` for numeric, color, and transform values.
 Spring updates keep the current value and velocity when a state update retargets
 an element, and a per-element/property control cancels the previous motion.
 The first render remains synchronous for SSR and hydration safety. React and Vue

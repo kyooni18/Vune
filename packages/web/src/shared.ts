@@ -223,6 +223,7 @@ export interface DomRenderContext {
   readonly eventListeners: WeakMap<Element, Map<string, EventListener>>
   eventTargetCount: number
   readonly domKeys: WeakMap<Node, string | number | undefined>
+  hasDomKeys: boolean
   readonly domTags: WeakMap<Element, string>
   readonly lazyRanges: Map<string, LazyViewRange>
   readonly lazyMeasurements: Map<string, number>

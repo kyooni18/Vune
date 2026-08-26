@@ -6,6 +6,7 @@ import {
   identifierAt,
   matching,
   regexCanStart,
+  rawHtmlAt,
   skipComment,
   skipRegex,
   skipString,
@@ -382,10 +383,14 @@ function lowerConditional(source: string, registry: InitializerSymbolRegistry = 
   const afterThen = skipTrivia(source, thenClose + 1)
   const condition = source.slice(open + 1, close).trim()
   const thenValue = `[${lowerStatements(source.slice(thenOpen + 1, thenClose), registry)}]`
-  if (source.slice(afterThen, afterThen + 4) !== "else") return `(${lowerShorthand(condition)} ? ${thenValue} : [])`
+  if (source.slice(afterThen, afterThen + 4) !== "else"
+    || /[A-Za-z0-9_$]/.test(source[afterThen + 4] ?? "")) {
+    return afterThen === source.length ? `(${lowerShorthand(condition)} ? ${thenValue} : [])` : undefined
+  }
   const elseOpen = skipTrivia(source, afterThen + 4)
   if (source[elseOpen] !== "{") return undefined
   const elseClose = matching(source, elseOpen, "{", "}")
+  if (skipTrivia(source, elseClose + 1) !== source.length) return undefined
   return `(${lowerShorthand(condition)} ? ${thenValue} : [${lowerStatements(source.slice(elseOpen + 1, elseClose), registry)}])`
 }
 
@@ -419,6 +424,13 @@ function lowerAstClosure(body: string, parameter?: string, role?: "value" | "vie
 
 function lowerBuilder(call: BuilderCall, source: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const parsed = parseVuneBuilder(source.slice(call.start, call.end), call.start)
+  // The scanner intentionally finds call-shaped blocks before the AST knows
+  // whether the block is a Vune closure. If it is an object/ordinary block,
+  // preserve it as source instead of feeding the same span back into
+  // lowerRange forever.
+  if (parsed.statements.length === 1 && parsed.statements[0]?.kind === "raw") {
+    return source.slice(call.start, call.end)
+  }
   const lowered = lowerVuneBuilderAst(parsed, {
     transformRaw: value => lowerRange(value, registry),
     transformArgument: (value, call, argumentIndex) => lowerForEachIdentityOptions(value, call, argumentIndex, registry),
@@ -1336,6 +1348,13 @@ function lowerNamedModifierCalls(source: string): string {
     for (let cursor = 0; cursor < output.length; cursor += 1) {
       const character = output[cursor]
       if (character === "\"" || character === "'" || character === "`") { cursor = skipString(output, cursor) - 1; continue }
+      // Raw HTML may contain closing tags (`</span>`). Treat the complete tag
+      // as an opaque token before the generic slash/regex scanner sees the
+      // closing slash as a regular-expression opener.
+      if (character === "<") {
+        const html = rawHtmlAt(output, cursor)
+        if (html) { cursor = html.end - 1; continue }
+      }
       if (character === "/" && (output[cursor + 1] === "/" || output[cursor + 1] === "*")) { cursor = skipComment(output, cursor) - 1; continue }
       if (character === "/" && regexCanStart(output, cursor)) { cursor = skipRegex(output, cursor) - 1; continue }
       if (character !== ".") continue

@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/react",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "React renderer for the renderer-independent Vune core.",
   "type": "module",
   "files": [

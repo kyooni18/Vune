@@ -52,6 +52,18 @@ export interface VuneBuilderProgram {
 interface Slice { readonly source: string; readonly start: number; readonly end: number }
 type Delimiter = "(" | "{" | "["
 const closing: Record<Delimiter, string> = { "(": ")", "{": "}", "[": "]" }
+const regexAfterKeywords = new Set([
+  "case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw",
+  "typeof", "void", "yield", "await",
+])
+
+function isRawHtmlClosingTag(source: string, index: number): boolean {
+  if (source[index - 1] !== "<" || !/[A-Za-z]/.test(source[index + 1] ?? "")) return false
+  let cursor = index + 2
+  while (/[A-Za-z0-9:._-]/.test(source[cursor] ?? "")) cursor += 1
+  while (/\s/.test(source[cursor] ?? "")) cursor += 1
+  return source[cursor] === ">"
+}
 
 function syntaxError(message: string, offset: number): SyntaxError & { readonly offset: number } {
   const error = new SyntaxError(message) as SyntaxError & { offset: number }
@@ -107,6 +119,7 @@ function skipComment(source: string, index: number): number {
 }
 
 function regexCanStart(source: string, index: number): boolean {
+  if (isRawHtmlClosingTag(source, index)) return false
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (/\s/.test(source[cursor])) continue
     if ("([{=,:;!?&|+-*%^~<>".includes(source[cursor])) return true
@@ -116,7 +129,7 @@ function regexCanStart(source: string, index: number): boolean {
       const word = source.slice(cursor + 1, end)
       // Same keyword set as the scanner: a regex literal may follow an
       // expression keyword, but not an identifier or property access.
-      return new Set(["case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw", "typeof", "void", "yield", "await"]).has(word)
+      return regexAfterKeywords.has(word)
     }
     return false
   }
@@ -134,9 +147,9 @@ function skipRegex(source: string, index: number): number {
       while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor += 1
       return cursor
     }
-    if (source[cursor] === "\n") return index + 1
+    if (source[cursor] === "\n" || source[cursor] === "\r") throw syntaxError("Unclosed regular expression in Vune source", index)
   }
-  return index + 1
+  throw syntaxError("Unclosed regular expression in Vune source", index)
 }
 
 function findMatching(source: string, openIndex: number, open: Delimiter): number {
@@ -182,7 +195,9 @@ function splitTopLevel(source: string, separators: string, baseOffset: number): 
     if (character === "/" && (next === "/" || next === "*")) { cursor = skipComment(source, cursor) - 1; continue }
     if (character === "/" && regexCanStart(source, cursor)) { cursor = skipRegex(source, cursor) - 1; continue }
     if (character === "(" || character === "{" || character === "[") stack.push(character)
-    else if (character === ")" || character === "}" || character === "]") stack.pop()
+    else if (character === ")" || character === "}" || character === "]") {
+      if (stack.length > 0) stack.pop()
+    }
     const boundary = stack.length === 0 && (separators.includes(character) || (character === "\n" && lineBreakBoundary(source, cursor)))
     if (boundary) {
       parts.push({ source: source.slice(start, cursor), start: baseOffset + start, end: baseOffset + cursor })
@@ -256,6 +271,10 @@ function parseCall(slice: Slice): VuneCallExpression | undefined {
     const trailingClose = findMatching(value.source, afterClose, "{")
     if (skipTrivia(value.source, trailingClose + 1) !== value.source.length) return undefined
     trailing = parseClosure({ source: value.source.slice(afterClose, trailingClose + 1), start: value.start + afterClose, end: value.start + trailingClose + 1 })
+    // A block after a call is only Vune syntax when it is a closure. Do not
+    // consume an object-like block and silently drop it from the generated
+    // TypeScript when the source is ordinary or malformed JavaScript.
+    if (!trailing) return undefined
     end = trailingClose + 1
   }
   if (skipTrivia(value.source, end) !== value.source.length) return undefined
@@ -280,15 +299,23 @@ function parseConditional(slice: Slice): VuneConditionalExpression | undefined {
   const afterThen = skipTrivia(value.source, thenClose + 1)
   const condition = raw({ source: value.source.slice(open + 1, close), start: value.start + open + 1, end: value.start + close })
   let otherwise: VuneBuilderProgram | VuneConditionalExpression | undefined
-  if (value.source.slice(afterThen, afterThen + 4) === "else") {
+  if (value.source.slice(afterThen, afterThen + 4) === "else" && !/[A-Za-z0-9_$]/.test(value.source[afterThen + 4] ?? "")) {
     const elseStart = skipTrivia(value.source, afterThen + 4)
     const rest = { source: value.source.slice(elseStart), start: value.start + elseStart, end: value.end }
-    if (/^if\b/.test(rest.source)) otherwise = parseConditional(rest)
+    if (/^if\b/.test(rest.source)) {
+      otherwise = parseConditional(rest)
+      if (!otherwise) return undefined
+    }
     else if (rest.source[0] === "{") {
       const elseClose = findMatching(rest.source, 0, "{")
       if (skipTrivia(rest.source, elseClose + 1) !== rest.source.length) return undefined
       otherwise = parseVuneBuilder(rest.source.slice(1, elseClose), rest.start + 1)
-    }
+    } else return undefined
+  } else if (afterThen !== value.source.length) {
+    // Keep parser ownership of the entire slice. Without this guard, a
+    // conditional followed by another expression is accepted and the suffix
+    // disappears during AST lowering.
+    return undefined
   }
   return {
     kind: "conditional",

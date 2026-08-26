@@ -1,6 +1,6 @@
 {
   "name": "@vune-ui/vite",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Vite integration for the Vune compiler.",
   "type": "module",
   "files": [

@@ -80,20 +80,28 @@ export function formatVuneSource(source: string): string {
   return transformVuneSource(source)
 }
 
+function boundedOffset(source: string, offset: number): number {
+  const numeric = Number.isFinite(offset) ? Math.trunc(offset) : 0
+  return Math.max(0, Math.min(source.length, numeric))
+}
+
 export function createVuneLanguageService(): VuneLanguageService {
   return {
     format: formatVuneSource,
     diagnose: diagnoseVuneSource,
     transform: compileVuneFile,
     positionAt(source, offset) {
-      const bounded = Math.max(0, Math.min(source.length, offset))
+      const bounded = boundedOffset(source, offset)
       const before = source.slice(0, bounded)
       return { line: before.split("\n").length, column: bounded - before.lastIndexOf("\n") }
     },
     offsetAt(source, position) {
       const lines = source.split("\n")
-      const line = Math.max(1, Math.min(lines.length, position.line))
-      return lines.slice(0, line - 1).reduce((offset, item) => offset + item.length + 1, 0) + Math.max(0, position.column - 1)
+      const requestedLine = Number.isFinite(position.line) ? Math.trunc(position.line) : 1
+      const line = Math.max(1, Math.min(lines.length, requestedLine))
+      const requestedColumn = Number.isFinite(position.column) ? Math.trunc(position.column) : 1
+      const lineOffset = lines.slice(0, line - 1).reduce((offset, item) => offset + item.length + 1, 0)
+      return boundedOffset(source, lineOffset + Math.max(0, requestedColumn - 1))
     },
     semantic: createVuneSemanticModel,
   }

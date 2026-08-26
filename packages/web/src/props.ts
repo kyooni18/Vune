@@ -215,7 +215,10 @@ function stageDomProps(element: Element, props: Record<string, unknown>, context
   }
   if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
   const nextKey = typeof props.key === "string" || typeof props.key === "number" ? props.key : undefined
-  if (nextKey !== undefined) context.domKeys.set(element, nextKey)
+  if (nextKey !== undefined) {
+    context.hasDomKeys = true
+    context.domKeys.set(element, nextKey)
+  }
 }
 
 export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext, merge = true): void {
@@ -233,7 +236,10 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
   }
   context.domProps.set(element, remembered)
   const nextKey = typeof props?.key === "string" || typeof props?.key === "number" ? props.key : undefined
-  if (nextKey !== undefined) context.domKeys.set(element, nextKey)
+  if (nextKey !== undefined) {
+    context.hasDomKeys = true
+    context.domKeys.set(element, nextKey)
+  }
 }
 
 function applyDomPropsNow(
@@ -318,10 +324,33 @@ function sameDomProps(previous: Record<string, unknown>, next: Record<string, un
   return true
 }
 
+function canFastPatchPrimitive(key: string, value: unknown): boolean {
+  if (key === "children" || key === "key" || key === "ref" || key === "style" || key === "class" || key === "className") return false
+  if (/^on[A-Za-z]/.test(key)) return false
+  return value === undefined || value === null || (typeof value !== "object" && typeof value !== "function")
+}
+
 export function patchDomProps(element: Element, next: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   const previousStored = context.domProps.get(element)
   const nextKeys = next ? Object.keys(next) : []
   if (!previousStored && nextKeys.length === 0) return
+  if (previousStored && next && nextKeys.length === 1) {
+    const key = nextKeys[0]
+    const previousKeys = Object.keys(previousStored)
+    if (previousKeys.length === 1 && previousKeys[0] === key
+      && canFastPatchPrimitive(key, previousStored[key])
+      && canFastPatchPrimitive(key, next[key])) {
+      if (Object.is(previousStored[key], next[key])) return
+      if (next[key] === undefined || next[key] === null) {
+        removeDomProp(element, key)
+        context.domProps.delete(element)
+      } else {
+        applyAttributeValue(element, key, next[key])
+        context.domProps.set(element, next)
+      }
+      return
+    }
+  }
   if (previousStored && next && sameDomProps(previousStored, next, nextKeys)) return
   const previous = previousStored ?? {}
   for (const key of Object.keys(previous)) {

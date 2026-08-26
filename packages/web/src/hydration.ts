@@ -2,6 +2,24 @@ import { domContentContainer, type DomRenderContext } from "./shared.js"
 import { rememberDomProps, setDomEvent, synchronizeDomSelectValue } from "./props.js"
 
 function synchronizeAttributes(source: Element, target: Element): void {
+  // Server markup normally already matches the candidate tree exactly. Avoid
+  // rebuilding the attribute map and issuing setAttribute calls in that hot
+  // path; besides the allocation, each write can invalidate the browser's
+  // style/attribute caches during hydration.
+  if (source.attributes.length === target.attributes.length) {
+    let identical = true
+    for (let index = 0; index < source.attributes.length; index += 1) {
+      const expected = source.attributes[index]
+      const actual = target.attributes[index]
+      if (expected.namespaceURI !== actual.namespaceURI
+        || expected.localName !== actual.localName
+        || expected.value !== actual.value) {
+        identical = false
+        break
+      }
+    }
+    if (identical) return
+  }
   const sourceAttributes = new Map([...source.attributes].map(attribute => [
     `${attribute.namespaceURI ?? ""}|${attribute.localName}`,
     attribute,
@@ -13,6 +31,10 @@ function synchronizeAttributes(source: Element, target: Element): void {
     else target.removeAttribute(attribute.name)
   }
   for (const attribute of sourceAttributes.values()) {
+    const current = attribute.namespaceURI
+      ? target.getAttributeNS(attribute.namespaceURI, attribute.localName)
+      : target.getAttribute(attribute.name)
+    if (current === attribute.value) continue
     if (attribute.namespaceURI) target.setAttributeNS(attribute.namespaceURI, attribute.name, attribute.value)
     else target.setAttribute(attribute.name, attribute.value)
   }

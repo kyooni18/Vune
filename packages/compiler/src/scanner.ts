@@ -15,6 +15,25 @@ export interface RawHtmlCall {
   readonly code: string
 }
 
+// These scanners run over the same source repeatedly during a transform. Keep
+// the small lexical lookup tables module-scoped so hot paths do not allocate a
+// Set for every slash or builder candidate.
+const regexAfterKeywords = new Set([
+  "case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw",
+  "typeof", "void", "yield", "await",
+])
+const rawHtmlAfterExpressionCharacters = ")]}"
+const excludedBuilderNames = new Set(["if", "for", "while", "switch", "catch", "function"])
+const rawHtmlExpressionKeywords = new Set(["await", "case", "else", "return", "throw", "yield"])
+
+function isRawHtmlClosingTag(source: string, index: number): boolean {
+  if (source[index - 1] !== "<" || !/[A-Za-z]/.test(source[index + 1] ?? "")) return false
+  let cursor = index + 2
+  while (/[A-Za-z0-9:._-]/.test(source[cursor] ?? "")) cursor += 1
+  while (/\s/.test(source[cursor] ?? "")) cursor += 1
+  return source[cursor] === ">"
+}
+
 function syntaxError(message: string, offset: number): SyntaxError & { readonly offset: number } {
   const error = new SyntaxError(message) as SyntaxError & { offset: number }
   error.offset = offset
@@ -55,6 +74,11 @@ function skipComment(source: string, index: number): number {
 }
 
 function regexCanStart(source: string, index: number): boolean {
+  // A raw HTML closing tag (`</span>`) is encountered by several lightweight
+  // scanners that do not run the full HTML parser first. It looks like a
+  // regular expression after `<`, so exclude the exact closing-tag shape
+  // before applying JavaScript's slash heuristic.
+  if (isRawHtmlClosingTag(source, index)) return false
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (/\s/.test(source[cursor])) continue
     if ("([{=,:;!?&|+-*%^~<>".includes(source[cursor])) return true
@@ -62,7 +86,7 @@ function regexCanStart(source: string, index: number): boolean {
       const end = cursor + 1
       while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
       const word = source.slice(cursor + 1, end)
-      return new Set(["case", "delete", "do", "else", "in", "instanceof", "of", "return", "throw", "typeof", "void", "yield", "await"]).has(word)
+      return regexAfterKeywords.has(word)
     }
     return false
   }
@@ -80,9 +104,11 @@ function skipRegex(source: string, index: number): number {
       while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor += 1
       return cursor
     }
-    if (source[cursor] === "\n") return index + 1
+    if (source[cursor] === "\n" || source[cursor] === "\r") {
+      throw syntaxError("Unclosed regular expression in Vune source", index)
+    }
   }
-  return index + 1
+  throw syntaxError("Unclosed regular expression in Vune source", index)
 }
 
 function skipTrivia(source: string, index: number): number {
@@ -156,13 +182,13 @@ function isRawHtmlCandidate(source: string, start: number): boolean {
     && source.slice(openingClose + 1).includes(`</${openingName}`)) return true
   // A tag at the beginning of a new statement may follow a completed call,
   // array, or object expression on the previous line.
-  if (source.slice(cursor + 1, start).includes("\n") && new Set([")", "]", "}"]).has(source[cursor])) return true
+  if (source.slice(cursor + 1, start).includes("\n") && rawHtmlAfterExpressionCharacters.includes(source[cursor])) return true
   if ("([{=,:;!?&|+-*%^~;".includes(source[cursor])) return true
   if (!/[A-Za-z0-9_$.)\]]/.test(source[cursor])) return true
   const end = cursor + 1
   while (cursor >= 0 && /[A-Za-z0-9_$]/.test(source[cursor])) cursor -= 1
   const word = source.slice(cursor + 1, end)
-  return new Set(["await", "case", "else", "return", "throw", "yield"]).has(word)
+  return rawHtmlExpressionKeywords.has(word)
 }
 
 
@@ -192,7 +218,9 @@ function braceContext(source: string, index: number): BraceContext {
 }
 
 function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCall | undefined {
-  const excluded = new Set(["if", "for", "while", "switch", "catch", "function"])
+  // Keep scanning all identifiers so lowercase user-defined builder helpers
+  // remain supported. lowerBuilder preserves a call-shaped block that the AST
+  // does not recognize as a closure instead of recursively lowering it.
   const braces: BraceFrame[] = []
   let parenDepth = 0
   let bracketDepth = 0
@@ -214,7 +242,7 @@ function findBuilder(source: string, from = 0, uppercaseOnly = false): BuilderCa
     if (!identifier) continue
     const start = cursor
     cursor = identifier.end - 1
-    if (excluded.has(identifier.name)) continue
+    if (excludedBuilderNames.has(identifier.name)) continue
     if (uppercaseOnly && !/^[A-Z]/.test(identifier.name)) continue
     const preceding = source.slice(0, start).trimEnd()
     if (/\bfunction\s*\*?$/.test(preceding)) continue

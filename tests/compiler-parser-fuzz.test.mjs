@@ -85,3 +85,28 @@ test("malformed parser inputs produce shared syntax diagnostics with source offs
     assert.ok(diagnostics[0].column >= 1)
   }
 })
+
+test("builder parsing does not consume ordinary blocks or conditional suffixes", () => {
+  const ordinary = parseVuneBuilder("foo() { key: value }")
+  assert.equal(ordinary.statements[0]?.kind, "raw")
+  assert.equal(transformVuneSource("foo() { key: value }"), "foo() { key: value }")
+  assert.equal(transformVuneSource("Foo() { key: value }"), "Foo() { key: value }")
+
+  const conditional = parseVuneBuilder("if (ready) { Text(\"ready\") } elsewhere")
+  assert.equal(conditional.statements[0]?.kind, "raw")
+
+  const nested = parseVuneBuilder("if (ready) { Text(\"ready\") } else if (loading) { Text(\"loading\") }")
+  assert.equal(nested.statements[0]?.kind, "conditional")
+  assert.equal(nested.statements[0]?.kind === "conditional" ? nested.statements[0].otherwise?.kind : undefined, "conditional")
+})
+
+test("unterminated regular expressions surface as syntax diagnostics", () => {
+  const diagnostics = diagnoseVuneSource("Text(/unterminated")
+  assert.deepEqual(diagnostics, [{
+    severity: "error",
+    code: "VUNE_SYNTAX",
+    message: "Unclosed regular expression in Vune source",
+    line: 1,
+    column: 6,
+  }])
+})

@@ -449,6 +449,17 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
     for (const addition of additions) bindInsertedSubtree(addition, context)
     return
   }
+  // Most trees are entirely unkeyed. Avoid probing two WeakMaps for every
+  // child before taking the simple positional reconciliation path. Once a key
+  // has appeared we keep the flag set for the lifetime of the mount, so this
+  // remains conservative when a later pass removes that keyed branch.
+  if (!context.hasDomKeys && currentNodes.length === nextChildren.length) {
+    const nextSnapshot = Array.from(nextChildren)
+    for (let index = 0; index < nextSnapshot.length; index += 1) {
+      reconcileDomNode(parent, currentNodes[index], nextSnapshot[index], context)
+    }
+    return
+  }
   if (currentNodes.length === nextChildren.length) {
     let unkeyed = true
     for (let index = 0; index < nextChildren.length; index += 1) {
@@ -532,7 +543,10 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   if (lazyKey) context.lazyKeys.set(currentElement, lazyKey)
   patchDomProps(currentElement, context.domProps.get(nextElement), context)
   const nextKey = nodeKey(nextElement, context)
-  if (nextKey !== undefined) context.domKeys.set(currentElement, nextKey)
+  if (nextKey !== undefined) {
+    context.hasDomKeys = true
+    context.domKeys.set(currentElement, nextKey)
+  }
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
   bindCandidateNode(next, current, context)
   if (reusable !== current) {
@@ -877,6 +891,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         ? modifier.arguments[0]
         : undefined
       if (key === undefined) return content
+      context.hasDomKeys = true
       for (const node of outputNodes(content)) context.domKeys.set(node, key)
       return content
     }
@@ -1169,6 +1184,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       eventListeners: new WeakMap(),
       eventTargetCount: 0,
       domKeys: new WeakMap(),
+      hasDomKeys: false,
       domTags: new WeakMap(),
       lazyRanges: new Map(),
       lazyMeasurements: new Map(),
