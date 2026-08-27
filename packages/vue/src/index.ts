@@ -130,6 +130,11 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
       result = { style: mask && typeof mask === "object" ? Object.fromEntries(Object.entries(mask as Record<string, unknown>).map(([key, item]) => [key === "WebkitMask" ? "-webkit-mask" : key, item])) : {} }
       break
     }
+    case "continuousCorners": {
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
+      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing } }
+      break
+    }
     case "style": result = value && typeof value === "object" ? { style: value } : {}; break
     case "className": result = { class: classNameOf(value) }; break
     case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break
@@ -201,6 +206,15 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
     normalizedProps = { ...foreign.props, ...foreign.events, ...(normalizedProps ?? {}) }
     if (foreign.ref !== undefined) normalizedProps.ref = foreign.ref
     if (foreign.key !== undefined) normalizedProps.key = foreign.key
+  }
+  const style = normalizedProps?.style
+  if (style && typeof style === "object" && (style as Record<string, unknown>)["--vune-corner-style"] === "continuous") {
+    const previousRef = normalizedProps!.ref
+    normalizedProps!.ref = (value: unknown) => {
+      if (typeof previousRef === "function") previousRef(value)
+      else if (previousRef && typeof previousRef === "object" && "value" in previousRef) (previousRef as { value: unknown }).value = value
+      void import("./continuous-corners.js").then(({ attachContinuousCornerRef }) => attachContinuousCornerRef(value))
+    }
   }
   if (typeof type === "string") return h(type, normalizedProps, children)
   const slots = foreign?.slots

@@ -230,6 +230,7 @@ export interface Modifiers {
   withProps(value: Record<string, unknown>): ModifiableViewNode
   keyed(value: string | number): ModifiableViewNode
   elementRef(value: unknown): ModifiableViewNode
+  continuousCorners(smoothing?: number): ModifiableViewNode
 }
 
 export type ModifiableViewNode = ViewNode & Modifiers

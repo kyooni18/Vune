@@ -115,6 +115,11 @@ export function styleOf(modifier: ViewModifierNode, includeAnimationFallback = t
       style = props && typeof props === "object" ? Object.fromEntries(Object.entries(props as Record<string, unknown>).map(([key, item]) => [cssPropertyName(key), String(item)])) : {}
       break
     }
+    case "continuousCorners": {
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
+      style = { "corner-shape": "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": String(smoothing) }
+      break
+    }
     case "frame": {
       style = Object.fromEntries(Object.entries(frameStyle(value && typeof value === "object" ? value : {}))
         .map(([key, item]) => [cssPropertyName(key), item ?? ""]))

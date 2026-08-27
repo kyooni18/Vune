@@ -150,6 +150,7 @@ const modifiers = Object.freeze([
   { kind: "modifier", name: "withProps", signatures: ["withProps(_:)"] , compatibility: true },
   { kind: "modifier", name: "keyed", signatures: ["keyed(_:)"] , compatibility: true },
   { kind: "modifier", name: "elementRef", signatures: ["elementRef(_:)"] , compatibility: true },
+  { kind: "modifier", name: "continuousCorners", signatures: ["continuousCorners(_:)"], compatibility: true },
 ] as const satisfies readonly SwiftUIModifierSpec[])
 
 /** Seed manifest. It is the single compiler/runtime source of truth as parity expands. */

@@ -62,6 +62,7 @@ export interface VuneStyleProperties {
   readonly borderColor?: VuneStylePropertyValue
   readonly borderLeft?: VuneStylePropertyValue
   readonly borderRadius?: VuneStylePropertyValue
+  readonly cornerShape?: VuneStylePropertyValue
   readonly borderRight?: VuneStylePropertyValue
   readonly borderStyle?: VuneStylePropertyValue
   readonly borderTop?: VuneStylePropertyValue

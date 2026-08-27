@@ -59,7 +59,8 @@ export class Animation {
     Object.freeze(this)
   }
 
-  static readonly default = new Animation({ kind: "easeInOut", duration: 0.35, delay: 0, speed: 1 })
+  /** The standard Vune motion preset used when no animation is specified. */
+  static readonly default = Animation.spring()
 
   static linear(duration = 0.35): Animation {
     return new Animation({ kind: "linear", duration: finiteNonNegative(duration, 0.35), delay: 0, speed: 1 })

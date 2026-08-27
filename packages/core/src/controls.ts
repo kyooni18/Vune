@@ -6,6 +6,7 @@ import {
   type TypedViewConstructor,
   viewElement,
 } from "./graph.js"
+import { Animation } from "./animation.js"
 import { isBinding, resolveValue, type BindingRef, type Value } from "./state.js"
 import { requireOptionRecord } from "./options.js"
 import { Text } from "./views.js"
@@ -95,6 +96,20 @@ export const Switch = defineBuiltinView<SwitchProps>(
     const width = Math.round(height * 1.8)
     const inset = Math.max(2, Math.round(height / 10))
     const thumbSize = height - inset * 2
+    const animation = Animation.spring(0.32, 0.82)
+    const trigger = Boolean(isOn.value)
+    const thumb = viewElement("span", {
+      "data-vune": "SwitchThumb",
+    }).style({
+      position: "absolute",
+      top: `${inset}px`,
+      left: isOn.value ? `${width - thumbSize - inset}px` : `${inset}px`,
+      width: `${thumbSize}px`,
+      height: `${thumbSize}px`,
+      borderRadius: "50%",
+      background: "#ffffff",
+      boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+    }).animation(animation, trigger)
     const control = viewElement("button", {
       type: "button",
       role: "switch",
@@ -102,32 +117,16 @@ export const Switch = defineBuiltinView<SwitchProps>(
       "aria-checked": Boolean(isOn.value),
       ...(label !== undefined ? { "aria-label": label } : title === undefined ? {} : { "aria-label": title }),
       onClick() { isOn.value = !isOn.value },
-      style: {
-        position: "relative",
-        width: `${width}px`,
-        height: `${height}px`,
-        borderRadius: `${height / 2}px`,
-        border: "none",
-        padding: "0",
-        cursor: "pointer",
-        background: isOn.value ? tint ?? "#34c759" : offTint ?? "#e9e9ea",
-        transition: "background 0.2s ease",
-      },
-    }, [
-      viewElement("span", {
-        style: {
-          position: "absolute",
-          top: `${inset}px`,
-          left: isOn.value ? `${width - thumbSize - inset}px` : `${inset}px`,
-          width: `${thumbSize}px`,
-          height: `${thumbSize}px`,
-          borderRadius: "50%",
-          background: "#ffffff",
-          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
-          transition: "left 0.2s ease",
-        },
-      }),
-    ])
+    }, [thumb]).style({
+      position: "relative",
+      width: `${width}px`,
+      height: `${height}px`,
+      borderRadius: `${height / 2}px`,
+      border: "none",
+      padding: "0",
+      cursor: "pointer",
+      background: isOn.value ? tint ?? "#34c759" : offTint ?? "#e9e9ea",
+    }).animation(animation, trigger)
     if (title === undefined) return control
     return viewElement("span", {
       "data-vune": "Switch",

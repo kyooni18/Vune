@@ -78,6 +78,11 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
       break
     }
     case "mask": result = { style: modifier.props && typeof modifier.props === "object" && "style" in modifier.props ? (modifier.props as { style?: unknown }).style : {} }; break
+    case "continuousCorners": {
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
+      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing } }
+      break
+    }
     case "style": result = { style: value }; break
     case "className": result = { className: classNameOf(value) }; break
     case "withProps": result = value && typeof value === "object" ? value as Record<string, unknown> : {}; break
