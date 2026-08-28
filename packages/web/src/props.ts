@@ -194,27 +194,53 @@ function applyAttributeValue(element: Element, key: string, value: unknown): voi
   setAttribute(element, name, String(value))
 }
 
+function rememberDomKey(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+  const nextKey = typeof props?.key === "string" || typeof props?.key === "number" ? props.key : undefined
+  if (nextKey === undefined) return
+  context.hasDomKeys = true
+  context.domKeys.set(element, nextKey)
+}
+
+/** Structural graph fields are reconciler metadata, never DOM properties. */
+function renderableDomProps(props: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+  if (!props) return undefined
+  const keys = Object.keys(props)
+  let structural = 0
+  for (const key of keys) if (key === "key" || key === "children") structural += 1
+  if (structural === 0) return props
+  if (structural === keys.length) return undefined
+  const filtered: Record<string, unknown> = {}
+  for (const key of keys) {
+    if (key === "key" || key === "children") continue
+    filtered[key] = props[key]
+  }
+  return filtered
+}
+
 function stageDomProps(element: Element, props: Record<string, unknown>, context: DomRenderContext): void {
+  rememberDomKey(element, props, context)
+  const renderable = renderableDomProps(props)
+  if (!renderable) return
   const previous = context.domProps.get(element)
-  const hasClass = Object.prototype.hasOwnProperty.call(props, "class") || Object.prototype.hasOwnProperty.call(props, "className")
+  const hasClass = Object.prototype.hasOwnProperty.call(renderable, "class") || Object.prototype.hasOwnProperty.call(renderable, "className")
   if (!previous && !hasClass) {
     // Element props are already snapshotted by @vune-ui/core. Keeping that
     // immutable record directly avoids allocating another object for the very
     // common first staging pass; later modifiers still merge through the path
     // below when the same candidate receives more props.
-    context.domProps.set(element, props)
+    context.domProps.set(element, renderable)
   } else {
     const before = previous ?? {}
     const previousStyle = before.style && typeof before.style === "object" ? before.style as Record<string, unknown> : undefined
-    const nextStyle = props.style && typeof props.style === "object" ? props.style as Record<string, unknown> : undefined
+    const nextStyle = renderable.style && typeof renderable.style === "object" ? renderable.style as Record<string, unknown> : undefined
     const remembered: Record<string, unknown> = {
       ...before,
-      ...props,
+      ...renderable,
       ...(nextStyle ? { style: { ...(previousStyle ?? {}), ...nextStyle } } : {}),
     }
     if (hasClass) {
       const beforeClass = classNameOf(before.class ?? before.className)
-      const incoming = classNameOf(props.class ?? props.className)
+      const incoming = classNameOf(renderable.class ?? renderable.className)
       const combined = [beforeClass, incoming].filter(Boolean).join(" ")
       delete remembered.className
       if (combined) remembered.class = combined
@@ -222,33 +248,37 @@ function stageDomProps(element: Element, props: Record<string, unknown>, context
     }
     context.domProps.set(element, remembered)
   }
-  if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
-  const nextKey = typeof props.key === "string" || typeof props.key === "number" ? props.key : undefined
-  if (nextKey !== undefined) {
-    context.hasDomKeys = true
-    context.domKeys.set(element, nextKey)
-  }
+  if (renderable.ref !== undefined && renderable.ref !== null) context.hasRefs = true
 }
 
 export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext, merge = true): void {
-  const previous = merge ? context.domProps.get(element) ?? {} : {}
+  rememberDomKey(element, props, context)
+  const renderable = renderableDomProps(props)
+  if (!renderable) {
+    if (!merge) context.domProps.delete(element)
+    return
+  }
+  const previousStored = merge ? context.domProps.get(element) : undefined
+  const hasClass = Object.prototype.hasOwnProperty.call(renderable, "class") || Object.prototype.hasOwnProperty.call(renderable, "className")
+  if (!previousStored && !hasClass) {
+    // Core graph props are immutable snapshots, so a fresh node can retain the
+    // record directly instead of cloning it merely for future reconciliation.
+    context.domProps.set(element, renderable)
+    return
+  }
+  const previous = previousStored ?? {}
   const currentStyle = previous.style && typeof previous.style === "object" ? previous.style : {}
-  const nextStyle = props?.style && typeof props.style === "object" ? props.style : undefined
+  const nextStyle = renderable.style && typeof renderable.style === "object" ? renderable.style : undefined
   const remembered: Record<string, unknown> = {
     ...previous,
-    ...(props ?? {}),
+    ...renderable,
     ...(nextStyle ? { style: { ...currentStyle, ...nextStyle } } : {}),
   }
-  if (element.getAttribute("class") !== null) {
+  if (hasClass && element.getAttribute("class") !== null) {
     remembered.class = element.getAttribute("class") ?? ""
     delete remembered.className
   }
   context.domProps.set(element, remembered)
-  const nextKey = typeof props?.key === "string" || typeof props?.key === "number" ? props.key : undefined
-  if (nextKey !== undefined) {
-    context.hasDomKeys = true
-    context.domKeys.set(element, nextKey)
-  }
 }
 
 function applyDomPropsNow(
@@ -259,13 +289,16 @@ function applyDomPropsNow(
 ): void {
   if (context.hydrating) context.hydrationProps.set(element, props)
   if (!props) return
-  const entries = Object.entries(props)
-  if (entries.length === 0) return
   if (context.stagingProps && !context.hydrating) {
     stageDomProps(element, props, context)
     return
   }
-  if (props.ref !== undefined && props.ref !== null) context.hasRefs = true
+  rememberDomKey(element, props, context)
+  const renderable = renderableDomProps(props)
+  if (!renderable) return
+  const entries = Object.entries(renderable)
+  if (entries.length === 0) return
+  if (renderable.ref !== undefined && renderable.ref !== null) context.hasRefs = true
   for (const [key, value] of entries) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
@@ -287,7 +320,10 @@ function applyDomPropsNow(
 
 export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   applyDomPropsNow(element, props, context, true)
-  if (!context.stagingProps && !context.hydrating) syncFocusScope(element, props?.["data-vune-focus-scope"])
+  if (!context.stagingProps && !context.hydrating && props
+    && Object.prototype.hasOwnProperty.call(props, "data-vune-focus-scope")) {
+    syncFocusScope(element, props["data-vune-focus-scope"])
+  }
 }
 
 export function commitStagedDomProps(element: Element, context: DomRenderContext): void {
@@ -301,7 +337,9 @@ export function commitStagedDomProps(element: Element, context: DomRenderContext
     // stageDomProps already holds the normalized snapshot. Do not clone it a
     // second time merely because the candidate is becoming live.
     applyDomPropsNow(element, props, context, false)
-    syncFocusScope(element, props["data-vune-focus-scope"])
+    if (Object.prototype.hasOwnProperty.call(props, "data-vune-focus-scope")) {
+      syncFocusScope(element, props["data-vune-focus-scope"])
+    }
   } finally {
     context.stagingProps = stagingProps
     context.stagingEvents = stagingEvents
@@ -347,38 +385,41 @@ export function patchDomProps(
   context: DomRenderContext,
   motionPolicy?: DomStyleMotionPolicy,
 ): void {
+  rememberDomKey(element, next, context)
+  const renderable = renderableDomProps(next)
+  if (renderable?.ref !== undefined && renderable.ref !== null) context.hasRefs = true
   const previousStored = context.domProps.get(element)
-  const nextKeys = next ? Object.keys(next) : []
+  const nextKeys = renderable ? Object.keys(renderable) : []
   if (!previousStored && nextKeys.length === 0) return
-  if (previousStored && next && nextKeys.length === 1) {
+  if (previousStored && renderable && nextKeys.length === 1) {
     const key = nextKeys[0]
     const previousKeys = Object.keys(previousStored)
     if (previousKeys.length === 1 && previousKeys[0] === key
       && canFastPatchPrimitive(key, previousStored[key])
-      && canFastPatchPrimitive(key, next[key])) {
-      if (Object.is(previousStored[key], next[key])) return
-      if (next[key] === undefined || next[key] === null) {
+      && canFastPatchPrimitive(key, renderable[key])) {
+      if (Object.is(previousStored[key], renderable[key])) return
+      if (renderable[key] === undefined || renderable[key] === null) {
         removeDomProp(element, key)
         context.domProps.delete(element)
       } else {
-        applyAttributeValue(element, key, next[key])
-        context.domProps.set(element, next)
+        applyAttributeValue(element, key, renderable[key])
+        context.domProps.set(element, renderable)
       }
       return
     }
   }
-  if (previousStored && next && sameDomProps(previousStored, next, nextKeys)) return
+  if (previousStored && renderable && sameDomProps(previousStored, renderable, nextKeys)) return
   const previous = previousStored ?? {}
   for (const key of Object.keys(previous)) {
     if (key === "ref" || key === "key" || key === "children") continue
-    if (next && Object.prototype.hasOwnProperty.call(next, key)) continue
+    if (renderable && Object.prototype.hasOwnProperty.call(renderable, key)) continue
     if (/^on[A-Za-z]/.test(key)) setDomEvent(element, key, undefined, context, false)
     else {
       if (key === "style") cancelDomAnimations(element)
       removeDomProp(element, key)
     }
   }
-  for (const [key, value] of Object.entries(next ?? {})) {
+  for (const [key, value] of Object.entries(renderable ?? {})) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
       setDomEvent(element, key, value, context, typeof value === "function")
@@ -460,7 +501,7 @@ export function patchDomProps(
     if (Object.is(previous[key], value)) continue
     applyAttributeValue(element, key, value)
   }
-  if (!next || nextKeys.length === 0) context.domProps.delete(element)
-  else context.domProps.set(element, next)
-  syncFocusScope(element, next?.["data-vune-focus-scope"])
+  if (!renderable || nextKeys.length === 0) context.domProps.delete(element)
+  else context.domProps.set(element, renderable)
+  syncFocusScope(element, renderable?.["data-vune-focus-scope"])
 }
