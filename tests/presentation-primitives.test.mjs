@@ -1,12 +1,26 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { JSDOM } from "jsdom"
-import { renderToStaticMarkup } from "react-dom/server"
 import { Alert, Binding, Menu, NavigationLink, NavigationStack, Sheet, State, Text } from "../packages/core/dist/index.js"
-import { Sheet as ReactSheet, render } from "../packages/react/dist/index.js"
 import { mount } from "../packages/web/dist/index.js"
 
-test("presentation primitives keep visibility and navigation state in graph props", () => {
+async function optionalImport(specifier) {
+	try {
+		return await import(specifier)
+	} catch (error) {
+		if (error?.code === "ERR_MODULE_NOT_FOUND") return null
+		throw error
+	}
+}
+
+test("presentation primitives keep visibility and navigation state in graph props", async t => {
+	const reactDom = await optionalImport("react-dom/server")
+	const react = await optionalImport("../packages/react/dist/index.js")
+	if (!reactDom || !react) {
+		t.skip("React compatibility dependencies are not installed")
+		return
+	}
+	const { renderToStaticMarkup } = reactDom
+	const { render } = react
   const presented = State(true)
   const html = renderToStaticMarkup(render(NavigationStack(() => [
     NavigationLink("/settings", "Settings"),
@@ -23,7 +37,13 @@ test("presentation primitives keep visibility and navigation state in graph prop
   assert.equal(renderToStaticMarkup(render(Sheet(Binding(presented), () => Text("Hidden")))), "")
 })
 
-test("top-level presentation Views reevaluate Binding state through the core ViewHost", async () => {
+test("top-level presentation Views reevaluate Binding state through the core ViewHost", async t => {
+	const jsdom = await optionalImport("jsdom")
+	if (!jsdom) {
+		t.skip("jsdom is not installed")
+		return
+	}
+	const { JSDOM } = jsdom
   const dom = new JSDOM("<div id=app></div>")
   const target = dom.window.document.querySelector("#app")
   const presented = State(false)
@@ -41,6 +61,12 @@ test("top-level presentation Views reevaluate Binding state through the core Vie
   dom.window.close()
 })
 
-test("@vune-ui/react presentation Views are compatibility aliases of core Views", () => {
+test("@vune-ui/react presentation Views are compatibility aliases of core Views", async t => {
+	const react = await optionalImport("../packages/react/dist/index.js")
+	if (!react) {
+		t.skip("React compatibility dependencies are not installed")
+		return
+	}
+	const { Sheet: ReactSheet } = react
   assert.equal(ReactSheet, Sheet)
 })

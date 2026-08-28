@@ -701,6 +701,17 @@ function compilerSemanticArgument(source: string): SemanticArgument {
   return { label: argument.label, type: "unknown" }
 }
 
+function legacyHostCoercion(type: string | undefined): "identity" | "boolean" | "number" {
+  const normalized = type?.replace(/\s+/g, "") ?? ""
+  if (/(?:^|\|)boolean(?:\||$)/.test(normalized)) return "boolean"
+  if (/(?:^|\|)number(?:\||$)/.test(normalized)) return "number"
+  return "identity"
+}
+
+function legacyHostPlanSource(plans: readonly StructInitializerPlan[]): string {
+  return `{ initializers: [${plans.map((plan, index) => `{ index: ${index}, parameters: [${plan.parameters.map(parameter => `{ name: ${JSON.stringify(parameter.name)}, label: ${parameter.label === undefined ? "undefined" : JSON.stringify(parameter.label)}, kind: ${JSON.stringify(parameter.kind)}, required: ${parameter.required}, trailing: ${parameter.trailing === true}, coercion: ${JSON.stringify(legacyHostCoercion(parameter.type))} }`).join(", ")}] }`).join(", ")}] }`
+}
+
 function semanticInitializerSymbol(name: string, plan: StructInitializerPlan, index: number): SemanticInitializerSymbol {
   return {
     kind: "initializer",
@@ -852,6 +863,7 @@ function lowerStructDefinition(
   const definitionMetadata = [
     declaration.genericParameters === undefined ? undefined : `genericParameters: ${JSON.stringify(declaration.genericParameters)}`,
     fieldMetadata,
+    `legacyHost: ${legacyHostPlanSource(plans)}`,
   ].filter((item): item is string => item !== undefined).join(", ")
   return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}${dependencies}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${loweredBody} } })`
 }

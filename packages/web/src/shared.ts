@@ -1,3 +1,4 @@
+import type { LazyMeasurementIndex } from "./lazy-index.js"
 import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type Transaction, type ViewModifierNode } from "@vune-ui/core"
 export { classNameOf }
 
@@ -240,6 +241,8 @@ export interface DomRenderContext {
   readonly domTags: WeakMap<Element, string>
   readonly lazyRanges: Map<string, LazyViewRange>
   readonly lazyMeasurements: Map<string, number>
+  readonly lazySizeIndexes: Map<string, LazyMeasurementIndex>
+  readonly lazyItemMetadata: WeakMap<Element, { readonly key: string; readonly index: number }>
   readonly lazyNodes: Map<string, LazyViewNode>
   readonly preservedLazyStatePrefixes: Map<string, Set<string>>
   readonly visitedLazyIdentities: Set<string>

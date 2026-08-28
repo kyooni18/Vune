@@ -5,6 +5,7 @@ import type { ViewIdentity, ViewIdentitySegment } from "../identity.js"
 import type { StateRef } from "../state.js"
 import type { ViewType } from "./initializers.js"
 import type { vuneForeignComponent, vuneInitializers, vuneView } from "./symbols.js"
+import type { Transition } from "../transition.js"
 
 export type ViewGraphLeaf = string | number | bigint | boolean | null | undefined
 export type ViewGraphValue = ViewGraphLeaf | ViewNode | readonly ViewGraphValue[]
@@ -225,6 +226,7 @@ export interface Modifiers {
   offset(x: number, y: number): ModifiableViewNode
   mask(value: MaskValue): ModifiableViewNode
   animation(animation: Animation | null, value: unknown): ModifiableViewNode
+  transition(transition: Transition): ModifiableViewNode
   style(value: VuneStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode
   withProps(value: Record<string, unknown>): ModifiableViewNode
@@ -247,5 +249,5 @@ export interface VuneRenderer<Output = unknown> {
   /** Materialize a geometry boundary and feed its measured proxy to the body. */
   geometry?(node: GeometryViewNode, render: (geometry: GeometryProxy) => Output): Output
   /** Materialize a lazy container; `render` may request a visible child range. */
-  lazy?(node: LazyViewNode, render: (range?: LazyViewRange) => Output, identity: ViewIdentity): Output
+  lazy?(node: LazyViewNode, render: (range?: LazyViewRange) => Output, identity: ViewIdentity, renderItem?: (index: number) => Output): Output
 }

@@ -110,8 +110,13 @@ export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRe
         const end = Math.min(value.children.length, range?.end ?? value.children.length)
         return renderer.fragment(snapshotArrayValues(value.children).slice(start, end).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", start + index])))
       }
+      const renderItem = (index: number): Output => {
+        if (!Number.isSafeInteger(index) || index < 0 || index >= value.children.length) return renderer.fragment([])
+        const child = snapshotArrayValues(value.children)[index]
+        return renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])
+      }
       return renderer.lazy
-        ? renderer.lazy(value, renderChildren, identity)
+        ? renderer.lazy(value, renderChildren, identity, renderItem)
         : renderer.element("div", value.props, ...snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])))
     }
   }

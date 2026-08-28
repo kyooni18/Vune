@@ -38,7 +38,14 @@ interface SheetCall { (isPresented: BindingRef<boolean>, content: ViewBuilderClo
 export const Sheet = defineView<SheetProps>("Sheet", {
   initializers: [initializer("Sheet(isPresented, @ViewBuilder content)", args => args.length === 2 && isBinding(args[0]) && typeof args[1] === "function", args => ({ isPresented: args[0] as BindingRef<boolean>, content: resolveBuilderInput(args[1]) }), [initializerKinds.binding(true, "isPresented", "boolean"), initializerKinds.viewBuilder(true, "content")])],
   body: ({ isPresented, content }) => isPresented.value
-    ? viewElement("div", { role: "dialog", "data-vune": "Sheet" }, content)
+    ? viewElement("dialog", {
+        role: "dialog",
+        "data-vune": "Sheet",
+        "data-vune-presentation": "modal",
+        "aria-modal": true,
+        onCancel: () => { isPresented.value = false },
+        onClose: () => { if (isPresented.value) isPresented.value = false },
+      }, content)
     : viewFragment([]),
 }) as TypedViewConstructor<SheetProps, SheetCall>
 
@@ -47,7 +54,14 @@ interface AlertCall { (isPresented: BindingRef<boolean>, title: string, message?
 export const Alert = defineView<AlertProps>("Alert", {
   initializers: [initializer("Alert(isPresented, title, message?)", args => args.length >= 2 && args.length <= 3 && isBinding(args[0]) && typeof args[1] === "string" && (args[2] === undefined || typeof args[2] === "string"), args => ({ isPresented: args[0] as BindingRef<boolean>, title: args[1] as string, message: args[2] as string | undefined }), [initializerKinds.binding(true, "isPresented", "boolean"), initializerKinds.value(true, "title", undefined, "string"), initializerKinds.value(false, "message", undefined, "string")])],
   body: ({ isPresented, title, message }) => isPresented.value
-    ? viewElement("div", { role: "alertdialog", "data-vune": "Alert" }, [Text(title), ...(message === undefined ? [] : [Text(message)])])
+    ? viewElement("dialog", {
+        role: "alertdialog",
+        "data-vune": "Alert",
+        "data-vune-presentation": "modal",
+        "aria-modal": true,
+        onCancel: () => { isPresented.value = false },
+        onClose: () => { if (isPresented.value) isPresented.value = false },
+      }, [Text(title), ...(message === undefined ? [] : [Text(message)])])
     : viewFragment([]),
 }) as TypedViewConstructor<AlertProps, AlertCall>
 

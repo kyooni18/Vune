@@ -139,6 +139,7 @@ const modifiers = Object.freeze([
   { kind: "modifier", name: "rotationEffect", signatures: ["rotationEffect(_:anchor:)"], animatable: true, lowering: { kind: "ordered", labels: ["anchor"] } },
   { kind: "modifier", name: "offset", signatures: ["offset(_:)", "offset(x:y:)"], animatable: true, lowering: { kind: "object", labels: ["x", "y"] } },
   { kind: "modifier", name: "animation", signatures: ["animation(_:value:)"], lowering: { kind: "ordered", labels: ["value"] } },
+  { kind: "modifier", name: "transition", signatures: ["transition(_:)"] },
   // Compatibility surface. These remain callable while the canonical SwiftUI
   // surface is expanded, but the parity tool does not count them as SwiftUI.
   { kind: "modifier", name: "margin", signatures: ["margin(_:)"] , compatibility: true },

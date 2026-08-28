@@ -1,5 +1,6 @@
 import type { Animation } from "../animation.js"
 import type { FrameOptions } from "../layout.js"
+import type { Transition } from "../transition.js"
 import type { VuneStyleProperties } from "../html.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import type { ClassValue, Length, ModifiableViewNode, Modifiers, OffsetValue, ScaleEffectValue, ViewModifierNode, ViewNode } from "./types.js"
@@ -161,6 +162,7 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
   },
   mask(this: ViewNode, value: ViewNode | string) { return applyModifier(this, "mask", [value]) },
   animation(this: ViewNode, animation: Animation | null, value: unknown) { return applyModifier(this, "animation", [animation, value]) },
+  transition(this: ViewNode, transition: Transition) { return applyModifier(this, "transition", [transition]) },
   style(this: ViewNode, value: VuneStyleProperties) { return applyModifier(this, "style", [value]) },
   className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },
   withProps(this: ViewNode, value: Record<string, unknown>) { return applyModifier(this, "withProps", [value]) },

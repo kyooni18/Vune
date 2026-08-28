@@ -548,22 +548,50 @@ export function animateDomLayout(
   const dy = before.top + before.height / 2 - (after.top + after.height / 2)
   const sx = before.width / after.width
   const sy = before.height / after.height
-  if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01 && Math.abs(sx - 1) < 0.0001 && Math.abs(sy - 1) < 0.0001) return false
+  const moved = Math.abs(dx) >= 0.01 || Math.abs(dy) >= 0.01
+  const resized = Math.abs(sx - 1) >= 0.0001 || Math.abs(sy - 1) >= 0.0001
+  if (!moved && !resized) return false
 
   const style = (element as Element & { style?: CSSStyleDeclaration }).style
   if (!style) return false
-  const transformChannel = activeChannels.get(element)?.get("transform")
-  const current = style.getPropertyValue("transform").trim()
-  if (current && current !== "none" && !transformChannel) return false
+  const channels = activeChannels.get(element)
+  const changes: DomStyleMotionChange[] = []
 
-  // The target layout is already committed. Invert it back onto the previous
-  // visual box synchronously, then let the regular transform channel converge
-  // to identity. Center-origin math means we do not need to mutate
-  // transform-origin and therefore cannot leak layout-animation state.
-  dropChannel(element, "transform")
-  const inverse = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
-  style.setProperty("transform", inverse)
-  return animateDomStyleWithPlan(element, "transform", inverse, "none", compileMotionPlan(animation))
+  // Use the independent CSS translate/scale channels for FLIP. This keeps the
+  // user's transform property entirely free and lets an opacity/rotation/scale
+  // animation continue with its own curve while layout converges in parallel.
+  if (moved) {
+    const currentTranslate = style.getPropertyValue("translate").trim()
+    if (!channels?.get("translate") && (!currentTranslate || currentTranslate === "none" || currentTranslate === "0px" || currentTranslate === "0px 0px")) {
+      const inverse = `${dx}px ${dy}px`
+      dropChannel(element, "translate")
+      style.setProperty("translate", inverse)
+      changes.push({ property: "translate", from: inverse, to: "0px 0px", animation })
+    }
+  }
+  if (resized) {
+    const currentScale = style.getPropertyValue("scale").trim()
+    if (!channels?.get("scale") && (!currentScale || currentScale === "none" || currentScale === "1" || currentScale === "1 1")) {
+      const inverse = `${sx} ${sy}`
+      dropChannel(element, "scale")
+      style.setProperty("scale", inverse)
+      changes.push({ property: "scale", from: inverse, to: "1 1", animation })
+    }
+  }
+
+  if (changes.length === 0) {
+    // Older browsers or applications already owning both independent channels
+    // still receive the conservative transform fallback when it is unused.
+    const transformChannel = channels?.get("transform")
+    const current = style.getPropertyValue("transform").trim()
+    if (current && current !== "none" && !transformChannel) return false
+    const inverse = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
+    dropChannel(element, "transform")
+    style.setProperty("transform", inverse)
+    return animateDomStyleWithPlan(element, "transform", inverse, "none", compileMotionPlan(animation))
+  }
+
+  return animateDomStyles(element, changes).size > 0
 }
 
 export function cancelDomAnimations(element: Element): void {

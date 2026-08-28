@@ -18,6 +18,7 @@ import {
   type StateRef,
   type Transaction,
   type Animation,
+  type Transition,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
@@ -26,7 +27,12 @@ import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
 import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue, type DomStyleMotionPolicy } from "./props.js"
 import { animateDomLayout, cancelDomAnimations, type DomLayoutBox } from "./motion.js"
+import { recordVuneBoundaryDisposed, recordVuneBoundaryRender, vuneDevtoolsEnabled } from "./devtools.js"
 import { classNameOf, cssPropertyName, domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
+import { disposeFocusScope } from "./focus.js"
+import { LazyMeasurementIndex, lazyViewportOffset } from "./lazy-index.js"
+import { playWebTransition, type WebTransitionPlayback } from "./transition.js"
+import { activateWebPresentation, disposeWebPresentation } from "./presentation.js"
 
 interface DomViewBoundary {
   readonly key: string
@@ -78,6 +84,11 @@ interface DomMotionRenderState {
   readonly partial: boolean
 }
 
+interface DomTransitionState {
+  readonly transition: Transition
+  readonly animation?: Animation | null
+}
+
 const directCompiledBodyModifierNames = new Set([
   "padding", "margin", "gap", "font", "fontSize", "bold",
   "foreground", "foregroundStyle", "background", "opacity",
@@ -103,6 +114,10 @@ interface DomViewRuntime {
   readonly compiledTemplatePatches: WeakMap<Node, () => void>
   /** Per-render animation domains attached by .animation(_:value:). */
   readonly motionStates: WeakMap<Node, DomMotionRenderState>
+  readonly transitionStates: WeakMap<Node, DomTransitionState>
+  readonly enteredTransitions: WeakSet<Node>
+  readonly exitTransitions: Map<Node, WebTransitionPlayback>
+  transitionLayer?: HTMLElement
   /** Geometry reads are collected before a mutation and committed as one FLIP batch. */
   readonly layoutSnapshots: Map<Element, { readonly before: DomLayoutBox; animation: Animation }>
   readonly stack: string[]
@@ -404,6 +419,8 @@ function bindCandidateNode(candidate: Node, live: Node, context: DomRenderContex
       partial: false,
     })
   }
+  const candidateTransition = runtime.transitionStates.get(candidate)
+  if (candidateTransition && live.nodeType === 1) runtime.transitionStates.set(live, candidateTransition)
 
   const candidateKeys = runtime.nodeKeys.get(candidate)
   if (!candidateKeys || candidateKeys.size === 0) return
@@ -421,6 +438,107 @@ function commitStagedSubtree(node: Node, context: DomRenderContext): void {
   const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
   for (const child of [...content.childNodes]) commitStagedSubtree(child, context)
   if (node.nodeType === 1) synchronizeDomSelectValue(node as Element, context.domProps.get(node as Element))
+}
+
+function activateDomPresentation(node: Node): void {
+  if (node.nodeType !== 1) return
+  const element = node as HTMLElement
+  if (!element.hasAttribute("data-vune-presentation")) return
+  queueMicrotask(() => {
+    if (!element.isConnected) return
+    activateWebPresentation(element)
+  })
+}
+
+function activateDomTransition(node: Node, context: DomRenderContext): void {
+  if (node.nodeType !== 1) return
+  const runtime = runtimeFor(context)
+  if (!runtime || runtime.enteredTransitions.has(node)) return
+  const state = runtime.transitionStates.get(node)
+  if (!state) return
+  runtime.enteredTransitions.add(node)
+  if (state.transition.descriptor.insertion.length === 0) return
+  playWebTransition(node as Element, state.transition, true, state.animation)
+}
+
+function ensureTransitionLayer(context: DomRenderContext): HTMLElement | undefined {
+  const runtime = runtimeFor(context)
+  if (!runtime) return undefined
+  if (runtime.transitionLayer?.isConnected) return runtime.transitionLayer
+  const body = context.document.body
+  if (!body) return undefined
+  const layer = context.document.createElement("div")
+  layer.setAttribute("data-vune-transition-layer", "")
+  layer.setAttribute("aria-hidden", "true")
+  layer.style.cssText = "position:fixed;inset:0;pointer-events:none;overflow:visible;z-index:2147483646;contain:layout style;"
+  body.appendChild(layer)
+  runtime.transitionLayer = layer
+  return layer
+}
+
+function canExitWithTransition(node: Node, context: DomRenderContext): boolean {
+  if (node.nodeType !== 1) return false
+  const runtime = runtimeFor(context)
+  const state = runtime?.transitionStates.get(node)
+  return Boolean(state && state.transition.descriptor.removal.length > 0 && context.document.body)
+}
+
+function beginExitTransition(parent: Node, node: Node, context: DomRenderContext): boolean {
+  if (!canExitWithTransition(node, context) || node.parentNode !== parent) return false
+  const runtime = runtimeFor(context)
+  const state = runtime?.transitionStates.get(node)
+  if (!runtime || !state) return false
+  if (runtime.exitTransitions.has(node)) return true
+  const layer = ensureTransitionLayer(context)
+  if (!layer) return false
+
+  const element = node as HTMLElement
+  const rect = safeBoundingRect(element)
+	// Native dialog/popover elements live in the browser top layer. Moving the
+	// live presentation into our transition layer can either make it disappear
+	// immediately (closed dialog) or leave native top-layer state attached to a
+	// node that is no longer part of reconciliation. Animate a visual clone for
+	// presentation exits and release the live node immediately instead. Normal
+	// elements keep using the live node so local DOM state is preserved during
+	// their exit animation.
+	const isPresentation = element.hasAttribute("data-vune-presentation")
+	const transitionElement = isPresentation ? element.cloneNode(true) as HTMLElement : element
+	if (isPresentation) {
+		releaseDomSubtree(node, context)
+		if (node.parentNode === parent) parent.removeChild(node)
+	}
+	layer.appendChild(transitionElement)
+  if (rect) {
+		transitionElement.style.position = "fixed"
+		transitionElement.style.left = `${rect.left}px`
+		transitionElement.style.top = `${rect.top}px`
+		if (rect.width > 0) transitionElement.style.width = `${rect.width}px`
+		if (rect.height > 0) transitionElement.style.height = `${rect.height}px`
+		transitionElement.style.margin = "0"
+		transitionElement.style.pointerEvents = "none"
+		transitionElement.style.boxSizing = "border-box"
+  }
+
+	const playback = playWebTransition(transitionElement, state.transition, false, state.animation, () => {
+    runtime.exitTransitions.delete(node)
+		try {
+			if (!isPresentation) releaseDomSubtree(node, context)
+		} finally {
+			try { transitionElement.parentNode?.removeChild(transitionElement) } catch { /* detached during teardown */ }
+      if (runtime.transitionLayer && runtime.transitionLayer.childNodes.length === 0) {
+        try { runtime.transitionLayer.remove() } catch { /* detached */ }
+        runtime.transitionLayer = undefined
+      }
+    }
+  })
+  runtime.exitTransitions.set(node, playback)
+  return true
+}
+
+function removeDomNode(parent: Node, node: Node, context: DomRenderContext): void {
+  if (beginExitTransition(parent, node, context)) return
+  releaseDomSubtree(node, context)
+  if (node.parentNode === parent) parent.removeChild(node)
 }
 
 function bindInsertedSubtree(node: Node, context: DomRenderContext): void {
@@ -445,6 +563,8 @@ function bindInsertedSubtree(node: Node, context: DomRenderContext): void {
   // walking props again would repeat event-map work for every live element.
   const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
   for (const child of [...content.childNodes]) bindInsertedSubtree(child, context)
+  activateDomPresentation(node)
+  activateDomTransition(node, context)
 }
 
 function bindHydratedSubtree(candidate: Node, live: Node, context: DomRenderContext): void {
@@ -484,6 +604,8 @@ function copyCandidateMetadata(source: Node, target: Node, context: DomRenderCon
     const viewSlotBinding = runtime.compiledTemplateViewSlots.get(source)
     if (viewSlotBinding) runtime.compiledTemplateViewSlots.set(target, viewSlotBinding)
     copyMotionRenderState(source, target, runtime)
+    const transition = runtime.transitionStates.get(source)
+    if (transition) runtime.transitionStates.set(target, transition)
     runtime.reuseCandidates.set(target, source)
   }
 }
@@ -680,25 +802,29 @@ function appendNodeBatch(parent: Node, nodes: readonly Node[]): void {
 
 function removeNodeBatch(parent: Node, nodes: readonly Node[], context: DomRenderContext): void {
   if (nodes.length === 0) return
-  for (const node of nodes) releaseDomSubtree(node, context)
-  const current = parent.childNodes
-  let coversParent = current.length === nodes.length
-  if (coversParent) {
-    for (let index = 0; index < nodes.length; index += 1) {
-      if (current[index] !== nodes[index]) {
-        coversParent = false
-        break
+  // Preserve the fast all-at-once path for the overwhelmingly common case.
+  // Lifecycle transitions opt individual nodes out of synchronous removal.
+  if (!nodes.some(node => canExitWithTransition(node, context))) {
+    for (const node of nodes) releaseDomSubtree(node, context)
+    const current = parent.childNodes
+    let coversParent = current.length === nodes.length
+    if (coversParent) {
+      for (let index = 0; index < nodes.length; index += 1) {
+        if (current[index] !== nodes[index]) {
+          coversParent = false
+          break
+        }
       }
     }
-  }
-  const replaceChildren = (parent as Node & { replaceChildren?: (...nodes: Node[]) => void }).replaceChildren
-  if (coversParent && typeof replaceChildren === "function") {
-    replaceChildren.call(parent)
+    const replaceChildren = (parent as Node & { replaceChildren?: (...nodes: Node[]) => void }).replaceChildren
+    if (coversParent && typeof replaceChildren === "function") {
+      replaceChildren.call(parent)
+      return
+    }
+    for (const node of nodes) if (node.parentNode === parent) parent.removeChild(node)
     return
   }
-  for (const node of nodes) {
-    if (node.parentNode === parent) parent.removeChild(node)
-  }
+  for (const node of nodes) removeDomNode(parent, node, context)
 }
 
 function reconcileTailAppend(
@@ -808,7 +934,9 @@ function reconcilePureKeyedPermutation(
 function releaseDomSubtree(node: Node, context: DomRenderContext): void {
   if (node.nodeType === 1) {
     const element = node as Element
+    if (element.hasAttribute("data-vune-presentation")) disposeWebPresentation(element as HTMLElement)
     cancelDomAnimations(element)
+    disposeFocusScope(element)
     if (context.eventTargetCount > 0) clearDomEvents(element, context)
     for (const child of domContentContainer(element).childNodes) releaseDomSubtree(child, context)
     return
@@ -834,9 +962,12 @@ function collectDomElements(root: Node): Element[] {
 }
 
 function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRenderContext): Node {
-  releaseDomSubtree(current, context)
+  const anchor = current.nextSibling
+  const exiting = beginExitTransition(parent, current, context)
+  if (!exiting) releaseDomSubtree(current, context)
   commitStagedSubtree(next, context)
-  parent.replaceChild(next, current)
+  if (exiting) parent.insertBefore(next, anchor)
+  else parent.replaceChild(next, current)
   bindInsertedSubtree(next, context)
   return next
 }
@@ -919,10 +1050,7 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
   }
 
   for (const child of currentChildren) {
-    if (!used.has(child) && child.parentNode === parent) {
-      releaseDomSubtree(child, context)
-      parent.removeChild(child)
-    }
+    if (!used.has(child) && child.parentNode === parent) removeDomNode(parent, child, context)
   }
 }
 
@@ -1034,8 +1162,7 @@ function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNode
   }
   for (const node of current) {
     if (used.has(node) || node.parentNode !== parent) continue
-    releaseDomSubtree(node, context)
-    parent.removeChild(node)
+    removeDomNode(parent, node, context)
   }
   return liveNodes
 }
@@ -1070,41 +1197,51 @@ function lazyScrollParent(element: HTMLElement, axis: LazyViewNode["axis"]): HTM
   return null
 }
 
-function measuredLazySize(element: HTMLElement, node: LazyViewNode): number | undefined {
-  let total = 0
-  let count = 0
-  for (const child of element.children) {
-    if (child.hasAttribute("data-vune-lazy-spacer")) continue
-    const rect = safeBoundingRect(child)
-    if (!rect) continue
-    const value = node.axis === "horizontal" ? rect.width : rect.height
-    if (!Number.isFinite(value) || value <= 0) continue
-    total += value
-    count += 1
-  }
-  return count === 0 ? undefined : total / count
+function lazyGap(node: LazyViewNode): number {
+  const style = node.props.style
+  if (!style || typeof style !== "object") return 0
+  const raw = (style as Record<string, unknown>).gap
+  const parsed = typeof raw === "number" ? raw : typeof raw === "string" ? Number.parseFloat(raw) : Number.NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
-function lazyRangeForElement(element: HTMLElement, node: LazyViewNode, measuredSize?: number): LazyViewRange {
+function lazyMeasurementIndex(context: DomRenderContext, key: string, node: LazyViewNode): LazyMeasurementIndex {
+  const estimate = lazyEstimate(node)
+  const gap = lazyGap(node)
+  let index = context.lazySizeIndexes.get(key)
+  if (!index) {
+    index = new LazyMeasurementIndex(node.children.length, estimate, gap)
+    context.lazySizeIndexes.set(key, index)
+  } else {
+    index.configure(node.children.length, estimate, gap)
+  }
+  return index
+}
+
+function lazyViewportMetrics(element: HTMLElement, node: LazyViewNode): { readonly offset: number; readonly viewport: number } {
   const vertical = node.axis !== "horizontal"
   const rect = safeBoundingRect(element)
   const parent = lazyScrollParent(element, node.axis)
   const window = element.ownerDocument.defaultView
   const elementOffset = vertical ? rect?.top ?? 0 : rect?.left ?? 0
-  let start = -elementOffset
+  let offset = -elementOffset
   let viewport = vertical ? window?.innerHeight ?? 800 : window?.innerWidth ?? 1200
   if (parent) {
     const parentRect = safeBoundingRect(parent)
     const parentOffset = vertical ? parentRect?.top ?? 0 : parentRect?.left ?? 0
-    start = (vertical ? parent.scrollTop : parent.scrollLeft) + parentOffset - elementOffset
+    // Bounding rects are viewport-relative already; their difference is the
+    // scroll viewport origin in lazy-container coordinates. Adding scrollTop
+    // or scrollLeft here would count the parent's scroll position twice.
+    offset = lazyViewportOffset(parentOffset, elementOffset)
     viewport = vertical ? parent.clientHeight : parent.clientWidth
     if (!viewport) viewport = vertical ? window?.innerHeight ?? 800 : window?.innerWidth ?? 1200
   }
-  const estimate = Number.isFinite(measuredSize) && measuredSize && measuredSize > 0 ? measuredSize : lazyEstimate(node)
-  const overscan = lazyOverscan(node)
-  const first = Math.max(0, Math.floor(Math.max(0, start) / estimate) - overscan)
-  const last = Math.min(node.children.length, Math.ceil((Math.max(0, start) + Math.max(1, viewport)) / estimate) + overscan)
-  return { start: first, end: Math.max(first, last) }
+  return { offset: lazyViewportOffset(offset, 0), viewport: Math.max(1, viewport) }
+}
+
+function lazyRangeForElement(element: HTMLElement, node: LazyViewNode, index: LazyMeasurementIndex): LazyViewRange {
+  const metrics = lazyViewportMetrics(element, node)
+  return index.rangeForViewport(metrics.offset, metrics.viewport, lazyOverscan(node))
 }
 
 function boundedLazyRange(range: LazyViewRange, count: number): LazyViewRange {
@@ -1319,6 +1456,19 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         ? modifier.arguments[0] as Animation
         : modifier.arguments[0] === null ? null : null
       recordAnimationDomain(content, animation, modifier.arguments[1], context)
+      return content
+    }
+    if (modifier.name === "transition") {
+      const transition = modifier.arguments[0]
+      if (runtime && transition && typeof transition === "object" && "descriptor" in transition) {
+        const state: DomTransitionState = {
+          transition: transition as Transition,
+          animation: context.activeTransaction?.animation,
+        }
+        for (const node of outputNodes(content)) {
+          if (node.nodeType === 1) runtime.transitionStates.set(node, state)
+        }
+      }
       return content
     }
     if (modifier.name === "keyed") {
@@ -1587,7 +1737,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       }
       return output
     },
-    lazy(node, render, identity) {
+    lazy(node, render, identity, renderItem) {
       markUnsafeViewAncestors(context)
       const key = viewIdentityKey(identity)
       context.visitedLazyIdentities.add(key)
@@ -1595,8 +1745,8 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       const element = context.document.createElement("div")
       applyDomProps(element, node.props, context)
       context.lazyKeys.set(element, key)
-      const estimate = context.lazyMeasurements.get(key)
-      const requested = context.lazyRanges.get(key) ?? lazyRangeForElement(element, node, estimate)
+      const measurement = lazyMeasurementIndex(context, key, node)
+      const requested = context.lazyRanges.get(key) ?? lazyRangeForElement(element, node, measurement)
       const range = boundedLazyRange(requested, node.children.length)
       context.lazyRanges.set(key, range)
       const preserved = new Set<string>()
@@ -1607,12 +1757,23 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         }
       })
       context.preservedLazyStatePrefixes.set(key, preserved)
-      const itemSize = estimate ?? lazyEstimate(node)
-      if (range.start > 0) appendDomChild(element, lazySpacer(context, node, range.start * itemSize, "before"), context)
-      appendDomChild(element, render(range), context)
-      if (range.end < node.children.length) appendDomChild(element, lazySpacer(context, node, (node.children.length - range.end) * itemSize, "after"), context)
-      const measured = measuredLazySize(element, node)
-      if (measured !== undefined) context.lazyMeasurements.set(key, measured)
+      if (range.start > 0) appendDomChild(element, lazySpacer(context, node, measurement.hiddenBeforeSize(range.start), "before"), context)
+      if (renderItem) {
+        for (let index = range.start; index < range.end; index += 1) {
+          const wrapper = context.document.createElement("div")
+          wrapper.setAttribute("data-vune-lazy-item", "")
+          wrapper.setAttribute("data-vune-lazy-index", String(index))
+          wrapper.style.boxSizing = "border-box"
+          wrapper.style.flex = "0 0 auto"
+          if (node.axis !== "horizontal") wrapper.style.width = "100%"
+          context.lazyItemMetadata.set(wrapper, { key, index })
+          appendDomChild(wrapper, renderItem(index), context)
+          appendDomChild(element, wrapper, context)
+        }
+      } else {
+        appendDomChild(element, render(range), context)
+      }
+      if (range.end < node.children.length) appendDomChild(element, lazySpacer(context, node, measurement.hiddenAfterSize(range.end), "after"), context)
       return element
     },
     modifier(content, modifier) {
@@ -1714,6 +1875,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       domTags: new WeakMap(),
       lazyRanges: new Map(),
       lazyMeasurements: new Map(),
+      lazySizeIndexes: new Map(),
+      lazyItemMetadata: new WeakMap(),
       lazyNodes: new Map(),
       preservedLazyStatePrefixes: new Map(),
       visitedLazyIdentities: new Set(),
@@ -1736,6 +1899,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       compiledTemplateViewSlots: new WeakMap(),
       compiledTemplatePatches: new WeakMap(),
       motionStates: new WeakMap(),
+      transitionStates: new WeakMap(),
+      enteredTransitions: new WeakSet(),
+      exitTransitions: new Map(),
       layoutSnapshots: new Map(),
       stack: [],
       renderedKeys: new Set(),
@@ -1750,6 +1916,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     let activeRefs = new Map<Element, { readonly reference: unknown; readonly cleanup: () => void }>()
     let geometryScheduled = false
     let lazyMeasureScheduled = false
+    let lazyItemObserver: ResizeObserver | undefined
     const lazyViewportTargets = new Set<EventTarget>()
     const lazyViewportCleanups: Array<() => void> = []
     let hasMounted = false
@@ -1773,6 +1940,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       boundary.scheduled = false
       boundary.currentNodes = []
       viewRuntime.boundaries.delete(key)
+      recordVuneBoundaryDisposed(key)
       if (!preserveState) context.states.delete(key)
     }
     const beginViewPass = (boundaryRootKey?: string): void => {
@@ -1781,6 +1949,44 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       viewRuntime.boundaryRootKey = boundaryRootKey
       if (!boundaryRootKey) viewRuntime.rootNextChildren.clear()
     }
+    const scheduledBoundaryUpdates = new Set<DomViewBoundary>()
+    let boundaryFlushScheduled = false
+    let updateBoundary!: (boundary: DomViewBoundary) => void
+    const boundaryDepth = (boundary: DomViewBoundary): number => {
+      let depth = 0
+      let parentKey = boundary.parentKey
+      const seen = new Set<string>()
+      while (parentKey && !seen.has(parentKey)) {
+        seen.add(parentKey)
+        depth += 1
+        parentKey = viewRuntime.boundaries.get(parentKey)?.parentKey
+      }
+      return depth
+    }
+    const flushBoundaryUpdates = (): void => {
+      boundaryFlushScheduled = false
+      if (stopped || scheduledBoundaryUpdates.size === 0) return
+      const batch = [...scheduledBoundaryUpdates]
+      scheduledBoundaryUpdates.clear()
+      // Parent-first processing lets one ancestor reconciliation absorb all of
+      // its dirty descendants instead of running N independent microtasks.
+      batch.sort((left, right) => boundaryDepth(left) - boundaryDepth(right))
+      for (const boundary of batch) {
+        if (!boundary.scheduled) continue
+        updateBoundary(boundary)
+      }
+      if (scheduledBoundaryUpdates.size > 0 && !boundaryFlushScheduled) {
+        boundaryFlushScheduled = true
+        queueMicrotask(flushBoundaryUpdates)
+      }
+    }
+    const enqueueBoundaryUpdate = (boundary: DomViewBoundary): void => {
+      scheduledBoundaryUpdates.add(boundary)
+      if (boundaryFlushScheduled || stopped) return
+      boundaryFlushScheduled = true
+      queueMicrotask(flushBoundaryUpdates)
+    }
+
     const requestRootUpdate = (transaction?: Transaction, forceAll = true): void => {
       if (transaction) pendingTransaction = transaction
       if (forceAll) viewRuntime.forceAll = true
@@ -1816,7 +2022,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
             requestRootUpdate(transaction, false)
             return
           }
-          queueMicrotask(() => updateBoundary(boundary))
+          enqueueBoundaryUpdate(boundary)
         }))
       }
     }
@@ -1926,9 +2132,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         if (!key) continue
         const node = context.lazyNodes.get(key)
         if (!node) continue
-        const measured = measuredLazySize(element, node)
-        if (measured !== undefined) context.lazyMeasurements.set(key, measured)
-        const next = lazyRangeForElement(element, node, context.lazyMeasurements.get(key))
+        const measurement = lazyMeasurementIndex(context, key, node)
+        const next = lazyRangeForElement(element, node, measurement)
         if (!sameLazyRange(context.lazyRanges.get(key), next)) {
           context.lazyRanges.set(key, next)
           changed = true
@@ -1945,6 +2150,56 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         requestRootUpdate(undefined, true)
       })
     }
+    const observeLazyItems = () => {
+      if (typeof ResizeObserver === "undefined") return
+      lazyItemObserver ??= new ResizeObserver(entries => {
+        let changed = false
+        for (const entry of entries) {
+          const element = entry.target as HTMLElement
+          const metadata = context.lazyItemMetadata.get(element)
+          if (!metadata) continue
+          const node = context.lazyNodes.get(metadata.key)
+          const measurement = context.lazySizeIndexes.get(metadata.key)
+          if (!node || !measurement) continue
+          const rect = safeBoundingRect(element)
+          const size = node.axis === "horizontal" ? rect?.width : rect?.height
+          if (!size || !Number.isFinite(size) || size <= 0) continue
+          const delta = measurement.set(metadata.index, size)
+          if (Math.abs(delta) < 0.01) continue
+          changed = true
+
+          // Keep the same logical content under the viewport when an overscan
+          // row above it changes height. The normal root pass snapshots this
+          // adjusted position and therefore does not undo the correction.
+          const containerElement = element.parentElement
+          if (!containerElement) continue
+          const scrollParent = lazyScrollParent(containerElement, node.axis)
+          const elementRect = safeBoundingRect(element)
+          if (scrollParent) {
+            const parentRect = safeBoundingRect(scrollParent)
+            const beforeViewport = node.axis === "horizontal"
+              ? (elementRect?.right ?? 0) <= (parentRect?.left ?? 0)
+              : (elementRect?.bottom ?? 0) <= (parentRect?.top ?? 0)
+            if (beforeViewport) {
+              if (node.axis === "horizontal") scrollParent.scrollLeft += delta
+              else scrollParent.scrollTop += delta
+            }
+          } else {
+            const window = document.defaultView
+            const beforeViewport = node.axis === "horizontal"
+              ? (elementRect?.right ?? 0) <= 0
+              : (elementRect?.bottom ?? 0) <= 0
+            if (window && beforeViewport) {
+              window.scrollBy(node.axis === "horizontal" ? delta : 0, node.axis === "horizontal" ? 0 : delta)
+            }
+          }
+        }
+        if (changed) scheduleLazyMeasure()
+      })
+      lazyItemObserver.disconnect()
+      container.querySelectorAll<HTMLElement>("[data-vune-lazy-item]").forEach(element => lazyItemObserver!.observe(element))
+    }
+
     const observeLazyViewport = () => {
       const targets = new Set<EventTarget>()
       const window = document.defaultView
@@ -2126,8 +2381,10 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       return true
     }
 
-    const updateBoundary = (boundary: DomViewBoundary): void => {
+    updateBoundary = (boundary: DomViewBoundary): void => {
       if (stopped || viewRuntime.boundaries.get(boundary.key) !== boundary || !boundary.scheduled) return
+      const profile = vuneDevtoolsEnabled()
+      const startedAt = profile ? performance.now() : 0
       let parentKey = boundary.parentKey
       while (parentKey) {
         const parentBoundary = viewRuntime.boundaries.get(parentKey)
@@ -2142,7 +2399,19 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         return
       }
       const renderTransaction = boundary.pendingTransaction
-      if (patchCompiledBoundary(boundary, renderTransaction)) return
+      if (patchCompiledBoundary(boundary, renderTransaction)) {
+        if (profile) recordVuneBoundaryRender({
+          key: boundary.key,
+          name: boundary.node.name,
+          parentKey: boundary.parentKey,
+          durationMs: performance.now() - startedAt,
+          dependencyCount: boundary.dependencies.size,
+          nodeCount: boundary.currentNodes.length,
+          mode: "compiled",
+          element: boundary.currentNodes.find(node => node.nodeType === 1) as Element | undefined,
+        })
+        return
+      }
       context.activeTransaction = renderTransaction
       beginViewPass(boundary.key)
       context.hasRefs = false
@@ -2169,6 +2438,16 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       commitViewPass(false)
       commitRefs()
       context.activeTransaction = undefined
+      if (profile) recordVuneBoundaryRender({
+        key: boundary.key,
+        name: boundary.node.name,
+        parentKey: boundary.parentKey,
+        durationMs: performance.now() - startedAt,
+        dependencyCount: boundary.dependencies.size,
+        nodeCount: boundary.currentNodes.length,
+        mode: "reconcile",
+        element: boundary.currentNodes.find(node => node.nodeType === 1) as Element | undefined,
+      })
     }
 
     update = () => {
@@ -2247,11 +2526,15 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       for (const key of context.lazyMeasurements.keys()) {
         if (!context.visitedLazyIdentities.has(key)) context.lazyMeasurements.delete(key)
       }
+      for (const key of context.lazySizeIndexes.keys()) {
+        if (!context.visitedLazyIdentities.has(key)) context.lazySizeIndexes.delete(key)
+      }
       commitRefs()
       syncSubscriptions(dependencies, transaction => {
         requestRootUpdate(transaction, true)
       })
       updateGeometry()
+      observeLazyItems()
       observeLazyViewport()
       if (refreshLazyRanges() && !scheduled) {
         requestRootUpdate(undefined, true)
@@ -2286,8 +2569,14 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
       viewRuntime.boundaries.clear()
       viewRuntime.layoutSnapshots.clear()
+      for (const playback of [...viewRuntime.exitTransitions.values()]) cleanup(playback.cancel)
+      viewRuntime.exitTransitions.clear()
+      cleanup(() => viewRuntime.transitionLayer?.remove())
+      viewRuntime.transitionLayer = undefined
       activeRefs.forEach(entry => cleanup(entry.cleanup))
       activeRefs.clear()
+      cleanup(() => lazyItemObserver?.disconnect())
+      lazyItemObserver = undefined
       lazyViewportCleanups.forEach(action => cleanup(action))
       lazyViewportCleanups.length = 0
       cleanup(() => geometryProbe.remove())

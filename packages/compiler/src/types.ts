@@ -39,4 +39,13 @@ export interface VuneVitePluginOptions {
   readonly include?: RegExp
   /** Generate detailed compiler maps for transformed modules (default: true). */
   readonly sourceMap?: boolean
+  /**
+   * Optional transitional Vue-host codegen. When configured, importing a
+   * `.vune` source with `?vue-host` emits a thin runtime placement component
+   * from the selected Vune initializer plan. Use generateVueHostModule for a
+   * physical TypeScript host when consumer-visible `$props` typing is needed.
+   */
+  readonly vueHost?: {
+    readonly factoryImport: string
+  }
 }

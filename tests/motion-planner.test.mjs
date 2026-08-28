@@ -129,14 +129,16 @@ test("multi-style motion launches independent channels together without cross-ca
 })
 
 test("layout FLIP animates real size and position deltas on its own channel", async () => {
-  const element = fakeElement({ transform: "" })
+  const element = fakeElement({ transform: "rotate(8deg)", translate: "", scale: "" })
   const before = { left: 10, top: 20, width: 100, height: 30 }
   const after = { left: 55, top: 32, width: 160, height: 54 }
   assert.equal(animateDomLayout(element, before, after, Animation.easeInOut(0.04)), true)
-  const inverted = element.value("transform") ?? ""
-  assert.match(inverted, /translate\(/)
-  assert.match(inverted, /scale\(/)
+  assert.match(element.value("translate") ?? "", /px/)
+  assert.notEqual(element.value("scale"), "")
+  assert.equal(element.value("transform"), "rotate(8deg)")
   await sleep(120)
-  assert.equal(element.value("transform"), "none")
+  assert.match(element.value("translate") ?? "", /^0(?:\.0+)?px 0(?:\.0+)?px$/)
+  assert.match(element.value("scale") ?? "", /^1(?:\.0+)? 1(?:\.0+)?$/)
+  assert.equal(element.value("transform"), "rotate(8deg)")
   cancelDomAnimations(element)
 })

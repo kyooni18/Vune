@@ -7,6 +7,8 @@ import type { VuneLanguageService, VuneSourceMap, VuneTransformResult } from "./
 export { transformVuneSource } from "./pipeline.js"
 export { diagnoseVuneSource } from "./diagnostics.js"
 export { createVuneVitePlugin } from "./vite.js"
+export { generateVueHostModule } from "./vue-host.js"
+export type { VuneVueHostGenerationOptions, VuneVueHostGenerationResult } from "./vue-host.js"
 export type { VuneDiagnostic, VuneLanguageService, VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
 export { lowerVuneBuilderAst, parseVuneBuilder, parseVuneStructs } from "./ast.js"

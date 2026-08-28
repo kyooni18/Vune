@@ -157,6 +157,31 @@ export interface ViewFieldDefinition {
   readonly defaultValue?: string
 }
 
+/**
+ * Compiler-emitted adapter metadata for embedding a Vune View in a legacy host.
+ * The metadata is intentionally renderer-neutral: platform adapters can map
+ * field names to framework props without parsing source type strings at runtime.
+ */
+export type LegacyHostCoercion = "identity" | "boolean" | "number"
+
+export interface LegacyHostParameterPlan {
+  readonly name?: string
+  readonly label?: string
+  readonly kind: InitializerParameterKind
+  readonly required?: boolean
+  readonly trailing?: boolean
+  readonly coercion: LegacyHostCoercion
+}
+
+export interface LegacyHostInitializerPlan {
+  readonly index: number
+  readonly parameters: readonly LegacyHostParameterPlan[]
+}
+
+export interface LegacyHostPlan {
+  readonly initializers: readonly LegacyHostInitializerPlan[]
+}
+
 export interface ViewDefinition<Props extends object = Record<string, unknown>> {
   readonly name?: string
   readonly genericParameters?: string
@@ -169,6 +194,8 @@ export interface ViewDefinition<Props extends object = Record<string, unknown>> 
   readonly dependenciesComplete?: boolean
   /** Compiler-emitted immutable template plus its dynamic slot evaluator. */
   readonly compiledBody?: CompiledViewBodyPlan<Props>
+  /** Compiler-emitted plan consumed by framework compatibility hosts. */
+  readonly legacyHost?: LegacyHostPlan
   readonly intrinsic?: boolean
   readonly body: (props: Props) => ViewValue
 }
@@ -713,6 +740,7 @@ export class ViewType<Props extends object = Record<string, unknown>> {
   readonly fields: readonly ViewFieldDefinition[]
   readonly definition: ViewDefinition<Props>
   readonly initializers: readonly InitializerMatch[]
+  readonly legacyHost?: LegacyHostPlan
   /** Canonical semantic symbol consumed by compiler/IDE/runtime adapters. */
   readonly semanticSymbol: SemanticViewTypeSymbol
   private target: unknown
@@ -723,6 +751,7 @@ export class ViewType<Props extends object = Record<string, unknown>> {
     this.fields = definition.fields ?? []
     this.definition = definition
     this.initializers = definition.initializers
+    this.legacyHost = definition.legacyHost
     this.semanticSymbol = {
       kind: "view",
       name,

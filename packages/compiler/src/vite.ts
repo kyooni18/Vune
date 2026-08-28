@@ -1,6 +1,7 @@
 import { createVuneSourceMap } from "./source-map.js"
 import { hasVuneSyntax, transformVuneSource } from "./pipeline.js"
 import { staticModifierNames } from "./specialization.js"
+import { generateVueHostModule } from "./vue-host.js"
 import type { VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
 const VUNE_SOURCE_RE = /\.vune(?:\.tsx?)?$/i
@@ -83,6 +84,28 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
     // for authoring syntax and corrupt otherwise valid module code.
     if (/[\\/]node_modules[\\/]/.test(fileName) || /[\\/]dist[\\/]/.test(fileName)) return null
     const isVue = /\.vue$/i.test(fileName)
+    const isVueHostModule = VUNE_SOURCE_RE.test(fileName) && /(?:^|&)vue-host(?:=1)?(?:&|$)/.test(query)
+    if (isVueHostModule) {
+      if (!options.vueHost?.factoryImport) {
+        throw new TypeError(`Vune Vue host import requires vite option vueHost.factoryImport (${id})`)
+      }
+      if (options.include) {
+        options.include.lastIndex = 0
+        if (!options.include.test(fileName)) return null
+      }
+      const generated = generateVueHostModule(source, fileName, {
+        viewImport: fileName,
+        hostFactoryImport: options.vueHost.factoryImport,
+        // Vite sees this module under a custom .vune id. Emit executable JS
+        // rather than relying on a later TypeScript loader to strip host-only
+        // interfaces/assertions from that custom extension.
+        emitTypes: false,
+      })
+      return {
+        code: generated.code,
+        map: sourceMapEnabled ? createVuneSourceMap(source, generated.code, id) : emptySourceMap(id),
+      }
+    }
     const isVueTemplate = isVue && /(?:^|&)type=template(?:&|$)/.test(query)
     const isVueStyle = isVue && /(?:^|&)type=style(?:&|$)/.test(query)
     const isVueScript = isVue && (
@@ -167,6 +190,18 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
           },
         },
       }
+    },
+    handleHotUpdate(context: { file: string; modules?: unknown[] }) {
+      // Invalidate only modules derived from the changed authoring file. Vite
+      // keeps the live module graph and renderer state while the compiler drops
+      // stale source/codegen entries for the next transform. Query modules such
+      // as .vune?vue-host are invalidated together with the source module.
+      const normalized = context.file.replace(/\\/g, "/")
+      for (const key of [...cache.keys()]) {
+        const candidate = key.split("?", 1)[0].replace(/\\/g, "/")
+        if (candidate === normalized) cache.delete(key)
+      }
+      return context.modules
     },
     transform,
   }

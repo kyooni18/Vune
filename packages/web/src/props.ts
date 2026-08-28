@@ -1,6 +1,7 @@
 import { classNameOf, type Animation } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, normalizedTextAreaValue, type DomRenderContext } from "./shared.js"
 import { animateDomStyles, cancelDomAnimations, cancelDomStyleAnimation, type DomStyleMotionChange } from "./motion.js"
+import { syncFocusScope } from "./focus.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"
 const XML_NS = "http://www.w3.org/XML/1998/namespace"
@@ -286,6 +287,7 @@ function applyDomPropsNow(
 
 export function applyDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
   applyDomPropsNow(element, props, context, true)
+  if (!context.stagingProps && !context.hydrating) syncFocusScope(element, props?.["data-vune-focus-scope"])
 }
 
 export function commitStagedDomProps(element: Element, context: DomRenderContext): void {
@@ -299,6 +301,7 @@ export function commitStagedDomProps(element: Element, context: DomRenderContext
     // stageDomProps already holds the normalized snapshot. Do not clone it a
     // second time merely because the candidate is becoming live.
     applyDomPropsNow(element, props, context, false)
+    syncFocusScope(element, props["data-vune-focus-scope"])
   } finally {
     context.stagingProps = stagingProps
     context.stagingEvents = stagingEvents
@@ -459,4 +462,5 @@ export function patchDomProps(
   }
   if (!next || nextKeys.length === 0) context.domProps.delete(element)
   else context.domProps.set(element, next)
+  syncFocusScope(element, next?.["data-vune-focus-scope"])
 }
