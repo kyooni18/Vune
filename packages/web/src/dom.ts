@@ -416,6 +416,8 @@ function captureLayoutElement(element: Element, animation: Animation | null | un
 }
 
 function captureLayoutNeighborhood(element: Element, animation: Animation | null | undefined, context: DomRenderContext): void {
+  if (context.activeTransaction?.disablesAnimations) return
+  if ((animation === undefined ? context.activeTransaction?.animation : animation) == null) return
   captureLayoutElement(element, animation, context)
   const parent = element.parentElement
   if (!parent) return
@@ -426,6 +428,8 @@ function captureLayoutNeighborhood(element: Element, animation: Animation | null
 }
 
 function captureLayoutChildren(parent: Node, animation: Animation | null | undefined, context: DomRenderContext): void {
+  if (context.activeTransaction?.disablesAnimations) return
+  if ((animation === undefined ? context.activeTransaction?.animation : animation) == null) return
   if (parent.nodeType === 1) captureLayoutElement(parent as Element, animation, context)
   for (const child of parent.childNodes) {
     if (child.nodeType === 1) captureLayoutElement(child as Element, animation, context)
@@ -673,6 +677,7 @@ function bindInsertedSubtree(node: Node, context: DomRenderContext): void {
     bindInsertedSubtree(reusable, context)
     return
   }
+  if (node.parentNode && nodeKey(node, context) !== undefined) context.keyedParents.add(node.parentNode)
   bindCandidateNode(node, node, context)
   // commitStagedSubtree() has already activated props (including events) for
   // every newly inserted descendant. This phase only binds runtime metadata;
@@ -873,6 +878,17 @@ function nodeKey(node: Node, context: DomRenderContext): string | number | undef
   return context.domKeys.get(node)
 }
 
+function rangeHasDomKeys(parent: Node, next: ArrayLike<Node>, context: DomRenderContext): boolean {
+  if (!context.hasDomKeys) return false
+  if (context.keyedParents.has(parent)) return true
+  for (let index = 0; index < next.length; index += 1) {
+    if (nodeKey(next[index], context) === undefined) continue
+    context.keyedParents.add(parent)
+    return true
+  }
+  return false
+}
+
 function longestIncreasingSubsequenceIndices(values: readonly number[]): Set<number> {
   if (values.length === 0) return new Set()
   const predecessors = new Array<number>(values.length).fill(-1)
@@ -1048,6 +1064,9 @@ function reconcilePureKeyedPermutation(
 }
 
 function releaseDomSubtree(node: Node, context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  const compiledRoot = runtime?.compiledTemplateRoots.get(node)
+  if (compiledRoot) runtime?.compiledTemplates.delete(compiledRoot.key)
   if (node.nodeType === 1) {
     const element = node as Element
     if (element.hasAttribute("data-vune-presentation")) disposeWebPresentation(element as HTMLElement)
@@ -1090,7 +1109,8 @@ function replaceDomNode(parent: Node, current: Node, next: Node, context: DomRen
 
 function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, context: DomRenderContext): void {
   const currentNodes = parent.childNodes
-  if (currentNodes.length !== nextChildren.length || context.hasDomKeys) captureLayoutChildren(parent, undefined, context)
+  const keyedChildren = rangeHasDomKeys(parent, nextChildren, context)
+  if (currentNodes.length !== nextChildren.length || keyedChildren) captureLayoutChildren(parent, undefined, context)
   if (nextChildren.length === 0) {
     if (currentNodes.length > 0) removeNodeBatch(parent, [...currentNodes], context)
     return
@@ -1102,36 +1122,19 @@ function reconcileDomChildren(parent: Node, nextChildren: ArrayLike<Node>, conte
     for (const addition of additions) bindInsertedSubtree(addition, context)
     return
   }
-  // Most trees are entirely unkeyed. Avoid probing two WeakMaps for every
-  // child before taking the simple positional reconciliation path. Once a key
-  // has appeared we keep the flag set for the lifetime of the mount, so this
-  // remains conservative when a later pass removes that keyed branch.
-  if (!context.hasDomKeys && currentNodes.length === nextChildren.length) {
+  // Keyed reconciliation is a property of this sibling range, not of the
+  // entire mount. A single keyed ForEach elsewhere must not force every
+  // unrelated subtree through WeakMap probes and keyed bookkeeping forever.
+  if (!keyedChildren && currentNodes.length === nextChildren.length) {
+    // nextChildren is often a live NodeList owned by a detached candidate. If
+    // a replacement moves one of those nodes into the live tree, that list
+    // shrinks immediately and a direct loop can skip later siblings. Only
+    // the candidate side needs a snapshot; replacements keep live length.
     const nextSnapshot = Array.from(nextChildren)
     for (let index = 0; index < nextSnapshot.length; index += 1) {
       reconcileDomNode(parent, currentNodes[index], nextSnapshot[index], context)
     }
     return
-  }
-  if (currentNodes.length === nextChildren.length) {
-    let unkeyed = true
-    for (let index = 0; index < nextChildren.length; index += 1) {
-      if (nodeKey(currentNodes[index], context) !== undefined || nodeKey(nextChildren[index], context) !== undefined) {
-        unkeyed = false
-        break
-      }
-    }
-    if (unkeyed) {
-      // nextChildren is often a live NodeList owned by a detached candidate. If
-      // a replacement moves one of those nodes into the live tree, that list
-      // shrinks immediately and a direct loop can skip later siblings. Only
-      // the candidate side needs a snapshot; replacements keep live length.
-      const nextSnapshot = Array.from(nextChildren)
-      for (let index = 0; index < nextSnapshot.length; index += 1) {
-        reconcileDomNode(parent, currentNodes[index], nextSnapshot[index], context)
-      }
-      return
-    }
   }
   const currentChildren = [...currentNodes]
   const nextArray = Array.from(nextChildren)
@@ -1209,6 +1212,7 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
   if (nextKey !== undefined) {
     context.hasDomKeys = true
     context.domKeys.set(currentElement, nextKey)
+    if (currentElement.parentNode) context.keyedParents.add(currentElement.parentNode)
   }
   else if (nodeKey(currentElement, context) !== undefined) context.domKeys.delete(currentElement)
   bindCandidateNode(next, current, context)
@@ -1237,7 +1241,8 @@ function reconcileDomNode(parent: Node, current: Node, next: Node, context: DomR
 
 function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNodes: readonly Node[], context: DomRenderContext): Node[] {
   const current = currentNodes.filter(node => node.parentNode === parent)
-  if (current.length !== nextNodes.length || context.hasDomKeys) captureLayoutChildren(parent, undefined, context)
+  const keyedRange = rangeHasDomKeys(parent, nextNodes, context)
+  if (current.length !== nextNodes.length || keyedRange) captureLayoutChildren(parent, undefined, context)
   if (current.length === 0) {
     for (const next of nextNodes) commitStagedSubtree(next, context)
     appendNodeBatch(parent, nextNodes)
@@ -1247,6 +1252,13 @@ function reconcileDomRange(parent: Node, currentNodes: readonly Node[], nextNode
   if (nextNodes.length === 0) {
     removeNodeBatch(parent, current, context)
     return []
+  }
+  if (!keyedRange && current.length === nextNodes.length) {
+    const liveNodes = new Array<Node>(nextNodes.length)
+    for (let index = 0; index < nextNodes.length; index += 1) {
+      liveNodes[index] = reconcileDomNode(parent, current[index], nextNodes[index], context)
+    }
+    return liveNodes
   }
   const after = current[current.length - 1].nextSibling
   const keyed = new Map<string | number, Node>()
@@ -1988,6 +2000,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       eventListeners: new WeakMap(),
       eventTargetCount: 0,
       domKeys: new WeakMap(),
+      keyedParents: new WeakSet(),
       hasDomKeys: false,
       domTags: new WeakMap(),
       lazyRanges: new Map(),
@@ -2173,14 +2186,6 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         viewRuntime.rootChildren.clear()
         viewRuntime.rootNextChildren.forEach(child => viewRuntime.rootChildren.add(child))
       }
-      // Identity-keyed template instances are retained only while at least one
-      // of their live roots is still mounted. This keeps the fast-path cache
-      // bounded when keyed/list branches disappear.
-      for (const [key, instance] of viewRuntime.compiledTemplates) {
-        if (instance.roots.length === 0 || instance.roots.every(root => root.parentNode === null)) {
-          viewRuntime.compiledTemplates.delete(key)
-        }
-      }
       viewRuntime.boundaryRootKey = undefined
     }
     const commitRefs = () => {
@@ -2268,6 +2273,10 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
     }
     const observeLazyItems = () => {
+      if (context.lazyNodes.size === 0) {
+        lazyItemObserver?.disconnect()
+        return
+      }
       if (typeof ResizeObserver === "undefined") return
       lazyItemObserver ??= new ResizeObserver(entries => {
         let changed = false
@@ -2318,6 +2327,15 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
     }
 
     const observeLazyViewport = () => {
+      const listener = scheduleLazyMeasure as EventListener
+      if (context.lazyNodes.size === 0) {
+        for (const target of lazyViewportTargets) {
+          target.removeEventListener("scroll", listener)
+          target.removeEventListener("resize", listener)
+        }
+        lazyViewportTargets.clear()
+        return
+      }
       const targets = new Set<EventTarget>()
       const window = document.defaultView
       if (window) targets.add(window)
@@ -2330,7 +2348,6 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
       // Detached or replaced scroll parents keep handler references alive
       // until unmount unless pruned on every pass.
-      const listener = scheduleLazyMeasure as EventListener
       for (const target of [...lazyViewportTargets]) {
         if (targets.has(target)) continue
         lazyViewportTargets.delete(target)
@@ -2591,7 +2608,23 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       const renderTransaction = pendingTransaction
       pendingTransaction = undefined
       context.activeTransaction = renderTransaction
-      let output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
+      const directInitialMount = !hasMounted && !options.hydrate && container.childNodes.length === 0
+      const previousStagingProps = context.stagingProps
+      const previousStagingEvents = context.stagingEvents
+      let output: Node
+      if (directInitialMount) {
+        // There is no live tree to reconcile against. Apply props/events once
+        // while constructing the detached tree, then append it directly rather
+        // than staging every element and walking the whole subtree again.
+        context.stagingProps = false
+        context.stagingEvents = false
+      }
+      try {
+        output = withRenderTransaction(renderTransaction, () => collectStateReads(() => renderViewNode(value, renderer), dependency => dependencies.add(dependency)))
+      } finally {
+        context.stagingProps = previousStagingProps
+        context.stagingEvents = previousStagingEvents
+      }
       const preservedStatePrefixes = [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
       for (const key of context.states.keys()) {
         if (context.visitedStateIdentities.has(key)) continue
@@ -2630,6 +2663,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           // replace the failed hydration boundary atomically instead.
           for (const child of outputChildren) commitStagedSubtree(child, context)
           removeNodeBatch(container, [...container.childNodes], context)
+          appendNodeBatch(container, outputChildren)
+          for (const child of outputChildren) bindInsertedSubtree(child, context)
+        } else if (directInitialMount) {
           appendNodeBatch(container, outputChildren)
           for (const child of outputChildren) bindInsertedSubtree(child, context)
         } else {

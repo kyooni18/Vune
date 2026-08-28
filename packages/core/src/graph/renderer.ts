@@ -16,10 +16,10 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
       const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
-      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...elementIdentity, "element", index]))
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...elementIdentity, "element", index]))
     }
     case "fragment":
-      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "fragment", index]))
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "fragment", index]))
     case "template":
       return value.slots.flatMap((slot, index) => collectLogicalViewIdentities(slot, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])]))
     case "modified": {
@@ -36,7 +36,7 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     case "geometry":
       return []
     case "lazy":
-      return snapshotArrayValues(value.children).flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "lazy", index]))
+      return value.children.flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "lazy", index]))
   }
 }
 
@@ -73,10 +73,10 @@ export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRe
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
       const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
-      return renderer.element(value.type, value.props, ...snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...elementIdentity, "element", index])))
+      return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...elementIdentity, "element", index])))
     }
     case "fragment":
-      return renderer.fragment(snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "fragment", index])))
+      return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "fragment", index])))
     case "template": {
       const renderSlot = (index: number): Output => renderViewNodeAt(value.slots[index] ?? null, renderer, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])])
       return renderer.template
@@ -108,16 +108,16 @@ export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRe
       const renderChildren = (range?: LazyViewRange): Output => {
         const start = Math.max(0, range?.start ?? 0)
         const end = Math.min(value.children.length, range?.end ?? value.children.length)
-        return renderer.fragment(snapshotArrayValues(value.children).slice(start, end).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", start + index])))
+        return renderer.fragment(value.children.slice(start, end).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", start + index])))
       }
       const renderItem = (index: number): Output => {
         if (!Number.isSafeInteger(index) || index < 0 || index >= value.children.length) return renderer.fragment([])
-        const child = snapshotArrayValues(value.children)[index]
+        const child = value.children[index]
         return renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])
       }
       return renderer.lazy
         ? renderer.lazy(value, renderChildren, identity, renderItem)
-        : renderer.element("div", value.props, ...snapshotArrayValues(value.children).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])))
+        : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])))
     }
   }
 }

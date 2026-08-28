@@ -1,18 +1,17 @@
 import {
   animate,
   compileMotionPlan as compileEngineMotionPlan,
-  createInterpolator,
   curves,
   motionValue,
   smooth,
   spring,
   timing,
   type AnimationControls,
-  type InterpolatorOptions,
   type MotionExecutionPlan,
   type MotionSpec,
   type MotionValue,
-} from "o0o0o"
+} from "o0o0o/core"
+import { createInterpolator, type InterpolatorOptions } from "o0o0o/interpolate/css"
 import type { Animation } from "@vune-ui/core"
 import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 

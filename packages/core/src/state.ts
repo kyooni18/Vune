@@ -224,6 +224,33 @@ function notifyOwner(owner: ReactiveOwner, change: OwnershipChange = "reconcile"
   if (failed) throw failure
 }
 
+function notifyOwnerAdditions(owner: ReactiveOwner, additions: readonly unknown[]): void {
+  reactiveMutationClock += 1
+  const affected = [...owner.records]
+  for (const record of affected) {
+    if (record.listeners.size === 0) continue
+    for (const addition of additions) {
+      if (reactiveContainer(unwrap(addition))) attachGraph(record, addition)
+    }
+  }
+  let failed = false
+  let failure: unknown
+  for (const record of affected) {
+    try { notify(record) } catch (error) {
+      if (!failed) { failed = true; failure = error }
+    }
+  }
+  if (failed) throw failure
+}
+
+function sameArraySnapshot(previous: readonly unknown[], current: readonly unknown[]): boolean {
+  if (previous.length !== current.length) return false
+  for (let index = 0; index < previous.length; index += 1) {
+    if (!Object.is(unwrap(previous[index]), unwrap(current[index]))) return false
+  }
+  return true
+}
+
 function samePropertyDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
   if (!left || !right) return left === right
   if (left.configurable !== right.configurable || left.enumerable !== right.enumerable) return false
@@ -252,6 +279,59 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
         const wrapper = function(this: unknown, ...arguments_: unknown[]) {
           const actual = unwrap(this)
           const actualOwner = typeof actual === "object" && actual !== null ? owners.get(actual as object) : undefined
+
+          // The overwhelmingly common path is invoking the mutator on the
+          // State proxy it came from. Execute the native operation against the
+          // raw array so thousands of index writes do not each bounce through
+          // Proxy set/delete traps. We still preserve one logical State
+          // notification and the ownership semantics of the operation.
+          if (actual === raw && actualOwner === owner && Array.isArray(actual)) {
+            const mutatorArguments = [...arguments_]
+            if (property === "push" || property === "unshift") {
+              for (let index = 0; index < mutatorArguments.length; index += 1) mutatorArguments[index] = unwrap(mutatorArguments[index])
+            } else if (property === "splice") {
+              for (let index = 2; index < mutatorArguments.length; index += 1) mutatorArguments[index] = unwrap(mutatorArguments[index])
+            } else if (property === "fill" && mutatorArguments.length > 0) {
+              mutatorArguments[0] = unwrap(mutatorArguments[0])
+            } else if (property === "sort" && typeof mutatorArguments[0] === "function") {
+              const compare = mutatorArguments[0] as (left: unknown, right: unknown) => number
+              mutatorArguments[0] = (left: unknown, right: unknown) => compare(wrap(left, record), wrap(right, record))
+            }
+
+            const previous = property === "push" || property === "unshift" || property === "pop" || property === "shift"
+              ? undefined
+              : Array.prototype.slice.call(actual) as unknown[]
+            const previousLength = actual.length
+            const result = Reflect.apply(nativeMutator, actual, mutatorArguments)
+            const changed = property === "push" || property === "unshift"
+              ? mutatorArguments.length > 0
+              : property === "pop" || property === "shift"
+                ? previousLength > 0
+                : !sameArraySnapshot(previous ?? [], actual)
+
+            if (changed) {
+              if (property === "reverse" || property === "sort") {
+                notifyOwner(owner, "none")
+              } else if (property === "push" || property === "unshift") {
+                const additions = mutatorArguments.filter(value => reactiveContainer(unwrap(value)))
+                if (additions.length > 0) notifyOwnerAdditions(owner, additions)
+                else notifyOwner(owner, "none")
+              } else if ((property === "pop" || property === "shift") && !reactiveContainer(unwrap(result))) {
+                notifyOwner(owner, "none")
+              } else {
+                notifyOwner(owner, "reconcile")
+              }
+            }
+
+            if (property === "reverse" || property === "sort" || property === "copyWithin" || property === "fill") return this
+            if (property === "pop" || property === "shift") return wrap(result, record)
+            if (property === "splice" && Array.isArray(result)) return result.map(item => wrap(item, record))
+            return result
+          }
+
+          // Borrowed methods (`const push = first.value.push; push.call(second,
+          // ...)`) keep the fully generic Proxy path. This preserves JS method
+          // borrowing semantics without complicating the hot path above.
           const batched = actualOwner ? [...actualOwner.records] : []
           for (const affected of batched) beginBatch(affected)
           let failed = false

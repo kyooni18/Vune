@@ -108,6 +108,12 @@ export const Switch = defineBuiltinView<SwitchProps>(
     const inset = Math.max(2, Math.round(height / 10))
     const thumbSize = height - inset * 2
     const thumbTravel = Math.max(0, width - thumbSize - inset * 2)
+    const switchColor = (name: string, fallback: string): string => `var(--vune-switch-${name}, ${fallback})`
+    const activeTrackColor = tint ?? switchColor("on-bg", "light-dark(#34c759, #0a84ff)")
+    const inactiveTrackColor = offTint ?? switchColor("off-bg", "light-dark(#e9e9ea, #3a3a3c)")
+    const thumbColor = isOn.value
+      ? switchColor("on-fg", "light-dark(#ffffff, #ffffff)")
+      : switchColor("off-fg", "light-dark(#ffffff, #b8b8b8)")
     const animateChange = <T extends ModifiableViewNode>(node: T): ModifiableViewNode => animation === undefined
       ? node.animation()
       : node.animation(animation)
@@ -126,7 +132,8 @@ export const Switch = defineBuiltinView<SwitchProps>(
       bottom: "0",
       left: "0",
       borderRadius: `${height / 2}px`,
-      background: tint ?? "#34c759",
+      cornerShape: "squircle",
+      background: activeTrackColor,
       opacity: isOn.value ? 1 : 0,
       pointerEvents: "none",
     }))
@@ -140,8 +147,9 @@ export const Switch = defineBuiltinView<SwitchProps>(
       width: `${thumbSize}px`,
       height: `${thumbSize}px`,
       borderRadius: "50%",
-      background: "#ffffff",
-      boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+      cornerShape: "round",
+      background: thumbColor,
+      boxShadow: "0 1px 3px rgb(0 0 0 / 0.24)",
       zIndex: "1",
     }))
     const controlProps = interactive
@@ -162,10 +170,11 @@ export const Switch = defineBuiltinView<SwitchProps>(
       width: `${width}px`,
       height: `${height}px`,
       borderRadius: `${height / 2}px`,
+      cornerShape: "squircle",
       border: "none",
       padding: "0",
       cursor: interactive ? "pointer" : "inherit",
-      background: offTint ?? "#e9e9ea",
+      background: inactiveTrackColor,
     })
     if (title === undefined) return control
     return viewElement("span", {

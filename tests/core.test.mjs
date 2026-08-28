@@ -130,6 +130,17 @@ test("@vune-ui/core Switch keeps fractional geometry and isolates animatable cha
   assert.equal(displayOnly.content.props.onClick, undefined)
 })
 
+test("@vune-ui/core Switch uses theme hooks with dark-safe defaults", () => {
+  const enabled = State(true)
+  const graph = inspectGraph(CoreSwitch(Binding(enabled), { size: 22 }))
+  const [trackAnimation, thumbAnimation] = graph.content.children
+
+  assert.equal(trackAnimation.content.arguments[0].background, "var(--vune-switch-on-bg, light-dark(#34c759, #0a84ff))")
+  assert.equal(trackAnimation.content.arguments[0].cornerShape, "squircle")
+  assert.equal(thumbAnimation.content.arguments[0].background, "var(--vune-switch-on-fg, light-dark(#ffffff, #ffffff))")
+  assert.equal(graph.arguments[0].background, "var(--vune-switch-off-bg, light-dark(#e9e9ea, #3a3a3c))")
+})
+
 test("@vune-ui/core preserves automatic and explicit animation modifier call shapes", () => {
   const automatic = modifierGraphOf(CoreText("Auto").opacity(0.5).animation())
   assert.deepEqual(automatic.map(item => [item.name, item.arguments]), [["opacity", [0.5]], ["animation", []]])

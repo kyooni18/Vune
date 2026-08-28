@@ -237,6 +237,8 @@ export interface DomRenderContext {
   readonly eventListeners: WeakMap<Element, Map<string, EventListener>>
   eventTargetCount: number
   readonly domKeys: WeakMap<Node, string | number | undefined>
+  /** Parents that have ever owned a keyed direct child in this mount. */
+  readonly keyedParents: WeakSet<Node>
   hasDomKeys: boolean
   readonly domTags: WeakMap<Element, string>
   readonly lazyRanges: Map<string, LazyViewRange>
