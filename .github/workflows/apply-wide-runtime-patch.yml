@@ -1,0 +1,43 @@
+name: Apply wide runtime optimization
+
+on:
+  push:
+    branches:
+      - perf/wide-keyed-runtime-20260829
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply validated source patch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/wide-keyed-runtime-20260829
+          fetch-depth: 0
+      - name: Verify and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'patchFlatKeyedHostBoundary' packages/web/src/dom.ts; then
+            echo 'Source patch is already applied.'
+            exit 0
+          fi
+          cat .vune-perf-patch/patch-*.b64 | tr -d '\n' | base64 -d > /tmp/vune-wide-runtime.patch
+          echo '488df37cf274a8dd4d0a32fcc6ea2caebb20d5c61bafd447fbba5a93b5b81f98  /tmp/vune-wide-runtime.patch' | sha256sum -c -
+          git apply --check /tmp/vune-wide-runtime.patch
+          git apply /tmp/vune-wide-runtime.patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            packages/core/src/graph/element-internal.ts \
+            packages/core/src/graph/modifiers.ts \
+            packages/core/src/graph/nodes.ts \
+            packages/core/src/views.ts \
+            packages/web/src/dom.ts \
+            packages/web/src/props.ts \
+            tests/web-package.test.mjs
+          git commit -m 'Optimize wide keyed host rendering'
+          git push origin HEAD:perf/wide-keyed-runtime-20260829
