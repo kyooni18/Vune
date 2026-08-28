@@ -13,6 +13,7 @@ import {
 import { createRoot, hydrateRoot, type Root } from "react-dom/client"
 import {
   animationCSSStyle,
+  Animation,
   collectStateReads,
   currentRenderTransaction,
   classNameOf,
@@ -28,7 +29,6 @@ import {
   viewIdentityKey,
   withRenderTransaction,
   zeroGeometry,
-  type Animation,
   type CompiledTemplateValue,
   type GeometryProxy,
   type ModifiableViewNode,
@@ -89,7 +89,23 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "keyed": result = { key: value }; break
     case "elementRef": result = { ref: value }; break
     case "frame": result = { style: frameStyle(value && typeof value === "object" ? value : {}) }; break
-    case "animation": result = { style: animationCSSStyle(value as Animation | null) ?? {} }; break
+    case "animation": {
+      const selected = modifier.arguments.length === 0 ? Animation.default : value as Animation | null
+      result = { style: animationCSSStyle(selected) ?? {} }
+      break
+    }
+    case "animationAuto": {
+      const properties = Array.isArray(value)
+        ? value.filter((property): property is string => typeof property === "string")
+        : []
+      const style = animationCSSStyle(Animation.default)
+      result = {
+        style: style
+          ? { ...style, ...(properties.length > 0 ? { transitionProperty: properties.join(", ") } : {}) }
+          : {},
+      }
+      break
+    }
     default: result = {}
   }
   const transaction = currentRenderTransaction()

@@ -152,6 +152,9 @@ export interface VuneStyleProperties {
   readonly top?: VuneStylePropertyValue
   readonly transform?: VuneStylePropertyValue
   readonly transformOrigin?: VuneStylePropertyValue
+  readonly translate?: VuneStylePropertyValue
+  readonly scale?: VuneStylePropertyValue
+  readonly rotate?: VuneStylePropertyValue
   readonly userSelect?: VuneStylePropertyValue
   readonly verticalAlign?: VuneStylePropertyValue
   readonly visibility?: VuneStylePropertyValue

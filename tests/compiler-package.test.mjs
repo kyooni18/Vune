@@ -661,6 +661,35 @@ struct Counter: View {
   assert.equal(ts.createSourceFile("CompiledModifierPlan.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("compiler emits property-aware automatic motion plans for bare .animation()", () => {
+  const source = `import { Text } from "@vune-ui/core"
+export function Demo(active: boolean) {
+  return Text("A")
+    .opacity(active ? 1 : 0)
+    .scaleEffect(active ? 1 : 0.9)
+    .style({ backgroundColor: active ? "white" : "black" })
+    .animation()
+}`
+  const output = transformVuneSource(source, "AutomaticMotion.vune.ts")
+  assert.match(output, /\["animationAuto", \[137\]\]/)
+  assert.doesNotMatch(output, /\["animation", \[null, undefined\]\]/)
+  assert.equal(ts.createSourceFile("AutomaticMotion.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler narrows frame motion masks and preserves custom-property fallback", () => {
+  const source = `import { Text } from "@vune-ui/core"
+export function Demo(active: boolean) {
+  return Text("A")
+    .frame({ width: active ? 240 : 180 })
+    .style({ "--progress": active ? 1 : 0 })
+    .animation()
+}`
+  const output = transformVuneSource(source, "NarrowAutomaticMotion.vune.ts")
+  assert.match(output, /\["animationAuto", \[512, \["--progress"\]\]\]/)
+  assert.doesNotMatch(output, /height|min-width|max-width|min-height|max-height/)
+  assert.equal(ts.createSourceFile("NarrowAutomaticMotion.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("compiler keeps independent animation domains inside direct compiled modifier plans", () => {
   const source = `import { Animation, Text, State } from "@vune-ui/core"
 struct Counter: View {

@@ -41,6 +41,10 @@ export interface SwitchOptions {
   readonly offTint?: string
   readonly size?: number
   readonly label?: string
+  /** Render only the visual switch when an ancestor owns interaction. */
+  readonly interactive?: boolean
+  /** undefined uses smart .animation(); null disables switch motion. */
+  readonly animation?: Animation | null
 }
 export interface SwitchProps extends SwitchOptions { readonly isOn: BindingRef<boolean>; readonly title?: string }
 interface SwitchCall {
@@ -56,7 +60,7 @@ export const Switch = defineBuiltinView<SwitchProps>(
       "Switch(_ title: string, isOn, options?)",
       args => args.length >= 2 && args.length <= 3 && typeof args[0] === "string" && isBinding(args[1]) && (args[2] === undefined || isObject(args[2])),
       args => {
-        const options = args[2] === undefined ? {} : requireOptionRecord(args[2], ["tint", "offTint", "size", "label"], "Switch")
+        const options = args[2] === undefined ? {} : requireOptionRecord(args[2], ["tint", "offTint", "size", "label", "interactive", "animation"], "Switch")
         return {
           title: args[0] as string,
           isOn: args[1] as BindingRef<boolean>,
@@ -64,69 +68,105 @@ export const Switch = defineBuiltinView<SwitchProps>(
           offTint: typeof options.offTint === "string" ? options.offTint : undefined,
           size: typeof options.size === "number" && Number.isFinite(options.size) && options.size > 0 ? options.size : undefined,
           label: typeof options.label === "string" ? options.label : undefined,
+          interactive: typeof options.interactive === "boolean" ? options.interactive : undefined,
+          animation: options.animation instanceof Animation || options.animation === null ? options.animation : undefined,
         }
       },
       [
         initializerKinds.value(true, undefined, undefined, "string"),
         initializerKinds.binding(true, "isOn", "boolean"),
-        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label"], "object"),
+        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label", "interactive", "animation"], "object"),
       ],
     ),
     initializer(
       "Switch(isOn, options?)",
       args => args.length >= 1 && args.length <= 2 && isBinding(args[0]) && (args[1] === undefined || isObject(args[1])),
       args => {
-        const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["tint", "offTint", "size", "label"], "Switch")
+        const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["tint", "offTint", "size", "label", "interactive", "animation"], "Switch")
         return {
           isOn: args[0] as BindingRef<boolean>,
           tint: typeof options.tint === "string" ? options.tint : undefined,
           offTint: typeof options.offTint === "string" ? options.offTint : undefined,
           size: typeof options.size === "number" && Number.isFinite(options.size) && options.size > 0 ? options.size : undefined,
           label: typeof options.label === "string" ? options.label : undefined,
+          interactive: typeof options.interactive === "boolean" ? options.interactive : undefined,
+          animation: options.animation instanceof Animation || options.animation === null ? options.animation : undefined,
         }
       },
       [
         initializerKinds.binding(true, "isOn", "boolean"),
-        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label"], "object"),
+        initializerKinds.value(false, "options", ["tint", "offTint", "size", "label", "interactive", "animation"], "object"),
       ],
     ),
   ],
-  ({ title, isOn, tint, offTint, size, label }) => {
+  ({ title, isOn, tint, offTint, size, label, interactive = true, animation }) => {
     const height = size !== undefined ? size : 28
-    const width = Math.round(height * 1.8)
+    // Keep geometry mathematically consistent with the authored 1.8 aspect
+    // ratio. Rounding the track but not the CSS host made the 22px Misutgaru
+    // switch travel 18px inside a 39.6px track, overshooting by 0.4px.
+    const width = height * 1.8
     const inset = Math.max(2, Math.round(height / 10))
     const thumbSize = height - inset * 2
-    const animation = Animation.spring(0.32, 0.82)
-    const trigger = Boolean(isOn.value)
-    const thumb = viewElement("span", {
+    const thumbTravel = Math.max(0, width - thumbSize - inset * 2)
+    const animateChange = <T extends ModifiableViewNode>(node: T): ModifiableViewNode => animation === undefined
+      ? node.animation()
+      : node.animation(animation)
+    // Do not interpolate theme colors directly. CSS custom properties such as
+    // var(--accent) cannot be resolved by a renderer-agnostic color parser and
+    // therefore used to fall back to a discrete patch. A static off track plus
+    // an opacity-animated active layer keeps the hot path compositor-friendly
+    // and makes the visual transition independent from color syntax.
+    const activeTrack = animateChange(viewElement("span", {
+      "data-vune": "SwitchTrack",
+      "aria-hidden": "true",
+    }).style({
+      position: "absolute",
+      top: "0",
+      right: "0",
+      bottom: "0",
+      left: "0",
+      borderRadius: `${height / 2}px`,
+      background: tint ?? "#34c759",
+      opacity: isOn.value ? 1 : 0,
+      pointerEvents: "none",
+    }))
+    const thumb = animateChange(viewElement("span", {
       "data-vune": "SwitchThumb",
     }).style({
       position: "absolute",
       top: `${inset}px`,
-      left: isOn.value ? `${width - thumbSize - inset}px` : `${inset}px`,
+      left: `${inset}px`,
+      translate: isOn.value ? `${thumbTravel}px 0px` : "0px 0px",
       width: `${thumbSize}px`,
       height: `${thumbSize}px`,
       borderRadius: "50%",
       background: "#ffffff",
       boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
-    }).animation(animation, trigger)
-    const control = viewElement("button", {
-      type: "button",
-      role: "switch",
-      "data-vune": "Switch",
-      "aria-checked": Boolean(isOn.value),
-      ...(label !== undefined ? { "aria-label": label } : title === undefined ? {} : { "aria-label": title }),
-      onClick() { isOn.value = !isOn.value },
-    }, [thumb]).style({
+      zIndex: "1",
+    }))
+    const controlProps = interactive
+      ? {
+          type: "button",
+          role: "switch",
+          "data-vune": "Switch",
+          "aria-checked": Boolean(isOn.value),
+          ...(label !== undefined ? { "aria-label": label } : title === undefined ? {} : { "aria-label": title }),
+          onClick() { isOn.value = !isOn.value },
+        }
+      : {
+          "data-vune": "Switch",
+          "aria-hidden": "true",
+        }
+    const control = viewElement(interactive ? "button" : "span", controlProps, [activeTrack, thumb]).style({
       position: "relative",
       width: `${width}px`,
       height: `${height}px`,
       borderRadius: `${height / 2}px`,
       border: "none",
       padding: "0",
-      cursor: "pointer",
-      background: isOn.value ? tint ?? "#34c759" : offTint ?? "#e9e9ea",
-    }).animation(animation, trigger)
+      cursor: interactive ? "pointer" : "inherit",
+      background: offTint ?? "#e9e9ea",
+    })
     if (title === undefined) return control
     return viewElement("span", {
       "data-vune": "Switch",

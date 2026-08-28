@@ -17,12 +17,13 @@ import {
   type LazyViewRange,
   type StateRef,
   type Transaction,
-  type Animation,
+  Animation,
   type Transition,
   type ViewGraphValue,
   type ViewHostNode,
   type ViewModifierNode,
 } from "@vune-ui/core"
+import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 import { renderToHTML } from "./ssr.js"
 import { hydrateNode } from "./hydration.js"
 import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue, type DomStyleMotionPolicy } from "./props.js"
@@ -72,13 +73,17 @@ interface DomCompiledTemplateBinding {
 }
 
 interface DomAnimationDomain {
-  readonly animation: Animation | null
+  /** undefined selects Vune's property-aware automatic timing. */
+  readonly animation: Animation | null | undefined
   readonly trigger: unknown
+  readonly automatic: boolean
+  readonly propertyMask: number
   readonly properties: readonly string[]
 }
 
 interface DomMotionRenderState {
-  readonly pendingProperties: Set<string>
+  pendingPropertyMask: number
+  pendingProperties?: Set<string>
   readonly domains: DomAnimationDomain[]
   /** True when this state only describes modifiers layered onto a reused View. */
   readonly partial: boolean
@@ -92,7 +97,7 @@ interface DomTransitionState {
 const directCompiledBodyModifierNames = new Set([
   "padding", "margin", "gap", "font", "fontSize", "bold",
   "foreground", "foregroundStyle", "background", "opacity",
-  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation",
+  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation", "animationAuto",
 ])
 
 function compiledTextSlotValue(value: unknown): { readonly ok: true; readonly value: string } | { readonly ok: false } {
@@ -137,6 +142,7 @@ interface DomViewRuntime {
 }
 
 const domViewRuntimes = new WeakMap<DomRenderContext, DomViewRuntime>()
+const emptyMotionProperties = Object.freeze([]) as readonly string[]
 
 function runtimeFor(context: DomRenderContext): DomViewRuntime | undefined {
   return domViewRuntimes.get(context)
@@ -152,13 +158,49 @@ const layoutAffectingMotionProperties = new Set([
   "flex-basis", "grid-template-columns", "grid-template-rows",
 ])
 
+// Smart .animation() profiles. They are immutable singletons, so motion-plan
+// compilation is cached once and every property channel can share the result.
+const automaticTransformAnimation = Animation.spring(0.3, 0.86)
+const automaticLayoutAnimation = Animation.spring(0.34, 0.9)
+const automaticOpacityAnimation = Animation.easeOut(0.18)
+const automaticColorAnimation = Animation.easeInOut(0.2)
+const automaticDefaultAnimation = Animation.easeInOut(0.22)
+
+function automaticAnimationForProperty(property: string): Animation {
+  if (property === "opacity") return automaticOpacityAnimation
+  const bit = motionPropertyBit(property)
+  if (bit !== 0 && (bit & compositorMotionPropertyMask) !== 0) return automaticTransformAnimation
+  if ((bit !== 0 && (bit & paintMotionPropertyMask) !== 0) || property.endsWith("-color")) return automaticColorAnimation
+  if ((bit !== 0 && (bit & layoutMotionPropertyMask) !== 0) || layoutAffectingMotionProperties.has(property)) return automaticLayoutAnimation
+  return automaticDefaultAnimation
+}
+
 function motionStateFor(node: Node, runtime: DomViewRuntime): DomMotionRenderState {
   let state = runtime.motionStates.get(node)
   if (!state) {
-    state = { pendingProperties: new Set(), domains: [], partial: node.nodeType === 8 }
+    state = { pendingPropertyMask: 0, domains: [], partial: node.nodeType === 8 }
     runtime.motionStates.set(node, state)
   }
   return state
+}
+
+function recordMotionProperty(state: DomMotionRenderState, property: string): void {
+  const bit = motionPropertyBit(property)
+  if (bit !== 0) state.pendingPropertyMask = (state.pendingPropertyMask | bit) >>> 0
+  else (state.pendingProperties ??= new Set()).add(property)
+}
+
+function takePendingMotionProperties(state: DomMotionRenderState): Pick<DomAnimationDomain, "propertyMask" | "properties"> {
+  const propertyMask = state.pendingPropertyMask >>> 0
+  const properties = state.pendingProperties?.size ? [...state.pendingProperties] : emptyMotionProperties
+  state.pendingPropertyMask = 0
+  state.pendingProperties?.clear()
+  return { propertyMask, properties }
+}
+
+function clearPendingMotionProperties(state: DomMotionRenderState): void {
+  state.pendingPropertyMask = 0
+  state.pendingProperties?.clear()
 }
 
 function recordMotionStyleProperties(content: Node, properties: readonly string[], context: DomRenderContext): void {
@@ -168,18 +210,46 @@ function recordMotionStyleProperties(content: Node, properties: readonly string[
   for (const node of outputNodes(content)) {
     if (node.nodeType !== 1 && node.nodeType !== 8) continue
     const state = motionStateFor(node, runtime)
-    for (const property of properties) state.pendingProperties.add(property)
+    for (const property of properties) recordMotionProperty(state, property)
   }
 }
 
-function recordAnimationDomain(content: Node, animation: Animation | null, trigger: unknown, context: DomRenderContext): void {
+function animationDomainArguments(arguments_: readonly unknown[]): Pick<DomAnimationDomain, "animation" | "trigger" | "automatic" | "propertyMask" | "properties"> {
+  const automatic = arguments_.length < 2
+  const rawAnimation = arguments_[0]
+  const animation = arguments_.length === 0
+    ? undefined
+    : rawAnimation && typeof rawAnimation === "object"
+      ? rawAnimation as Animation
+      : null
+  return { animation, trigger: arguments_[1], automatic, propertyMask: 0, properties: emptyMotionProperties }
+}
+
+function recordAnimationDomain(content: Node, arguments_: readonly unknown[], context: DomRenderContext): void {
+  const runtime = runtimeFor(context)
+  if (!runtime) return
+  const domain = animationDomainArguments(arguments_)
+  for (const node of outputNodes(content)) {
+    if (node.nodeType !== 1 && node.nodeType !== 8) continue
+    const state = motionStateFor(node, runtime)
+    state.domains.push({ ...domain, ...takePendingMotionProperties(state) })
+  }
+}
+
+function recordCompiledAutoAnimationDomain(content: Node, arguments_: readonly unknown[], context: DomRenderContext): void {
   const runtime = runtimeFor(context)
   if (!runtime) return
   for (const node of outputNodes(content)) {
     if (node.nodeType !== 1 && node.nodeType !== 8) continue
     const state = motionStateFor(node, runtime)
-    state.domains.push({ animation, trigger, properties: [...state.pendingProperties] })
-    state.pendingProperties.clear()
+    state.domains.push({
+      animation: undefined,
+      trigger: undefined,
+      automatic: true,
+      propertyMask: typeof arguments_[0] === "number" ? arguments_[0] >>> 0 : state.pendingPropertyMask,
+      properties: Array.isArray(arguments_[1]) ? arguments_[1] as string[] : (state.pendingProperties?.size ? [...state.pendingProperties] : emptyMotionProperties),
+    })
+    clearPendingMotionProperties(state)
   }
 }
 
@@ -187,8 +257,9 @@ function copyMotionRenderState(source: Node, target: Node, runtime: DomViewRunti
   const state = runtime.motionStates.get(source)
   if (!state) return
   runtime.motionStates.set(target, {
-    pendingProperties: new Set(state.pendingProperties),
-    domains: state.domains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+    pendingPropertyMask: state.pendingPropertyMask,
+    pendingProperties: state.pendingProperties?.size ? new Set(state.pendingProperties) : undefined,
+    domains: state.domains.map(domain => ({ ...domain, properties: domain.properties.length > 0 ? [...domain.properties] : emptyMotionProperties })),
     partial: state.partial,
   })
 }
@@ -200,10 +271,42 @@ interface ResolvedMotionState {
   readonly layoutAnimation?: Animation | null
 }
 
+function changedStyleProperties(
+  live: Element,
+  nextProps: Record<string, unknown> | null | undefined,
+  context: DomRenderContext,
+): { readonly propertyMask: number; readonly properties?: ReadonlySet<string> } | undefined {
+  const previousStyle = context.domProps.get(live)?.style
+  const nextStyle = nextProps?.style
+  if ((previousStyle === undefined || previousStyle === null) && (nextStyle === undefined || nextStyle === null)) return { propertyMask: 0 }
+  if (typeof previousStyle !== "object" || previousStyle === null || typeof nextStyle !== "object" || nextStyle === null) return undefined
+  const before = previousStyle as Record<string, unknown>
+  const after = nextStyle as Record<string, unknown>
+  let propertyMask = 0
+  let changed: Set<string> | undefined
+  const record = (key: string) => {
+    if (Object.is(before[key], after[key])) return
+    const property = cssPropertyName(key)
+    const bit = motionPropertyBit(property)
+    if (bit) propertyMask = (propertyMask | bit) >>> 0
+    else (changed ??= new Set()).add(property)
+  }
+  for (const key of Object.keys(before)) record(key)
+  for (const key of Object.keys(after)) if (!Object.prototype.hasOwnProperty.call(before, key)) record(key)
+  return { propertyMask, properties: changed }
+}
+
+function motionDomainIsEmpty(domain: DomAnimationDomain): boolean { return domain.propertyMask === 0 && domain.properties.length === 0 }
+function motionDomainContainsProperty(domain: DomAnimationDomain, property: string): boolean {
+  const bit = motionPropertyBit(property)
+  return bit !== 0 ? (domain.propertyMask & bit) !== 0 : domain.properties.includes(property)
+}
+
 function resolveMotionRenderState(
   live: Element,
   nextState: DomMotionRenderState,
   context: DomRenderContext,
+  nextProps?: Record<string, unknown> | null,
 ): ResolvedMotionState {
   const runtime = runtimeFor(context)
   if (!runtime) return {}
@@ -211,23 +314,32 @@ function resolveMotionRenderState(
   const previousDomains = previous?.domains ?? []
   const offset = nextState.partial ? Math.max(0, previousDomains.length - nextState.domains.length) : 0
   const comparedPrevious = nextState.partial ? previousDomains.slice(offset) : previousDomains
-  const changed = nextState.domains.map((domain, index) => !Object.is(domain.trigger, comparedPrevious[index]?.trigger))
+  // Automatic domains do not need a synthetic trigger. Reconciliation already
+  // runs only for a dependency change, and the style patcher filters unchanged
+  // values property-by-property. Explicit value domains keep SwiftUI semantics.
+  const changed = nextState.domains.map((domain, index) => domain.automatic
+    || !Object.is(domain.trigger, comparedPrevious[index]?.trigger))
   const mergedDomains = nextState.partial
     ? [...previousDomains.slice(0, offset), ...nextState.domains]
     : [...nextState.domains]
   const merged: DomMotionRenderState = {
-    pendingProperties: new Set(nextState.pendingProperties),
-    domains: mergedDomains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+    pendingPropertyMask: nextState.pendingPropertyMask,
+    pendingProperties: nextState.pendingProperties?.size ? new Set(nextState.pendingProperties) : undefined,
+    domains: mergedDomains.map(domain => ({ ...domain, properties: domain.properties.length > 0 ? [...domain.properties] : emptyMotionProperties })),
     partial: false,
   }
+  const changedStyles = changedStyleProperties(live, nextProps, context)
 
   let layoutAnimation: Animation | null | undefined
   let hasLayoutDecision = false
   for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
     const domain = nextState.domains[index]
     if (!changed[index]) continue
-    if (domain.properties.length === 0 || domain.properties.some(property => layoutAffectingMotionProperties.has(property))) {
-      layoutAnimation = domain.animation
+    const knownLayout = domain.propertyMask & layoutMotionPropertyMask
+    const hasChangedLayoutProperty = (knownLayout !== 0 && (changedStyles === undefined || (knownLayout & changedStyles.propertyMask) !== 0))
+      || domain.properties.some(property => layoutAffectingMotionProperties.has(property) && (changedStyles === undefined || changedStyles.properties?.has(property) === true))
+    if (motionDomainIsEmpty(domain) || hasChangedLayoutProperty) {
+      layoutAnimation = domain.animation === undefined ? automaticLayoutAnimation : domain.animation
       hasLayoutDecision = true
       break
     }
@@ -236,10 +348,11 @@ function resolveMotionRenderState(
     for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
       const domain = nextState.domains[index]
       if (!changed[index]) continue
-      // Intrinsic content changes (for example text length) may resize a view
-      // even when the modifier domain only owns opacity or color. The latest
-      // changed domain is therefore the semantic layout trigger too.
-      layoutAnimation = domain.animation
+      // An empty domain means the compiler/runtime could not narrow the change
+      // to authored style properties. Keep intrinsic-content FLIP in that case,
+      // but do not force layout reads for a known compositor/paint-only domain.
+      if (!motionDomainIsEmpty(domain)) continue
+      layoutAnimation = domain.animation === undefined ? automaticLayoutAnimation : domain.animation
       hasLayoutDecision = true
       break
     }
@@ -249,8 +362,9 @@ function resolveMotionRenderState(
     animationForProperty(property) {
       for (let index = nextState.domains.length - 1; index >= 0; index -= 1) {
         const domain = nextState.domains[index]
-        if (!domain.properties.includes(property)) continue
-        return changed[index] ? domain.animation : undefined
+        if (!motionDomainContainsProperty(domain, property)) continue
+        if (!changed[index]) return undefined
+        return domain.animation === undefined ? automaticAnimationForProperty(property) : domain.animation
       }
       return undefined
     },
@@ -265,7 +379,8 @@ function resolveMotionState(
 ): ResolvedMotionState {
   const runtime = runtimeFor(context)
   const nextState = runtime?.motionStates.get(candidate)
-  return nextState ? resolveMotionRenderState(live, nextState, context) : {}
+  const nextProps = candidate.nodeType === 1 ? context.domProps.get(candidate as Element) : undefined
+  return nextState ? resolveMotionRenderState(live, nextState, context, nextProps) : {}
 }
 
 function commitResolvedMotionState(live: Element, resolved: ResolvedMotionState, context: DomRenderContext): void {
@@ -414,8 +529,9 @@ function bindCandidateNode(candidate: Node, live: Node, context: DomRenderContex
   const candidateMotion = runtime.motionStates.get(candidate)
   if (candidateMotion && live.nodeType === 1) {
     runtime.motionStates.set(live, {
-      pendingProperties: new Set(candidateMotion.pendingProperties),
-      domains: candidateMotion.domains.map(domain => ({ ...domain, properties: [...domain.properties] })),
+      pendingPropertyMask: candidateMotion.pendingPropertyMask,
+      pendingProperties: candidateMotion.pendingProperties?.size ? new Set(candidateMotion.pendingProperties) : undefined,
+      domains: candidateMotion.domains.map(domain => ({ ...domain, properties: domain.properties.length > 0 ? [...domain.properties] : emptyMotionProperties })),
       partial: false,
     })
   }
@@ -1451,11 +1567,12 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
 
   const applyModifier = (content: Node, modifier: ViewModifierNode): Node => {
     recordDirectModifiers(content, modifier)
+    if (modifier.name === "animationAuto") {
+      recordCompiledAutoAnimationDomain(content, modifier.arguments, context)
+      return content
+    }
     if (modifier.name === "animation") {
-      const animation = modifier.arguments[0] instanceof Object
-        ? modifier.arguments[0] as Animation
-        : modifier.arguments[0] === null ? null : null
-      recordAnimationDomain(content, animation, modifier.arguments[1], context)
+      recordAnimationDomain(content, modifier.arguments, context)
       return content
     }
     if (modifier.name === "transition") {
@@ -2295,18 +2412,23 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
               ? cloneStoredDomProps(instance.rootProps[index] ?? null)
               : null)
             nextMotionStates = instance.roots.map(root => root.nodeType === 1
-              ? { pendingProperties: new Set<string>(), domains: [], partial: false }
+              ? { pendingPropertyMask: 0, domains: [], partial: false }
               : null)
 
             const mergeModifier = (modifier: ViewModifierNode): void => {
-              if (modifier.name === "animation") {
-                const raw = modifier.arguments[0]
-                const animation = raw && typeof raw === "object" ? raw as Animation : null
-                const trigger = modifier.arguments[1]
+              if (modifier.name === "animationAuto") {
                 for (const state of nextMotionStates!) {
                   if (!state) continue
-                  state.domains.push({ animation, trigger, properties: [...state.pendingProperties] })
-                  state.pendingProperties.clear()
+                  state.domains.push({ animation: undefined, trigger: undefined, automatic: true, propertyMask: typeof modifier.arguments[0] === "number" ? modifier.arguments[0] >>> 0 : state.pendingPropertyMask, properties: Array.isArray(modifier.arguments[1]) ? modifier.arguments[1] as string[] : (state.pendingProperties?.size ? [...state.pendingProperties] : emptyMotionProperties) })
+                  clearPendingMotionProperties(state)
+                }
+                return
+              }
+              if (modifier.name === "animation") {
+                const domain = animationDomainArguments(modifier.arguments)
+                for (const state of nextMotionStates!) {
+                  if (!state) continue
+                  state.domains.push({ ...domain, ...takePendingMotionProperties(state) })
                 }
                 return
               }
@@ -2316,7 +2438,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
               const motionProperties = Object.keys(extraStyle).map(cssPropertyName)
               for (const state of nextMotionStates!) {
                 if (!state) continue
-                for (const property of motionProperties) state.pendingProperties.add(property)
+                for (const property of motionProperties) recordMotionProperty(state, property)
               }
               for (let index = 0; index < instance.roots.length; index += 1) {
                 const root = instance.roots[index]
@@ -2351,7 +2473,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
 
           const resolvedRootMotion = instance.roots.map((root, index) => {
             if (root.nodeType !== 1 || !nextMotionStates?.[index]) return undefined
-            const resolved = resolveMotionRenderState(root as Element, nextMotionStates[index]!, context)
+            const resolved = resolveMotionRenderState(root as Element, nextMotionStates[index]!, context, nextRootProps?.[index])
             captureLayoutNeighborhood(root as Element, resolved.layoutAnimation, context)
             return resolved
           })

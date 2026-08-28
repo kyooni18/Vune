@@ -10,3 +10,5 @@ export type { LazyViewportRange } from "./lazy-index.js"
 
 export * from "./transition.js"
 export * from "./presentation.js"
+
+export * from "./element-motion.js"

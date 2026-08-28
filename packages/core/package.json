@@ -13,6 +13,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./internal/motion-abi": {
+      "types": "./dist/motion-abi.d.ts",
+      "import": "./dist/motion-abi.js"
+    },
     "./corners": {
       "types": "./dist/corners.d.ts",
       "import": "./dist/corners.js"

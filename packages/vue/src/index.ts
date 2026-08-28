@@ -21,6 +21,7 @@ import {
 } from "vue"
 import {
   animationCSSStyle,
+  Animation,
   Binding,
   classNameOf,
   currentRenderTransaction,
@@ -37,7 +38,6 @@ import {
   withRenderTransaction,
   viewIdentityKey,
   zeroGeometry,
-  type Animation,
   type CompiledTemplateValue,
   type GeometryProxy,
   type BindingRef,
@@ -141,7 +141,27 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "keyed": result = { key: value }; break
     case "elementRef": result = { ref: value }; break
     case "frame": result = { style: frameStyle(value && typeof value === "object" ? value : {}) }; break
-    case "animation": result = { style: animationCSSStyle(value as Animation | null) ?? {} }; break
+    case "animation": {
+      // `.animation()` deliberately has no Animation argument: the renderer
+      // selects the default policy and animates only values that actually
+      // change. Treating `undefined` as disabled made every zero-argument
+      // animation silently become a 0 ms patch in the Vue host.
+      const selected = modifier.arguments.length === 0 ? Animation.default : value as Animation | null
+      result = { style: animationCSSStyle(selected) ?? {} }
+      break
+    }
+    case "animationAuto": {
+      const properties = Array.isArray(value)
+        ? value.filter((property): property is string => typeof property === "string")
+        : []
+      const style = animationCSSStyle(Animation.default)
+      result = {
+        style: style
+          ? { ...style, ...(properties.length > 0 ? { transitionProperty: properties.join(", ") } : {}) }
+          : {},
+      }
+      break
+    }
     default: result = {}
   }
   const transaction = currentRenderTransaction()

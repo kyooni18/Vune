@@ -161,7 +161,11 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
     return applyModifier(this, "offset", typeof valueOrX === "number" ? [valueOrX, y ?? 0] : [valueOrX])
   },
   mask(this: ViewNode, value: ViewNode | string) { return applyModifier(this, "mask", [value]) },
-  animation(this: ViewNode, animation: Animation | null, value: unknown) { return applyModifier(this, "animation", [animation, value]) },
+  animation(this: ViewNode, animation?: Animation | null, value?: unknown) {
+    if (arguments.length === 0) return applyModifier(this, "animation", [])
+    if (arguments.length === 1) return applyModifier(this, "animation", [animation ?? null])
+    return applyModifier(this, "animation", [animation ?? null, value])
+  },
   transition(this: ViewNode, transition: Transition) { return applyModifier(this, "transition", [transition]) },
   style(this: ViewNode, value: VuneStyleProperties) { return applyModifier(this, "style", [value]) },
   className(this: ViewNode, value: ClassValue) { return applyModifier(this, "className", [value]) },

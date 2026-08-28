@@ -1,6 +1,7 @@
 import * as ts from "typescript"
 import * as Core from "@vune-ui/core"
 import { initializersOf, swiftUIStaticModifierNames, type InitializerParameter } from "@vune-ui/core"
+import { motionPropertyBit, motionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 import { lowerImplicitMemberShorthand, lowerShorthand } from "./shorthand.js"
 
 function compilerRootFileName(fileName: string): string {
@@ -126,6 +127,59 @@ function createVuneTypeScriptProgram(source: string, fileName: string): VuneType
 
 export const staticModifierNames = new Set(swiftUIStaticModifierNames)
 
+const compilerMotionProperties = new Map<string, readonly string[]>([
+  ["padding", ["padding"]],
+  ["margin", ["margin"]],
+  ["gap", ["gap"]],
+  ["font", ["font"]],
+  ["fontSize", ["font-size"]],
+  ["bold", ["font-weight"]],
+  ["foreground", ["color"]],
+  ["foregroundStyle", ["color"]],
+  ["background", ["background"]],
+  ["opacity", ["opacity"]],
+  ["scaleEffect", ["scale"]],
+  ["rotationEffect", ["rotate"]],
+  ["offset", ["translate"]],
+])
+
+function cssPropertyFromCompilerKey(value: string): string {
+  if (value.startsWith("--") || value.includes("-")) return value
+  return value.replace(/[A-Z]/g, character => `-${character.toLowerCase()}`)
+}
+
+const frameMotionProperties = Object.freeze(["width", "height", "min-width", "max-width", "min-height", "max-height"] as const)
+
+function objectLiteralMotionProperties(value: ts.Expression | undefined): readonly string[] | undefined {
+  if (!value || !ts.isObjectLiteralExpression(value)) return undefined
+  const properties: string[] = []
+  for (const item of value.properties) {
+    if (!ts.isPropertyAssignment(item) && !ts.isShorthandPropertyAssignment(item)) continue
+    const key = item.name && (ts.isIdentifier(item.name) || ts.isStringLiteralLike(item.name) || ts.isNumericLiteral(item.name))
+      ? item.name.text : undefined
+    if (key) properties.push(cssPropertyFromCompilerKey(key))
+  }
+  return properties
+}
+
+function inferredMotionProperties(name: string, call: ts.CallExpression): readonly string[] {
+  const known = compilerMotionProperties.get(name)
+  if (known) return known
+  if (name === "frame") {
+    const exact = objectLiteralMotionProperties(call.arguments[0])
+    return exact?.filter(property => frameMotionProperties.includes(property as typeof frameMotionProperties[number])) ?? frameMotionProperties
+  }
+  if (name === "style") return objectLiteralMotionProperties(call.arguments[0]) ?? []
+  return []
+}
+
+function compiledAutoMotionArgumentsSource(properties: Iterable<string>): string {
+  const unique = [...new Set(properties)]
+  const mask = motionPropertyMask(unique)
+  const extras = unique.filter(property => motionPropertyBit(property) === 0)
+  return extras.length > 0 ? `${mask}, ${JSON.stringify(extras)}` : String(mask)
+}
+
 function isVuneViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return false
   const alias = type.aliasSymbol?.escapedName
@@ -185,7 +239,13 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
     // Argument expressions keep Vune authoring syntax (`$binding`, `.member`),
     // so they must pass through the same lowering as labeled modifier
     // arguments before being emitted into generated code.
+    const pendingMotionProperties = new Set<string>()
     const modifiers = chain.calls.map(({ name, node: call }) => {
+      if (name === "animation" && call.arguments.length === 0) {
+        const motionArguments = compiledAutoMotionArgumentsSource(pendingMotionProperties)
+        pendingMotionProperties.clear()
+        return `["animationAuto", [${motionArguments}]]`
+      }
       const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
         ? "0"
         : call.arguments.map(argument => {
@@ -203,6 +263,8 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
           const raw = source.slice(start, argument.end)
           return lowerImplicitMemberShorthand(lowerShorthand(raw))
         }).join(", ")
+      if (name === "animation") pendingMotionProperties.clear()
+      else for (const property of inferredMotionProperties(name, call)) pendingMotionProperties.add(property)
       return `[${JSON.stringify(name)}, [${argumentsSource}]]`
     }).join(", ")
     return {
@@ -734,7 +796,13 @@ export function lowerStaticSemanticSpecializations(source: string, fileName: str
     if (candidate.kind === "modifier") {
       const { node, chain } = candidate
       const base = renderRange(chain.base.getStart(sourceFile), chain.base.end, candidate)
+      const pendingMotionProperties = new Set<string>()
       const modifiersSource = chain.calls.map(({ name, node: call }) => {
+        if (name === "animation" && call.arguments.length === 0) {
+          const motionArguments = compiledAutoMotionArgumentsSource(pendingMotionProperties)
+          pendingMotionProperties.clear()
+          return `["animationAuto", [${motionArguments}]]`
+        }
         const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
           ? "0"
           : call.arguments.map(argument => {
@@ -745,6 +813,8 @@ export function lowerStaticSemanticSpecializations(source: string, fileName: str
             const raw = renderRange(start, argument.end, candidate)
             return lowerImplicitMemberShorthand(lowerShorthand(raw))
           }).join(", ")
+        if (name === "animation") pendingMotionProperties.clear()
+        else for (const property of inferredMotionProperties(name, call)) pendingMotionProperties.add(property)
         return `[${JSON.stringify(name)}, [${argumentsSource}]]`
       }).join(", ")
       const replacement = `modifiedContentCompiled(${base}, [${modifiersSource}])`
@@ -1310,7 +1380,7 @@ function exactFunctionReturn(fn: ts.ArrowFunction): ts.Expression | undefined {
 const directCompiledBodyModifierNames = new Set([
   "padding", "margin", "gap", "font", "fontSize", "bold",
   "foreground", "foregroundStyle", "background", "opacity",
-  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation",
+  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation", "animationAuto",
 ])
 
 function directCompiledModifierSpecs(node: ts.Expression): node is ts.ArrayLiteralExpression {

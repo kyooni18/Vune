@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   Action,
+  Animation,
   assertInitializerCall,
   Binding,
   BindingValue,
@@ -13,6 +14,7 @@ import {
   SafeArea,
   ScrollView,
   State,
+  Switch as CoreSwitch,
   Text as CoreText,
   VStack as CoreVStack,
   ViewBuilder,
@@ -63,6 +65,15 @@ import {
   viewHost,
 } from "../packages/core/dist/index.js"
 
+function inspectGraph(value) {
+  return renderViewNode(value, {
+    element(type, props, ...children) { return { type, props, children } },
+    fragment(children) { return { fragment: children } },
+    value(item) { return item },
+    modifier(content, item) { return { modifier: item.name, arguments: item.arguments, content } },
+  })
+}
+
 const Text = defineBuiltinView(
   "Text",
   [initializer("Text(value)", args => args.length === 1, args => ({ value: args[0] }), [initializerKinds.value()])],
@@ -91,6 +102,44 @@ test("@vune-ui/core builds a renderer-independent graph with immutable modifiers
     { name: "padding", arguments: [12] },
   ])
   assert.deepEqual(modifierGraphOf(batched).map(item => item.name), ["font", "padding"])
+})
+
+test("@vune-ui/core Switch keeps fractional geometry and isolates animatable channels", () => {
+  const enabled = State(true)
+  const graph = inspectGraph(CoreSwitch(Binding(enabled), {
+    size: 22,
+    tint: "var(--accent)",
+    offTint: "var(--off)",
+  }))
+
+  assert.equal(graph.modifier, "style")
+  assert.equal(graph.arguments[0].width, "39.6px")
+  assert.equal(graph.content.type, "button")
+  const [trackAnimation, thumbAnimation] = graph.content.children
+  assert.equal(trackAnimation.modifier, "animation")
+  assert.equal(trackAnimation.arguments.length, 0)
+  assert.equal(trackAnimation.content.arguments[0].opacity, 1)
+  assert.equal(trackAnimation.content.arguments[0].background, "var(--accent)")
+  assert.equal(thumbAnimation.modifier, "animation")
+  assert.equal(thumbAnimation.arguments.length, 0)
+  assert.equal(thumbAnimation.content.arguments[0].translate, "17.6px 0px")
+
+  const displayOnly = inspectGraph(CoreSwitch(Binding(enabled), { size: 22, interactive: false }))
+  assert.equal(displayOnly.content.type, "span")
+  assert.equal(displayOnly.content.props["aria-hidden"], "true")
+  assert.equal(displayOnly.content.props.onClick, undefined)
+})
+
+test("@vune-ui/core preserves automatic and explicit animation modifier call shapes", () => {
+  const automatic = modifierGraphOf(CoreText("Auto").opacity(0.5).animation())
+  assert.deepEqual(automatic.map(item => [item.name, item.arguments]), [["opacity", [0.5]], ["animation", []]])
+
+  const explicit = Animation.easeOut(0.2)
+  const explicitDomain = modifierGraphOf(CoreText("Explicit").opacity(0.5).animation(explicit))
+  assert.deepEqual(explicitDomain.at(-1).arguments, [explicit])
+
+  const triggered = modifierGraphOf(CoreText("Triggered").opacity(0.5).animation(explicit, true))
+  assert.deepEqual(triggered.at(-1).arguments, [explicit, true])
 })
 
 test("@vune-ui/core trusted compiled paths skip redundant initializer and modifier shape work", () => {

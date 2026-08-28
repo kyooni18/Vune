@@ -14,6 +14,7 @@ import {
   type MotionValue,
 } from "o0o0o"
 import type { Animation } from "@vune-ui/core"
+import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 
 export type StyleValue = unknown
 
@@ -29,6 +30,21 @@ export interface DomLayoutBox {
   readonly top: number
   readonly width: number
   readonly height: number
+}
+
+const paintMotionPropertyFallback = new Set(["filter", "box-shadow", "text-shadow"])
+const layoutMotionPropertyFallback = new Set([
+  "word-spacing", "border-width", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+  "flex-basis", "grid-template-columns", "grid-template-rows",
+])
+
+/** Stable launch lane used by automatic motion batches: compositor -> paint -> layout -> other. */
+function motionPropertyPriority(property: string): number {
+  const bit = motionPropertyBit(property)
+  if (bit !== 0 && (bit & compositorMotionPropertyMask) !== 0) return 0
+  if ((bit !== 0 && (bit & paintMotionPropertyMask) !== 0) || paintMotionPropertyFallback.has(property) || property.endsWith("-color")) return 1
+  if ((bit !== 0 && (bit & layoutMotionPropertyMask) !== 0) || layoutMotionPropertyFallback.has(property)) return 2
+  return 3
 }
 
 type MotionRoute =
@@ -176,7 +192,12 @@ function isColorProperty(property: string): boolean {
 function parseScalar(value: StyleValue): { readonly value: number; readonly unit: string } | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? { value, unit: "" } : undefined
   if (typeof value !== "string") return undefined
-  const match = value.trim().match(/^(-?(?:\d+\.?\d*|\.\d+))(.*)$/)
+  // A scalar CSS value is one number plus one simple unit. Do not classify
+  // compound values such as `17.6px 0px` as a scalar whose unit happens to be
+  // `px 0px`: that route carries spring velocity through the first numeric token
+  // and can make a rapidly reversed switch thumb keep travelling the old way.
+  // Compound numeric CSS belongs to the template interpolator below instead.
+  const match = value.trim().match(/^(-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)([A-Za-z%]*)$/i)
   if (!match) return undefined
   const scalar = Number(match[1])
   return Number.isFinite(scalar) ? { value: scalar, unit: match[2] } : undefined
@@ -518,7 +539,12 @@ export function animateDomStyles(element: Element, changes: readonly DomStyleMot
   const animated = new Set<string>()
   if (changes.length === 0) return animated
   const plans = new Map<Animation, CompiledMotionPlan>()
-  for (const change of changes) {
+  const ordered = changes.length < 2
+    ? changes
+    : changes.map((change, index) => ({ change, index }))
+        .sort((left, right) => motionPropertyPriority(left.change.property) - motionPropertyPriority(right.change.property) || left.index - right.index)
+        .map(item => item.change)
+  for (const change of ordered) {
     let plan = plans.get(change.animation)
     if (!plan) {
       plan = compileMotionPlan(change.animation)

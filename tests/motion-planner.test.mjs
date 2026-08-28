@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { Animation } from "../packages/core/dist/index.js"
 import { animateDomLayout, animateDomStyle, animateDomStyles, cancelDomAnimations, motionSpecForAnimation } from "../packages/web/dist/motion.js"
+import { VuneMotionEngine } from "../packages/web/dist/element-motion.js"
 
 function fakeElement(initial = {}) {
   const values = new Map(Object.entries(initial))
@@ -128,6 +129,39 @@ test("multi-style motion launches independent channels together without cross-ca
   cancelDomAnimations(element)
 })
 
+test("switch motion preserves presentation continuity across rapid reversal", async () => {
+  const element = fakeElement({ opacity: "0", translate: "0px 0px" })
+  const opacityAnimation = Animation.easeOut(0.18)
+  const positionAnimation = Animation.spring(0.3, 0.86)
+
+  const started = animateDomStyles(element, [
+    { property: "opacity", from: "0", to: "1", animation: opacityAnimation },
+    { property: "translate", from: "0px 0px", to: "17.6px 0px", animation: positionAnimation },
+  ])
+  assert.deepEqual([...started].sort(), ["opacity", "translate"])
+
+  await sleep(35)
+  const beforeReverseOpacity = Number(element.value("opacity"))
+  const beforeReverseTranslate = Number.parseFloat(element.value("translate") ?? "0")
+  assert.ok(beforeReverseOpacity > 0 && beforeReverseOpacity < 1, `expected in-flight opacity, got ${beforeReverseOpacity}`)
+  assert.ok(beforeReverseTranslate > 0 && beforeReverseTranslate < 17.6, `expected in-flight translate, got ${beforeReverseTranslate}`)
+
+  const reversed = animateDomStyles(element, [
+    { property: "opacity", from: element.value("opacity") ?? "0", to: "0", animation: opacityAnimation },
+    { property: "translate", from: element.value("translate") ?? "0px 0px", to: "0px 0px", animation: positionAnimation },
+  ])
+  assert.deepEqual([...reversed].sort(), ["opacity", "translate"])
+
+  await sleep(30)
+  const afterReverseTranslate = Number.parseFloat(element.value("translate") ?? "0")
+  assert.ok(afterReverseTranslate < beforeReverseTranslate, `${beforeReverseTranslate} -> ${afterReverseTranslate}`)
+
+  await sleep(450)
+  assert.ok(Math.abs(Number(element.value("opacity"))) < 0.001)
+  assert.ok(Math.abs(Number.parseFloat(element.value("translate") ?? "0")) < 0.01)
+  cancelDomAnimations(element)
+})
+
 test("layout FLIP animates real size and position deltas on its own channel", async () => {
   const element = fakeElement({ transform: "rotate(8deg)", translate: "", scale: "" })
   const before = { left: 10, top: 20, width: 100, height: 30 }
@@ -141,4 +175,58 @@ test("layout FLIP animates real size and position deltas on its own channel", as
   assert.match(element.value("scale") ?? "", /^1(?:\.0+)? 1(?:\.0+)?$/)
   assert.equal(element.value("transform"), "rotate(8deg)")
   cancelDomAnimations(element)
+})
+
+test("shared element motion keeps CSS properties independently cancellable", async () => {
+  const values = new Map([["opacity", "0"], ["transform", "translateX(0px)"]])
+  const element = {
+    style: {
+      setProperty(name, value) { values.set(name, String(value)) },
+      getPropertyValue(name) { return values.get(name) ?? "" },
+      getPropertyPriority() { return "" },
+      removeProperty(name) { values.delete(name) },
+    },
+  }
+  const engine = new VuneMotionEngine()
+  engine.animateElement(element, [
+    { opacity: 0, transform: "translateX(0px)" },
+    { opacity: 1, transform: "translateX(40px)" },
+  ], { animation: Animation.linear(0.08), fill: "forwards" })
+
+  await sleep(20)
+  engine.animateElement(element, [{ opacity: values.get("opacity") ?? "0" }, { opacity: 0.25 }], {
+    animation: Animation.linear(0.025),
+    fill: "forwards",
+  })
+  await sleep(140)
+
+  assert.equal(Number(values.get("opacity")), 0.25)
+  assert.match(values.get("transform") ?? "", /40(?:\.0+)?px/)
+  engine.cancelAll()
+})
+
+test("shared element motion interpolates multi-keyframe fallback tracks", async () => {
+  const history = []
+  const values = new Map([["opacity", "0"]])
+  const element = {
+    style: {
+      setProperty(name, value) {
+        values.set(name, String(value))
+        if (name === "opacity") history.push(Number(value))
+      },
+      getPropertyValue(name) { return values.get(name) ?? "" },
+      getPropertyPriority() { return "" },
+      removeProperty(name) { values.delete(name) },
+    },
+  }
+  const engine = new VuneMotionEngine()
+  const handle = engine.animateElement(element, [
+    { offset: 0, opacity: 0 },
+    { offset: 0.5, opacity: 1 },
+    { offset: 1, opacity: 0 },
+  ], { animation: Animation.linear(0.06), fill: "forwards" })
+  assert.equal(await handle.finished, "finished")
+  assert.ok(history.some(value => value > 0.5), `expected middle keyframe, got ${history.join(", ")}`)
+  assert.ok(Math.abs(Number(values.get("opacity"))) < 0.001)
+  engine.cancelAll()
 })

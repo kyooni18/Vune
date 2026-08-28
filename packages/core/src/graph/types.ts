@@ -225,6 +225,12 @@ export interface Modifiers {
   offset(value: OffsetValue): ModifiableViewNode
   offset(x: number, y: number): ModifiableViewNode
   mask(value: MaskValue): ModifiableViewNode
+  /**
+   * Animate changes owned by the modifiers before this call. With no value,
+   * Vune automatically derives the changed factors and timing domain.
+   */
+  animation(): ModifiableViewNode
+  animation(animation: Animation | null): ModifiableViewNode
   animation(animation: Animation | null, value: unknown): ModifiableViewNode
   transition(transition: Transition): ModifiableViewNode
   style(value: VuneStyleProperties): ModifiableViewNode
