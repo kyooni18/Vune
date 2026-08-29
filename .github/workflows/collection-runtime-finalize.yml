@@ -25,6 +25,7 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
+
       - name: Benchmark checkpoint
         run: |
           set -euo pipefail
@@ -38,60 +39,53 @@ jobs:
           )
           git worktree remove --force /tmp/vune-checkpoint
           cat validation-output/checkpoint-benchmark.json
-      - name: Apply product patch
+
+      - name: Apply verified product patch
         run: |
           set -euo pipefail
           node .github/collection-runtime-apply.mjs
           git diff --cached --check
+
       - name: Install current dependencies
         run: pnpm install --frozen-lockfile
+
       - name: Build workspace
         run: pnpm run build
+
       - name: State core tests
         run: node --test tests/core.test.mjs
+
       - name: Collection-specific Web tests
         run: >-
           node --test
           --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
           tests/web-package.test.mjs
+
       - name: Compiler tests
         run: node --test tests/compiler-package.test.mjs
+
       - name: React and Vue collection adapter tests
         run: >-
           node --test
           --test-name-pattern='compiler-planned State collections|collection fallback keeps source'
           tests/react-client.test.mjs tests/vue-live.test.mjs
+
       - name: Full Web package tests
         run: node --test tests/web-package.test.mjs
+
       - name: Benchmark optimized branch
         run: |
           set -euo pipefail
           node benchmarks/collection-runtime.mjs > validation-output/current-benchmark.json
           cat validation-output/current-benchmark.json
+
       - name: Full test suite
         run: pnpm test
-      - name: Record validation and remove temporary diagnostics
+
+      - name: Remove temporary diagnostics
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const fs = require('node:fs')
-          const checkpoint = JSON.parse(fs.readFileSync('validation-output/checkpoint-benchmark.json', 'utf8'))
-          const current = JSON.parse(fs.readFileSync('validation-output/current-benchmark.json', 'utf8'))
-          const change = key => Number((((current[key] / checkpoint[key]) - 1) * 100).toFixed(1))
-          const report = `# Collection runtime validation\n\n` +
-            `Validated source commit: \`${process.env.GITHUB_SHA}\`\n\n` +
-            `All required checks passed: workspace build, State core tests, collection-specific Web tests, compiler tests, React/Vue collection adapter tests, full Web tests, and the complete pnpm test suite.\n\n` +
-            `| 25,000-row JSDOM benchmark | Checkpoint (ms) | Optimized (ms) | Change |\n` +
-            `| --- | ---: | ---: | ---: |\n` +
-            `| Mount | ${checkpoint.mountMs} | ${current.mountMs} | ${change('mountMs')}% |\n` +
-            `| Single replace | ${checkpoint.replaceOneMs} | ${current.replaceOneMs} | ${change('replaceOneMs')}% |\n` +
-            `| Direct field mutation | ${checkpoint.mutateOneMs} | ${current.mutateOneMs} | ${change('mutateOneMs')}% |\n` +
-            `| Push | ${checkpoint.pushOneMs} | ${current.pushOneMs} | ${change('pushOneMs')}% |\n` +
-            `| Pop | ${checkpoint.popOneMs} | ${current.popOneMs} | ${change('popOneMs')}% |\n` +
-            `| Reverse | ${checkpoint.reverseMs} | ${current.reverseMs} | ${change('reverseMs')}% |\n\n` +
-            `Evaluator contract after optimization: parent body remained at one execution; replace, direct mutation, and push used one key evaluation and one row evaluation; pop and reverse used zero key and row evaluations.\n`
-          fs.writeFileSync('.github/collection-runtime-validation.md', report)
-          NODE
+          rm -rf validation-output
           git rm -f --ignore-unmatch \
             .github/collection-key-index.mjs \
             .github/collection-row-local.mjs \
@@ -99,10 +93,23 @@ jobs:
             .github/collection-runtime-finalize.mjs \
             .github/collection-state-hotpath.mjs \
             .github/collection-structural.mjs \
+            .github/collection-runtime-finalize.patch.gz.b64.* \
+            .github/collection-runtime-validation.md \
             .github/workflows/collection-runtime-finalize.yml
           git rm -r -f --ignore-unmatch .github/collection-runtime-patch
-          git add .github/collection-runtime-validation.md
+          if find .github -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
+            echo 'temporary collection diagnostics remain under .github' >&2
+            find .github -maxdepth 1 -name 'collection-*' -print >&2
+            exit 1
+          fi
+          if find .github/workflows -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
+            echo 'temporary collection workflows remain' >&2
+            find .github/workflows -maxdepth 1 -name 'collection-*' -print >&2
+            exit 1
+          fi
           git diff --cached --check
+          git status --short
+
       - name: Commit validated product changes
         run: |
           set -euo pipefail
