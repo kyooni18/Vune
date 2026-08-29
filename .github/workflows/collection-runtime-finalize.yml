@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-row-local-collection:
+  validate-structural-collection:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,13 +24,13 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node .github/collection-row-local.mjs
+      - run: node .github/collection-structural.mjs
       - run: pnpm run build
-      - run: node --test --test-name-pattern='compiled keyed collection own|ForEach host rows persistently|batches in-place ForEach' tests/web-package.test.mjs
-      - name: Commit validated row-local path
+      - run: node --test --test-name-pattern='push pop and reverse|compiled keyed collection own|ForEach host rows persistently|batches in-place ForEach' tests/web-package.test.mjs
+      - name: Commit validated structural fast paths
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add packages/web/src/dom.ts tests/web-package.test.mjs
-          git commit -m 'Patch compiler-owned collection rows locally'
+          git commit -m 'Patch compiled collection structure from mutation journals'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
