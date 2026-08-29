@@ -5,8 +5,12 @@ on:
     branches:
       - codex/collection-runtime-finalize-20260830
 
+permissions:
+  contents: write
+
 jobs:
-  trace-collection-owned-state:
+  validate-collection-owned-state:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -36,23 +40,31 @@ jobs:
           path.write_text(source)
           PY
       - run: node .github/collection-runtime-finalize.mjs
-      - name: Import helper and instrument collection lifetime
+      - name: Preserve key plan and import Web helper
         run: |
           node <<'NODE'
           const fs = require('node:fs')
+          const nodesPath = 'packages/core/src/graph/nodes.ts'
+          let nodes = fs.readFileSync(nodesPath, 'utf8')
+          const marker = '    indexIndependent: plan.indexIndependent === true,\n    evaluate: plan.evaluate,\n'
+          if (!nodes.includes(marker)) throw new Error('compiled collection plan marker missing')
+          nodes = nodes.replace(marker, '    indexIndependent: plan.indexIndependent === true,\n    ...(typeof plan.evaluateKey === "function" ? { evaluateKey: plan.evaluateKey } : {}),\n    evaluate: plan.evaluate,\n')
+          fs.writeFileSync(nodesPath, nodes)
+
           const testPath = 'tests/web-package.test.mjs'
           let test = fs.readFileSync(testPath, 'utf8')
-          test = test.replace('  compiledTemplate,\n  defineCompiledTemplate,', '  compiledTemplate,\n  compiledCollectionContent,\n  defineCompiledTemplate,')
+          const importMarker = '  compiledTemplate,\n  defineCompiledTemplate,'
+          if (!test.includes(importMarker)) throw new Error('Web core import marker missing')
+          test = test.replace(importMarker, '  compiledTemplate,\n  compiledCollectionContent,\n  defineCompiledTemplate,')
           fs.writeFileSync(testPath, test)
-
-          const path = 'packages/web/src/dom.ts'
-          let source = fs.readFileSync(path, 'utf8')
-          source = source.replace('function disposeDomCollection(runtime: DomViewRuntime, key: string): void {\n  const instance = runtime.collections.get(key)', 'function disposeDomCollection(runtime: DomViewRuntime, key: string): void {\n  console.log("[collection-life] dispose", key)\n  const instance = runtime.collections.get(key)')
-          source = source.replace('function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {\n  disposeDomCollection(runtime, instance.key)', 'function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {\n  console.log("[collection-life] register", instance.key, instance.ownerKey)\n  disposeDomCollection(runtime, instance.key)')
-          source = source.replace('function subscribeDomCollection(instance: DomCollectionInstance, context: DomRenderContext, runtime: DomViewRuntime): void {\n  if (!isStateRef(instance.node.source) || !instance.node.compiled?.evaluateKey) return', 'function subscribeDomCollection(instance: DomCollectionInstance, context: DomRenderContext, runtime: DomViewRuntime): void {\n  console.log("[collection-life] subscribe-attempt", instance.key, isStateRef(instance.node.source), Boolean(instance.node.compiled?.evaluateKey), runtime.collections.get(instance.key) === instance)\n  if (!isStateRef(instance.node.source) || !instance.node.compiled?.evaluateKey) return')
-          source = source.replace('  instance.unsubscribe = subscribeState(source, (transaction, batch) => {\n    if (runtime.collections.get(instance.key) !== instance) return', '  instance.unsubscribe = subscribeState(source, (transaction, batch) => {\n    console.log("[collection-life] callback", instance.key, runtime.collections.get(instance.key) === instance, batch.mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")))\n    if (runtime.collections.get(instance.key) !== instance) return')
-          source = source.replace('  registerDomCollection(runtime, instance)\n  subscribeDomCollection(instance, context, runtime)', '  registerDomCollection(runtime, instance)\n  subscribeDomCollection(instance, context, runtime)\n  console.log("[collection-life] installed", key, Boolean(instance.unsubscribe))')
-          fs.writeFileSync(path, source)
           NODE
       - run: pnpm run build
-      - run: node --test --test-name-pattern='compiled keyed collection own' tests/web-package.test.mjs
+      - run: node --test --test-name-pattern='collection row plans|keyed State collections|keyed collection ownership|shadowing local value|implicit-key State' tests/compiler-package.test.mjs
+      - run: node --test --test-name-pattern='ForEach|collection own' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
+      - name: Commit validated collection ownership
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/core/src/graph/arrays.ts packages/core/src/graph/types.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/compiler/src/collection-specialization.ts packages/web/src/dom.ts tests/compiler-package.test.mjs tests/web-package.test.mjs
+          git commit -m 'Isolate compiler-proven keyed collection State'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
