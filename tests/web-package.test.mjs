@@ -1642,7 +1642,7 @@ test("@vune-ui/web executes ForEach host rows persistently and invalidates only 
   allocations = 0
   items.value = [...items.value].reverse()
   await Promise.resolve()
-  assert.equal(rowRuns, 0)
+  assert.equal(rowRuns, 2)
   assert.equal(allocations, 0)
   assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "b", "a"])
 
@@ -1659,7 +1659,7 @@ test("@vune-ui/web executes ForEach host rows persistently and invalidates only 
   allocations = 0
   items.value = items.value.filter(item => item.id !== "b")
   await Promise.resolve()
-  assert.equal(rowRuns, 0)
+  assert.equal(rowRuns, 2)
   assert.equal(allocations, 0)
   assert.equal(container.querySelector('[data-row="a"]'), original.a)
   assert.equal(container.querySelector('[data-row="c"]'), original.c)
@@ -1667,6 +1667,31 @@ test("@vune-ui/web executes ForEach host rows persistently and invalidates only 
 
   dom.window.document.createElement = createElement
   dom.window.document.createTextNode = createTextNode
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web reevaluates moved generic ForEach rows when content observes the index", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a" }, { id: "b" }, { id: "c" }])
+  let rowRuns = 0
+  const App = defineView("IndexedPersistentForEachHostApp", {
+    initializers: [initializer("IndexedPersistentForEachHostApp()", args => args.length === 0)],
+    body: () => Element("section", null, ForEach(items.value, (item, index) => {
+      rowRuns += 1
+      return Element("span", { "data-row": item.id }, String(index) + ":" + item.id)
+    })),
+  })
+
+  const unmount = mount(App(), container)
+  assert.equal(rowRuns, 3)
+  rowRuns = 0
+  items.value = [...items.value].reverse()
+  await Promise.resolve()
+  assert.equal(rowRuns, 2)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["0:c", "1:b", "2:a"])
   unmount()
   dom.window.close()
 })

@@ -605,7 +605,7 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
         return children.length === 1 ? children[0] : viewFragment(children)
       },
       {
-        indexIndependent: content.length < 2,
+        indexIndependent: false,
         compiled: compiledCollectionPlanOf(content),
         onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),
       },
