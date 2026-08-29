@@ -231,7 +231,7 @@ function collectionRowPlan(
   const item = value.parameters[0]
   const index = value.parameters[1]
   if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return undefined
-  if (index && (!ts.isIdentifier(index.name) || index.dotDotToken || index.initializer)) return undefined
+  if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return undefined
   const result = closureResult(value)
   if (!result) return undefined
   const row = singleBuilderResult(result)

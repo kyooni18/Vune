@@ -1112,3 +1112,29 @@ const items = State([{ id: "a", value: "A" }])
 export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })`
   assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
 })
+
+test("compiler keeps proven top-level State collections owned by the ForEach boundary", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "StateOwnedCollection.vune.ts")
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
+  assert.doesNotMatch(output, /createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
+})
+
+test("compiler recognizes aliased State constructors for collection ownership", () => {
+  const source = `import { State as S, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = S([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "AliasedStateCollection.vune.ts")
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
+})
+
+test("compiler does not rewrite a shadowing local value as a StateRef collection", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "outer", value: "Outer" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => { const items = { value: [{ id: "local", value: "Local" }] }; return Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) } })`
+  const output = transformVuneSource(source, "ShadowedStateCollection.vune.ts")
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
+  assert.doesNotMatch(output, /createNodeCompiled\(0, \[items, compiledCollectionContent/)
+})
