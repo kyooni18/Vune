@@ -24,7 +24,7 @@ import { layoutLength } from "./layout.js"
 import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
 import type { GeometryProxy } from "./graph.js"
-import { arrayCheck } from "./graph/arrays.js"
+import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"
 import { keyedContent } from "./graph/modifiers.js"
 
 export interface VStackOptions {
@@ -532,22 +532,7 @@ function appendKeyedCollectionChildren(children: ViewValue[], value: ViewValue, 
 }
 
 function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {
-  if (arrayCheck(value) !== true) return undefined
-  const values = value as readonly unknown[]
-  try {
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(values, "length")
-    if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) return undefined
-    const snapshot = new Array<unknown>(lengthDescriptor.value)
-    for (let index = 0; index < lengthDescriptor.value; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
-      if (!descriptor) continue
-      if (!("value" in descriptor)) return undefined
-      snapshot[index] = descriptor.value
-    }
-    return Object.freeze(snapshot)
-  } catch {
-    return undefined
-  }
+  return snapshotDataArrayValues(value)
 }
 
 function requireCollectionItems(value: unknown): readonly unknown[] {
@@ -555,6 +540,8 @@ function requireCollectionItems(value: unknown): readonly unknown[] {
   if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
   return snapshot
 }
+
+const emptyCollectionItems = Object.freeze([]) as readonly unknown[]
 
 interface ForEachProps<Item> {
   readonly items: readonly Item[] | StateRef<readonly Item[]>
@@ -589,9 +576,11 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
     ),
   ],
   ({ items, key, content }) => {
-    const source = isStateRef(items) ? items.value : items
-    const collection = requireCollectionItems(source)
-    const selector = key as CollectionKeySelector<unknown> | undefined
+    const stateSource = isStateRef(items) ? items as StateRef<readonly unknown[]> : undefined
+    const source = stateSource ?? items
+    const collection = stateSource ? emptyCollectionItems : requireCollectionItems(items)
+    const compiled = compiledCollectionPlanOf(content)
+    const selector = (compiled?.evaluateKey ?? key) as CollectionKeySelector<unknown> | undefined
     return keyedCollectionView(
       collection,
       source,
@@ -606,7 +595,8 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
       },
       {
         indexIndependent: false,
-        compiled: compiledCollectionPlanOf(content),
+        compiled,
+        ...(stateSource ? { readItems: () => requireCollectionItems(stateSource.value) } : {}),
         onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),
       },
     )

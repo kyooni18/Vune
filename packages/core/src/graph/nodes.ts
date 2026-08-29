@@ -176,6 +176,7 @@ export function compiledCollectionContent<Content extends (...arguments_: any[])
   compiledCollectionPlans.set(content, Object.freeze({
     kind: "flat-text-host",
     indexIndependent: plan.indexIndependent === true,
+    ...(typeof plan.evaluateKey === "function" ? { evaluateKey: plan.evaluateKey } : {}),
     evaluate: plan.evaluate,
   }))
   return content
@@ -189,11 +190,12 @@ export function keyedCollectionChildKey(entryKey: string, index: number): string
   return `${entryKey}|child:${index}`
 }
 
-export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {
+export function keyedCollectionEntries(node: KeyedCollectionViewNode, itemSnapshot?: readonly unknown[]): readonly KeyedCollectionEntry[] {
+  const items = itemSnapshot ?? node.readItems?.() ?? node.items
   const occurrences = new Map<string, number>()
-  const entries = new Array<KeyedCollectionEntry>(node.items.length)
-  for (let index = 0; index < node.items.length; index += 1) {
-    const item = node.items[index]
+  const entries = new Array<KeyedCollectionEntry>(items.length)
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
     const resolved = node.key(item, index)
     if (!resolved || typeof resolved.identity !== "string" || typeof resolved.display !== "string") {
       throw new TypeError("Keyed collection identity must contain string identity and display values")
@@ -233,6 +235,7 @@ export function keyedCollectionView(
   options: {
     readonly indexIndependent?: boolean
     readonly compiled?: CompiledCollectionPlan
+    readonly readItems?: KeyedCollectionViewNode["readItems"]
     readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]
   } = {},
 ): ModifiableViewNode {
@@ -245,6 +248,7 @@ export function keyedCollectionView(
     content,
     indexIndependent: options.indexIndependent === true,
     ...(options.compiled ? { compiled: options.compiled } : {}),
+    ...(options.readItems ? { readItems: options.readItems } : {}),
     ...(options.onDuplicateKey ? { onDuplicateKey: options.onDuplicateKey } : {}),
   } as Omit<KeyedCollectionViewNode, "children"> & { readonly children: readonly ViewGraphChild[] }
   Object.defineProperty(node, "children", {

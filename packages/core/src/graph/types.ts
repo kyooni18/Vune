@@ -187,6 +187,8 @@ export interface CompiledCollectionPlan {
   readonly kind: "flat-text-host"
   /** True when moving an existing item cannot change its row output. */
   readonly indexIndependent: boolean
+  /** Compiler-proven stable key evaluator. Required for collection-owned State invalidation. */
+  readonly evaluateKey?: (item: unknown, index: number) => string | number
   readonly evaluate: (item: unknown, index: number) => CompiledCollectionRow
 }
 
@@ -198,6 +200,8 @@ export interface CompiledCollectionPlan {
 export interface KeyedCollectionViewNode {
   readonly kind: "collection"
   readonly items: readonly unknown[]
+  /** Deferred strict snapshot for a State-backed source. */
+  readonly readItems?: () => readonly unknown[]
   /** Original collection identity before the descriptor-only snapshot. */
   readonly source: unknown
   readonly key: (item: unknown, index: number) => KeyedCollectionIdentity

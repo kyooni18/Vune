@@ -1113,21 +1113,21 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
 })
 
-test("compiler keeps proven top-level State collections owned by the ForEach boundary", () => {
+test("compiler keeps proven keyed State collections owned by the collection executor", () => {
   const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
 const items = State([{ id: "a", value: "A" }])
-export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => item.id, item => Element("span", null, item.value))) })`
   const output = transformVuneSource(source, "StateOwnedCollection.vune.ts")
-  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
-  assert.doesNotMatch(output, /createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+  assert.match(output, /evaluateKey: item => item\.id/)
 })
 
-test("compiler recognizes aliased State constructors for collection ownership", () => {
+test("compiler recognizes aliased State constructors for keyed collection ownership", () => {
   const source = `import { State as S, Element, ForEach, defineView, initializer } from "@vune-ui/core"
 const items = S([{ id: "a", value: "A" }])
-export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => item.id, item => Element("span", null, item.value))) })`
   const output = transformVuneSource(source, "AliasedStateCollection.vune.ts")
-  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
 })
 
 test("compiler does not rewrite a shadowing local value as a StateRef collection", () => {
@@ -1137,4 +1137,13 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   const output = transformVuneSource(source, "ShadowedStateCollection.vune.ts")
   assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
   assert.doesNotMatch(output, /createNodeCompiled\(0, \[items, compiledCollectionContent/)
+})
+
+
+test("compiler keeps implicit-key State collections on the conservative parent-owned path", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "ImplicitStateCollection.vune.ts")
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
 })

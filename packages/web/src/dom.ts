@@ -5,6 +5,7 @@ import {
   frameStyle,
   keyedCollectionChildKey,
   keyedCollectionEntries,
+  isStateRef,
   reactiveIdentity,
   renderViewNode,
   renderViewNodeAt,
@@ -98,6 +99,10 @@ interface DomCollectionInstance {
   sourceIdentity: unknown
   rows: Map<string, DomCollectionRow>
   order: DomCollectionRow[]
+  pendingTransaction?: Transaction
+  readonly pendingMutations: StateMutation[]
+  scheduled: boolean
+  unsubscribe?: () => void
 }
 
 interface DomAnimationDomain {
@@ -164,6 +169,7 @@ interface DomViewRuntime {
   replayingModifiers: boolean
   suppressCollectionDirect: boolean
   boundaryRootKey?: string
+  invalidateBoundary?: (key: string, transaction: Transaction | undefined, mutations: readonly StateMutation[]) => void
   materializeView?: (
     node: ViewHostNode,
     render: (props?: Record<string, unknown>) => Node,
@@ -1637,18 +1643,69 @@ function directCollectionHostRow(node: KeyedCollectionViewNode, entry: KeyedColl
   return row?.key === expectedKey ? row : undefined
 }
 
+function disposeDomCollection(runtime: DomViewRuntime, key: string): void {
+  const instance = runtime.collections.get(key)
+  if (!instance) return
+  instance.unsubscribe?.()
+  runtime.collections.delete(key)
+  const keys = runtime.collectionKeysByOwner.get(instance.ownerKey)
+  keys?.delete(key)
+  if (keys?.size === 0) runtime.collectionKeysByOwner.delete(instance.ownerKey)
+}
+
 function discardDomCollections(runtime: DomViewRuntime, ownerKey: string): void {
   const keys = runtime.collectionKeysByOwner.get(ownerKey)
   if (!keys) return
-  for (const key of keys) runtime.collections.delete(key)
-  runtime.collectionKeysByOwner.delete(ownerKey)
+  for (const key of [...keys]) disposeDomCollection(runtime, key)
 }
 
 function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {
+  disposeDomCollection(runtime, instance.key)
   runtime.collections.set(instance.key, instance)
   const keys = runtime.collectionKeysByOwner.get(instance.ownerKey) ?? new Set<string>()
   keys.add(instance.key)
   runtime.collectionKeysByOwner.set(instance.ownerKey, keys)
+}
+
+function collectionEntries(node: KeyedCollectionViewNode, untrackedSource = false): readonly KeyedCollectionEntry[] {
+  if (!untrackedSource || !node.readItems) return keyedCollectionEntries(node)
+  const items = collectStateReads(() => node.readItems!(), () => undefined)
+  return keyedCollectionEntries(node, items)
+}
+
+function collectionSourceIdentity(node: KeyedCollectionViewNode): unknown {
+  const source = isStateRef(node.source)
+    ? collectStateReads(() => (node.source as StateRef<unknown>).value, () => undefined)
+    : node.source
+  return reactiveIdentity(source)
+}
+
+function subscribeDomCollection(instance: DomCollectionInstance, context: DomRenderContext, runtime: DomViewRuntime): void {
+  if (!isStateRef(instance.node.source) || !instance.node.compiled?.evaluateKey) return
+  const source = instance.node.source as StateRef<unknown>
+  instance.unsubscribe = subscribeState(source, (transaction, batch) => {
+    if (runtime.collections.get(instance.key) !== instance) return
+    instance.pendingTransaction = transaction
+    instance.pendingMutations.push(...batch.mutations)
+    if (instance.scheduled) return
+    instance.scheduled = true
+    queueMicrotask(() => {
+      instance.scheduled = false
+      if (runtime.collections.get(instance.key) !== instance) return
+      const pending = instance.pendingMutations.splice(0)
+      const renderTransaction = instance.pendingTransaction
+      instance.pendingTransaction = undefined
+      const parent = instance.order[0]?.element.parentNode
+      const previousTransaction = context.activeTransaction
+      context.activeTransaction = renderTransaction
+      let patched = false
+      try {
+        if (parent) patched = withRenderTransaction(renderTransaction, () => patchPersistentCollection(instance, instance.node, parent, pending, context))
+      } finally { context.activeTransaction = previousTransaction }
+      if (patched) { flushLayoutMotion(context); return }
+      runtime.invalidateBoundary?.(instance.ownerKey, renderTransaction, pending)
+    })
+  })
 }
 
 function materializeDirectCollection(
@@ -1658,7 +1715,7 @@ function materializeDirectCollection(
   context: DomRenderContext,
   runtime: DomViewRuntime,
 ): Node | undefined {
-  const entries = keyedCollectionEntries(node)
+  const entries = collectionEntries(node, true)
   // An empty runtime-inferred collection has no row shape to prove. Compiler
   // metadata can safely retain an empty executor and accept later appends.
   if (entries.length === 0 && !node.compiled) return undefined
@@ -1697,14 +1754,18 @@ function materializeDirectCollection(
     rows.set(entry.key, row)
     order[index] = row
   }
-  registerDomCollection(runtime, {
+  const instance: DomCollectionInstance = {
     key,
     ownerKey,
     node,
-    sourceIdentity: reactiveIdentity(node.source),
+    sourceIdentity: collectionSourceIdentity(node),
     rows,
     order,
-  })
+    pendingMutations: [],
+    scheduled: false,
+  }
+  registerDomCollection(runtime, instance)
+  subscribeDomCollection(instance, context, runtime)
   return fragment
 }
 
@@ -1717,7 +1778,7 @@ function collectionMutationEffects(
   if (mutations.length === 0) return { forceAll: true, touched }
 
   const previousSource = instance.sourceIdentity
-  const nextSource = reactiveIdentity(node.source)
+  const nextSource = collectionSourceIdentity(node)
   const itemKeys = new Map<object, Set<string>>()
   for (const row of instance.order) {
     const identity = reactiveIdentity(row.item)
@@ -1854,7 +1915,7 @@ function patchPersistentCollection(
     anchor = element
   }
   instance.node = node
-  instance.sourceIdentity = reactiveIdentity(node.source)
+  instance.sourceIdentity = collectionSourceIdentity(node)
   instance.rows = nextRows
   instance.order = order
   return true
@@ -3234,6 +3295,17 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       })
     }
 
+
+    viewRuntime.invalidateBoundary = (key, transaction, mutations) => {
+      const boundary = viewRuntime.boundaries.get(key)
+      if (!boundary) { requestRootUpdate(transaction, true); return }
+      boundary.pendingTransaction = transaction
+      boundary.pendingMutations.push(...mutations)
+      if (boundary.scheduled || stopped) return
+      boundary.scheduled = true
+      queueMicrotask(() => updateBoundary(boundary))
+    }
+
     update = () => {
       if (stopped) return
       scheduled = false
@@ -3371,6 +3443,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         boundary.subscriptions.clear()
       }
       viewRuntime.boundaries.clear()
+      for (const key of [...viewRuntime.collections.keys()]) cleanup(() => disposeDomCollection(viewRuntime, key))
       viewRuntime.collections.clear()
       viewRuntime.collectionKeysByOwner.clear()
       viewRuntime.layoutSnapshots.clear()

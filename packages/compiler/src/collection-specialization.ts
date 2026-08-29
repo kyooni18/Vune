@@ -20,8 +20,10 @@ interface ImportedBindings {
 }
 
 interface CompiledForEachCall {
+  readonly initializerIndex: number
   readonly content: ts.Expression
   readonly items: ts.Expression
+  readonly key?: ts.Expression
 }
 
 function unwrapExpression(expression: ts.Expression): ts.Expression {
@@ -257,6 +259,22 @@ function collectionRowPlan(
   }
 }
 
+function collectionKeyPlan(closure: ts.Expression): { readonly source: string; readonly indexIndependent: boolean } | undefined {
+  const value = unwrapExpression(closure)
+  if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return undefined
+  if (value.parameters.length < 1 || value.parameters.length > 2) return undefined
+  const item = value.parameters[0]
+  const index = value.parameters[1]
+  if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return undefined
+  if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return undefined
+  const result = closureResult(value)
+  if (!result) return undefined
+  const indexName = index && ts.isIdentifier(index.name) ? index.name.text : undefined
+  const analysis = analyzeRowExpression(result, item.name.text, indexName)
+  if (!analysis.pure) return undefined
+  return { source: closure.getText(), indexIndependent: !analysis.indexDependent }
+}
+
 function compiledForEachCall(call: ts.CallExpression, foreachNames: ReadonlySet<string>): CompiledForEachCall | undefined {
   const callee = unwrapExpression(call.expression)
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "createNodeCompiled") return undefined
@@ -264,13 +282,17 @@ function compiledForEachCall(call: ts.CallExpression, foreachNames: ReadonlySet<
   if (!ts.isPropertyAccessExpression(viewType) || viewType.name.text !== "viewType") return undefined
   const owner = unwrapExpression(viewType.expression)
   if (!ts.isIdentifier(owner) || !foreachNames.has(owner.text)) return undefined
-  if (call.arguments.length !== 2 || !ts.isArrayLiteralExpression(call.arguments[1])) return undefined
-  const argumentsArray = call.arguments[1]
-  const items = argumentsArray.elements[0]
-  const content = argumentsArray.elements.at(-1)
+  if (call.arguments.length !== 2 || !ts.isNumericLiteral(call.arguments[0]) || !ts.isArrayLiteralExpression(call.arguments[1])) return undefined
+  const initializerIndex = Number(call.arguments[0].text)
+  if (initializerIndex !== 0 && initializerIndex !== 1) return undefined
+  const values = call.arguments[1].elements
+  const items = values[0]
+  const key = initializerIndex === 1 ? values[1] : undefined
+  const content = values.at(-1)
   if (!items || !content || ts.isSpreadElement(items) || ts.isOmittedExpression(items)
+    || (key && (ts.isSpreadElement(key) || ts.isOmittedExpression(key)))
     || ts.isSpreadElement(content) || ts.isOmittedExpression(content)) return undefined
-  return { items, content }
+  return { initializerIndex, items, ...(key ? { key } : {}), content }
 }
 
 export function lowerCompiledCollections(source: string): string {
@@ -285,24 +307,20 @@ export function lowerCompiledCollections(source: string): string {
     if (ts.isCallExpression(node)) {
       const compiled = compiledForEachCall(node, foreach.names)
       if (compiled) {
-        const stateRef = provenStateRefSource(compiled.items, sourceFile, states)
-        if (stateRef) {
+        const rowPlan = elements.names.size > 0 || elements.namespaces.size > 0
+          ? collectionRowPlan(compiled.content, sourceFile, elements)
+          : undefined
+        const keyPlan = compiled.key ? collectionKeyPlan(compiled.key) : undefined
+        const stateRef = rowPlan && keyPlan ? provenStateRefSource(compiled.items, sourceFile, states) : undefined
+        if (stateRef) edits.push({ start: compiled.items.getStart(sourceFile), end: compiled.items.end, replacement: stateRef.getText(sourceFile) })
+        if (rowPlan) {
+          const parameters = rowPlan.indexName ? `${rowPlan.itemName}, ${rowPlan.indexName}` : rowPlan.itemName
+          const compiledKey = keyPlan ? `, evaluateKey: ${keyPlan.source}` : ""
           edits.push({
-            start: compiled.items.getStart(sourceFile),
-            end: compiled.items.end,
-            replacement: stateRef.getText(sourceFile),
+            start: compiled.content.getStart(sourceFile),
+            end: compiled.content.end,
+            replacement: `compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${rowPlan.indexIndependent}${compiledKey}, evaluate: (${parameters}) => ({ type: ${rowPlan.typeSource}, props: ${rowPlan.propsSource}, text: ${rowPlan.textSource} }) })`,
           })
-        }
-        if (elements.names.size > 0 || elements.namespaces.size > 0) {
-          const plan = collectionRowPlan(compiled.content, sourceFile, elements)
-          if (plan) {
-            const parameters = plan.indexName ? `${plan.itemName}, ${plan.indexName}` : plan.itemName
-            edits.push({
-              start: compiled.content.getStart(sourceFile),
-              end: compiled.content.end,
-              replacement: `compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${plan.indexIndependent}, evaluate: (${parameters}) => ({ type: ${plan.typeSource}, props: ${plan.propsSource}, text: ${plan.textSource} }) })`,
-            })
-          }
         }
         return
       }

@@ -1,15 +1,34 @@
+const dataOnlySnapshots = new WeakSet<object>()
+
 /** Check array identity without leaking revoked Proxy errors. */
 export function arrayCheck(value: unknown): boolean | undefined {
+  try { return Array.isArray(value) } catch { return undefined }
+}
+
+/** Strict descriptor-only snapshot used at collection boundaries. */
+export function snapshotDataArrayValues(value: unknown): readonly unknown[] | undefined {
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
   try {
-    return Array.isArray(value)
-  } catch {
-    return undefined
-  }
+    const length = Object.getOwnPropertyDescriptor(values, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
+    const snapshot = new Array<unknown>(length.value)
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!descriptor) continue
+      if (!("value" in descriptor)) return undefined
+      snapshot[index] = descriptor.value
+    }
+    Object.freeze(snapshot)
+    dataOnlySnapshots.add(snapshot)
+    return snapshot
+  } catch { return undefined }
 }
 
 /** Snapshot array indices without invoking iterators or indexed accessors. */
 export function snapshotArrayValues(value: readonly unknown[]): readonly unknown[] {
   try {
+    if (dataOnlySnapshots.has(value as object)) return value
     const length = Object.getOwnPropertyDescriptor(value, "length")
     if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return Object.freeze([])
     const snapshot = new Array<unknown>(length.value)
@@ -18,7 +37,5 @@ export function snapshotArrayValues(value: readonly unknown[]): readonly unknown
       snapshot[index] = descriptor && "value" in descriptor ? descriptor.value : undefined
     }
     return Object.freeze(snapshot)
-  } catch {
-    return Object.freeze([])
-  }
+  } catch { return Object.freeze([]) }
 }

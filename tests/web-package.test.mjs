@@ -15,6 +15,7 @@ import {
   ScrollView,
   State,
   compiledTemplate,
+  compiledCollectionContent,
   defineCompiledTemplate,
   viewElement,
   viewFragment,
@@ -2242,6 +2243,39 @@ test("@vune-ui/web preserves State for logically present offscreen lazy rows and
   container.dispatchEvent(new dom.window.Event("scroll"))
   await Promise.resolve(); await Promise.resolve()
   assert.equal(container.querySelector('[data-row="row-0"]')?.textContent, "row-0:0")
+  unmount()
+  dom.window.close()
+})
+
+
+test("@vune-ui/web lets a compiled keyed collection own its State subscription", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])
+  let parentRuns = 0
+  let rowRuns = 0
+  const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => item.id,
+    evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
+  })
+  const App = defineView("OwnedCompiledCollectionApp", {
+    initializers: [initializer("OwnedCompiledCollectionApp()", args => args.length === 0)],
+    body: () => { parentRuns += 1; return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])) },
+  })
+  const unmount = mount(App(), container)
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 3)
+  rowRuns = 0
+  const before = container.querySelector("[data-row=b]")
+  items.value[1] = { id: "b", value: "B1" }
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.strictEqual(container.querySelector("[data-row=b]"), before)
+  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B1")
   unmount()
   dom.window.close()
 })
