@@ -4,8 +4,8 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
 
 const directory = ".github/collection-runtime-patch"
-const names = readdirSync(directory).filter((name) => /^\d{2}$/.test(name)).sort()
-if (names.length !== 7) throw new Error(`expected 7 patch chunks, received ${names.length}`)
+const names = readdirSync(directory).filter((name) => /^\d+$/.test(name)).sort()
+if (names.length !== 9) throw new Error(`expected 9 patch chunks, received ${names.length}`)
 const encoded = names.map((name) => readFileSync(`${directory}/${name}`, "utf8")).join("")
 if (encoded.length !== 18256) throw new Error(`unexpected encoded patch length ${encoded.length}`)
 const patch = gunzipSync(Buffer.from(encoded, "base64"))
