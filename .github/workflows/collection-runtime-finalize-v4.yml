@@ -1,0 +1,270 @@
+name: Collection runtime finalize v4
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collection-runtime-finalize-v4
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: contains(github.event.head_commit.message, 'run collection runtime finalize v4')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      BRANCH: codex/collection-runtime-finalize-20260830
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Configure diagnostic trap
+        shell: bash
+        run: |
+          cat > /tmp/record-failure.sh <<'SH'
+          #!/usr/bin/env bash
+          set +e
+          stage=${1:-unknown}
+          shift || true
+          mkdir -p .github
+          {
+            printf 'stage=%s\n' "$stage"
+            printf 'sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'time=%s\n' "$(date -u +%FT%TZ)"
+            printf '\nlast-command-output:\n'
+            if [ -f /tmp/current-stage.log ]; then tail -n 500 /tmp/current-stage.log; fi
+          } > .github/collection-runtime-v4-failure.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/collection-runtime-v4-failure.txt
+          git commit -m "chore: collection runtime v4 failed at ${stage} [skip ci]" || true
+          git push origin HEAD:${BRANCH} || true
+          exit 1
+          SH
+          chmod +x /tmp/record-failure.sh
+
+      - name: Apply prepared product patch exactly once
+        shell: bash
+        run: |
+          set -o pipefail
+          stage=apply-product-patch
+          : > /tmp/current-stage.log
+          if [ -f .github/collection-runtime-apply.mjs ] && [ -d .github/collection-runtime-patch ]; then
+            set +e
+            node .github/collection-runtime-apply.mjs 2>&1 | tee /tmp/current-stage.log
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" -ne 0 ]; then
+              git reset --hard HEAD
+              node - <<'NODE'
+              import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+              import { gunzipSync } from 'node:zlib'
+              const directory = '.github/collection-runtime-patch'
+              const encoded = readdirSync(directory).sort().map((name) => readFileSync(`${directory}/${name}`, 'utf8')).join('')
+              writeFileSync('/tmp/collection-runtime-product.patch', gunzipSync(Buffer.from(encoded, 'base64')))
+              NODE
+              if git apply --reverse --check /tmp/collection-runtime-product.patch >> /tmp/current-stage.log 2>&1; then
+                echo 'Prepared product patch is already present in the branch.' | tee -a /tmp/current-stage.log
+              else
+                /tmp/record-failure.sh "$stage"
+              fi
+            fi
+          else
+            echo 'No prepared patch bundle remains; validating the current product tree.' | tee /tmp/current-stage.log
+          fi
+          git diff --cached --check 2>&1 | tee -a /tmp/current-stage.log || /tmp/record-failure.sh "$stage"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh install
+
+      - name: Build workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm run build 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh build-before-cleanup
+
+      - name: State core tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/core.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh state-core-before-cleanup
+
+      - name: Collection-specific Web tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh collection-web-before-cleanup
+
+      - name: Compiler tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/compiler-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh compiler-before-cleanup
+
+      - name: React and Vue collection adapter tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test \
+            --test-name-pattern='compiler-planned State collections' \
+            tests/react-client.test.mjs tests/vue-live.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh adapters-before-cleanup
+
+      - name: Full Web package tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/web-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh full-web-before-cleanup
+
+      - name: Full test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh full-suite-before-cleanup
+
+      - name: Remove all temporary collection diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github -maxdepth 1 -type f -name 'collection-*' -print -delete
+          rm -rf .github/collection-runtime-patch
+          find .github/workflows -maxdepth 1 -type f -name 'collection-runtime*.yml' -print -delete
+          git add -A
+          git diff --cached --check
+
+      - name: Rebuild final product tree
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm run build 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh build-after-cleanup
+
+      - name: Re-run State core tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/core.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh state-core-after-cleanup
+
+      - name: Re-run collection-specific Web tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh collection-web-after-cleanup
+
+      - name: Re-run compiler tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/compiler-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh compiler-after-cleanup
+
+      - name: Re-run React and Vue adapter tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test \
+            --test-name-pattern='compiler-planned State collections' \
+            tests/react-client.test.mjs tests/vue-live.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh adapters-after-cleanup
+
+      - name: Re-run full Web package tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/web-package.test.mjs 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh full-web-after-cleanup
+
+      - name: Run 25k collection benchmark on final product tree
+        shell: bash
+        run: |
+          set -o pipefail
+          node benchmarks/collection-runtime.mjs 2>&1 | tee /tmp/collection-runtime-benchmark.txt || /tmp/record-failure.sh benchmark-after-cleanup
+
+      - name: Re-run full test suite on final product tree
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee /tmp/current-stage.log || /tmp/record-failure.sh full-suite-after-cleanup
+
+      - name: Write final validation report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmarks
+          cat > benchmarks/collection-runtime-validation-20260830.md <<EOF
+          # Keyed collection runtime validation — 2026-08-30
+
+          Validated branch: \`${BRANCH}\`
+          Validated input SHA: \`$(git rev-parse HEAD)\`
+          Node: \`$(node --version)\`
+          pnpm: \`$(pnpm --version)\`
+
+          ## Validation
+
+          The following commands completed successfully both before and after removal of temporary collection diagnostics:
+
+          - \`pnpm run build\`
+          - \`node --test tests/core.test.mjs\`
+          - collection-specific cases in \`tests/web-package.test.mjs\`
+          - \`node --test tests/compiler-package.test.mjs\`
+          - compiler-planned collection cases in the React and Vue adapters
+          - \`node --test tests/web-package.test.mjs\`
+          - \`pnpm test\`
+
+          ## 25,000-row JSDOM benchmark
+
+          Previous checkpoint measurements supplied for comparison:
+
+          - mount: approximately 1082 ms
+          - single replacement: approximately 33.3 ms
+          - direct field mutation: approximately 0.33 ms
+          - push: approximately 11.6 ms
+          - pop: approximately 30.4 ms
+          - reverse: approximately 71.5 s, dominated by 25,000 DOM moves in JSDOM
+
+          Final run output:
+
+          \`\`\`text
+          $(cat /tmp/collection-runtime-benchmark.txt)
+          \`\`\`
+          EOF
+          git add benchmarks/collection-runtime-validation-20260830.md
+          git diff --cached --check
+
+      - name: Commit and push validated product tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'Finalize keyed collection runtime performance'
+          final_sha=$(git rev-parse HEAD)
+          python3 - "$final_sha" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path('benchmarks/collection-runtime-validation-20260830.md')
+          text = p.read_text()
+          text = text.replace('Validated input SHA:', f'Final commit SHA: `{sys.argv[1]}`\n\nValidated input SHA:', 1)
+          p.write_text(text)
+          PY
+          git add benchmarks/collection-runtime-validation-20260830.md
+          git commit --amend --no-edit
+          git push origin HEAD:${BRANCH}
