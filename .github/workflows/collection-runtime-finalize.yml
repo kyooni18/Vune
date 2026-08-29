@@ -40,6 +40,17 @@ jobs:
           path.write_text(source)
           PY
       - run: node .github/collection-runtime-finalize.mjs
+      - name: Import compiled collection helper in Web regression
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'tests/web-package.test.mjs'
+          let source = fs.readFileSync(path, 'utf8')
+          const marker = '  compiledTemplate,\n  defineCompiledTemplate,'
+          if (!source.includes(marker)) throw new Error('Web core import marker missing')
+          source = source.replace(marker, '  compiledTemplate,\n  compiledCollectionContent,\n  defineCompiledTemplate,')
+          fs.writeFileSync(path, source)
+          NODE
       - run: pnpm run build
       - run: node --test --test-name-pattern='collection row plans|keyed State collections|keyed collection ownership|shadowing local value|implicit-key State' tests/compiler-package.test.mjs
       - run: node --test --test-name-pattern='ForEach|collection own' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
