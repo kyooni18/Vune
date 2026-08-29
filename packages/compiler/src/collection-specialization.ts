@@ -19,6 +19,11 @@ interface ImportedBindings {
   readonly namespaces: Set<string>
 }
 
+interface CompiledForEachCall {
+  readonly content: ts.Expression
+  readonly items: ts.Expression
+}
+
 function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression
   while (ts.isParenthesizedExpression(current)
@@ -139,13 +144,80 @@ function importedBindings(sourceFile: ts.SourceFile, importedName: string): Impo
   return { names, namespaces }
 }
 
-function isImportedElementCall(call: ts.CallExpression, elements: ImportedBindings): boolean {
+function importedApiCall(call: ts.CallExpression, apiName: string, bindings: ImportedBindings): boolean {
   const callee = unwrapExpression(call.expression)
-  if (ts.isIdentifier(callee)) return elements.names.has(callee.text)
+  if (ts.isIdentifier(callee)) return bindings.names.has(callee.text)
   return ts.isPropertyAccessExpression(callee)
-    && callee.name.text === "Element"
+    && callee.name.text === apiName
     && ts.isIdentifier(callee.expression)
-    && elements.namespaces.has(callee.expression.text)
+    && bindings.namespaces.has(callee.expression.text)
+}
+
+function bindingContains(name: ts.BindingName, target: string): boolean {
+  if (ts.isIdentifier(name)) return name.text === target
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.some(element => !ts.isOmittedExpression(element) && bindingContains(element.name, target))
+  }
+  return false
+}
+
+function statementDeclaresName(statement: ts.Statement, target: string): boolean {
+  if (ts.isVariableStatement(statement)) {
+    return statement.declarationList.declarations.some(declaration => bindingContains(declaration.name, target))
+  }
+  if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) return statement.name.text === target
+  return false
+}
+
+function scopeShadowsIdentifier(identifier: ts.Identifier, sourceFile: ts.SourceFile): boolean {
+  const target = identifier.text
+  let current: ts.Node | undefined = identifier.parent
+  while (current && current !== sourceFile) {
+    if (ts.isFunctionLike(current)) {
+      if (current.parameters.some(parameter => bindingContains(parameter.name, target))) return true
+      if ("name" in current && current.name && ts.isIdentifier(current.name) && current.name.text === target) return true
+    }
+    if (ts.isBlock(current)) {
+      if (current.statements.some(statement => statementDeclaresName(statement, target))) return true
+    }
+    if (ts.isCatchClause(current) && current.variableDeclaration && bindingContains(current.variableDeclaration.name, target)) return true
+    if ((ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current))
+      && current.initializer && ts.isVariableDeclarationList(current.initializer)
+      && current.initializer.declarations.some(declaration => bindingContains(declaration.name, target))) return true
+    current = current.parent
+  }
+  return false
+}
+
+function topLevelStateBindings(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const stateApi = importedBindings(sourceFile, "State")
+  if (stateApi.names.size === 0 && stateApi.namespaces.size === 0) return new Set()
+  const states = new Set<string>()
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue
+      const initializer = unwrapExpression(declaration.initializer)
+      if (ts.isCallExpression(initializer) && importedApiCall(initializer, "State", stateApi)) states.add(declaration.name.text)
+    }
+  }
+  return states
+}
+
+function provenStateRefSource(
+  expression: ts.Expression,
+  sourceFile: ts.SourceFile,
+  stateBindings: ReadonlySet<string>,
+): ts.Identifier | undefined {
+  const value = unwrapExpression(expression)
+  if (!ts.isPropertyAccessExpression(value) || value.name.text !== "value") return undefined
+  const owner = unwrapExpression(value.expression)
+  if (!ts.isIdentifier(owner) || !stateBindings.has(owner.text) || scopeShadowsIdentifier(owner, sourceFile)) return undefined
+  return owner
+}
+
+function isImportedElementCall(call: ts.CallExpression, elements: ImportedBindings): boolean {
+  return importedApiCall(call, "Element", elements)
 }
 
 function collectionRowPlan(
@@ -159,7 +231,7 @@ function collectionRowPlan(
   const item = value.parameters[0]
   const index = value.parameters[1]
   if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return undefined
-  if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return undefined
+  if (index && (!ts.isIdentifier(index.name) || index.dotDotToken || index.initializer)) return undefined
   const result = closureResult(value)
   if (!result) return undefined
   const row = singleBuilderResult(result)
@@ -185,7 +257,7 @@ function collectionRowPlan(
   }
 }
 
-function compiledForEachContent(call: ts.CallExpression, foreachNames: ReadonlySet<string>): ts.Expression | undefined {
+function compiledForEachCall(call: ts.CallExpression, foreachNames: ReadonlySet<string>): CompiledForEachCall | undefined {
   const callee = unwrapExpression(call.expression)
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "createNodeCompiled") return undefined
   const viewType = unwrapExpression(callee.expression)
@@ -193,8 +265,12 @@ function compiledForEachContent(call: ts.CallExpression, foreachNames: ReadonlyS
   const owner = unwrapExpression(viewType.expression)
   if (!ts.isIdentifier(owner) || !foreachNames.has(owner.text)) return undefined
   if (call.arguments.length !== 2 || !ts.isArrayLiteralExpression(call.arguments[1])) return undefined
-  const content = call.arguments[1].elements.at(-1)
-  return content && !ts.isSpreadElement(content) && !ts.isOmittedExpression(content) ? content : undefined
+  const argumentsArray = call.arguments[1]
+  const items = argumentsArray.elements[0]
+  const content = argumentsArray.elements.at(-1)
+  if (!items || !content || ts.isSpreadElement(items) || ts.isOmittedExpression(items)
+    || ts.isSpreadElement(content) || ts.isOmittedExpression(content)) return undefined
+  return { items, content }
 }
 
 export function lowerCompiledCollections(source: string): string {
@@ -203,22 +279,32 @@ export function lowerCompiledCollections(source: string): string {
   const foreach = importedBindings(sourceFile, "ForEach")
   if (foreach.names.size === 0) return source
   const elements = importedBindings(sourceFile, "Element")
-  if (elements.names.size === 0 && elements.namespaces.size === 0) return source
+  const states = topLevelStateBindings(sourceFile)
   const edits: Array<{ start: number; end: number; replacement: string }> = []
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      const content = compiledForEachContent(node, foreach.names)
-      if (content) {
-        const plan = collectionRowPlan(content, sourceFile, elements)
-        if (plan) {
-          const parameters = plan.indexName ? `${plan.itemName}, ${plan.indexName}` : plan.itemName
+      const compiled = compiledForEachCall(node, foreach.names)
+      if (compiled) {
+        const stateRef = provenStateRefSource(compiled.items, sourceFile, states)
+        if (stateRef) {
           edits.push({
-            start: content.getStart(sourceFile),
-            end: content.end,
-            replacement: `compiledCollectionContent(${content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${plan.indexIndependent}, evaluate: (${parameters}) => ({ type: ${plan.typeSource}, props: ${plan.propsSource}, text: ${plan.textSource} }) })`,
+            start: compiled.items.getStart(sourceFile),
+            end: compiled.items.end,
+            replacement: stateRef.getText(sourceFile),
           })
-          return
         }
+        if (elements.names.size > 0 || elements.namespaces.size > 0) {
+          const plan = collectionRowPlan(compiled.content, sourceFile, elements)
+          if (plan) {
+            const parameters = plan.indexName ? `${plan.itemName}, ${plan.indexName}` : plan.itemName
+            edits.push({
+              start: compiled.content.getStart(sourceFile),
+              end: compiled.content.end,
+              replacement: `compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${plan.indexIndependent}, evaluate: (${parameters}) => ({ type: ${plan.typeSource}, props: ${plan.propsSource}, text: ${plan.textSource} }) })`,
+            })
+          }
+        }
+        return
       }
     }
     ts.forEachChild(node, visit)
