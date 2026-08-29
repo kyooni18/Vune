@@ -1612,27 +1612,27 @@ test("re-marking an overloaded closure preserves its dispatch variants", () => {
 
 
 test("State updates shallow root-array ownership without rescanning unrelated rows", () => {
-  let ownKeysCalls = 0
+  const ownKeysCalls = new Uint32Array(256)
   const rows = Array.from({ length: 256 }, (_, index) => new Proxy({ id: index, value: String(index) }, {
-    ownKeys(target) { ownKeysCalls += 1; return Reflect.ownKeys(target) },
+    ownKeys(target) { ownKeysCalls[index] += 1; return Reflect.ownKeys(target) },
   }))
   const state = State(rows)
   let notifications = 0
   const unsubscribe = subscribeState(state, () => { notifications += 1 })
   const stale = state.value[128]
-  ownKeysCalls = 0
+  ownKeysCalls.fill(0)
 
   state.value[128] = { id: 128, value: "changed" }
   assert.equal(notifications, 1)
-  assert.ok(ownKeysCalls <= 2)
+  assert.equal(ownKeysCalls.reduce((total, calls) => total + calls, 0), 0)
   notifications = 0
   stale.value = "stale"
   assert.equal(notifications, 0)
 
   const removed = state.value.at(-1)
-  ownKeysCalls = 0
+  ownKeysCalls.fill(0)
   state.value.pop()
-  assert.equal(ownKeysCalls, 0)
+  assert.equal(ownKeysCalls.reduce((total, calls) => total + calls, 0), 0)
   notifications = 0
   removed.value = "removed"
   assert.equal(notifications, 0)
@@ -1649,5 +1649,54 @@ test("State shallow array ownership keeps duplicate object references live", () 
   notifications = 0
   proxy.value += 1
   assert.equal(notifications, 1)
+  unsubscribe()
+})
+
+test("State falls back when a shallow root row is also reachable through a nested row", () => {
+  const shared = { count: 0 }
+  const holder = { nested: shared }
+  const state = State([shared, holder])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const sharedProxy = state.value[0]
+
+  state.value[0] = { count: 1 }
+  notifications = 0
+  sharedProxy.count += 1
+  assert.equal(notifications, 1)
+
+  state.value.pop()
+  notifications = 0
+  sharedProxy.count += 1
+  assert.equal(notifications, 0)
+  unsubscribe()
+})
+
+test("State invalidates shallow root-array ownership when a row gains a nested subtree", () => {
+  const state = State([{ id: 0 }])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const row = state.value[0]
+
+  row.nested = { count: 0 }
+  const nested = row.nested
+  state.value.pop()
+  notifications = 0
+  nested.count += 1
+  assert.equal(notifications, 0)
+  unsubscribe()
+})
+
+test("State array length truncation detaches removed shallow rows", () => {
+  const state = State([{ id: 0 }, { id: 1 }, { id: 2 }])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const removed = state.value[2]
+
+  state.value.length = 2
+  assert.equal(notifications, 1)
+  notifications = 0
+  removed.id = 3
+  assert.equal(notifications, 0)
   unsubscribe()
 })

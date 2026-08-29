@@ -1091,6 +1091,41 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("compiler emits data-only collection descriptors for primitive attributes class and style", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A", tone: "active", color: "red", opacity: 0.5, hidden: false }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { className: item.tone, style: { color: item.color, opacity: item.opacity }, title: item.value, hidden: item.hidden }, item.value))) })`
+  const output = transformVuneSource(source, "DataOnlyCompiledCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent/)
+  assert.match(output, /props: \{ className: item\.tone, style: \{ color: item\.color, opacity: item\.opacity \}, title: item\.value, hidden: item\.hidden \}/)
+})
+
+test("compiler leaves refs raw HTML events and opaque style records on the generic collection path", () => {
+  const cases = [
+    ["Ref", `{ ref: item.ref }`],
+    ["InnerHtml", `{ innerHTML: item.html }`],
+    ["DangerousHtml", `{ dangerouslySetInnerHTML: item.html }`],
+    ["Event", `{ onClick: item.onClick }`],
+    ["OpaqueStyle", `{ style: item.style }`],
+  ]
+  for (const [name, props] of cases) {
+    const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", ${props}, item.value))) })`
+    assert.doesNotMatch(transformVuneSource(source, `${name}Collection.vune.ts`), /compiledCollectionContent/)
+  }
+
+  const customElement = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("x-row", { title: item.value }, item.value))) })`
+  assert.doesNotMatch(transformVuneSource(customElement, "CustomElementCollection.vune.ts"), /compiledCollectionContent/)
+
+  const unsafeHost = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("input", { value: item.value }, item.value))) })`
+  assert.doesNotMatch(transformVuneSource(unsafeHost, "UnsafeHostCollection.vune.ts"), /compiledCollectionContent/)
+})
+
 test("compiler keeps index-sensitive collection plans conservative", () => {
   const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
 const items = State([{ id: "a", value: "A" }])
@@ -1098,6 +1133,60 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")
   assert.match(output, /compiledCollectionContent/)
   assert.match(output, /indexIndependent: false/)
+})
+
+test("compiler does not isolate a State collection whose explicit key depends on index", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => index, item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "IndexKeyCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent/)
+  assert.match(output, /indexIndependent: false/)
+  assert.match(output, /createNodeCompiled\(1, \[items\.value, \(item, index\) => index, compiledCollectionContent/)
+  assert.doesNotMatch(output, /createNodeCompiled\(1, \[items, \(item, index\) => index, compiledCollectionContent/)
+})
+
+test("compiler does not claim index independence for an unproven explicit key", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => String(item.id), item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "UnprovenKeyCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent/)
+  assert.match(output, /indexIndependent: false/)
+  assert.doesNotMatch(output, /evaluateKey:/)
+  assert.match(output, /createNodeCompiled\(1, \[items\.value, item => String\(item\.id\), compiledCollectionContent/)
+})
+
+test("compiler only isolates immutable same-file State bindings", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+let items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => item.id, item => Element("span", null, item.value))) })`
+  const output = transformVuneSource(source, "MutableStateBindingCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent/)
+  assert.match(output, /createNodeCompiled\(1, \[items\.value, item => item\.id, compiledCollectionContent/)
+  assert.doesNotMatch(output, /createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+})
+
+test("compiler refuses asynchronous generator and shadowed collection row APIs", () => {
+  const asynchronous = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, async item => Element("span", null, item.value))) })`
+  assert.doesNotMatch(transformVuneSource(asynchronous, "AsyncCollection.vune.ts"), /compiledCollectionContent/)
+
+  const generator = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, function* (item) { return Element("span", null, item.value) })) })`
+  assert.doesNotMatch(transformVuneSource(generator, "GeneratorCollection.vune.ts"), /compiledCollectionContent/)
+
+  const shadowed = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => { const Element = (...args) => args; return ForEach(items.value, item => Element("span", null, item.value)) } })`
+  assert.doesNotMatch(transformVuneSource(shadowed, "ShadowedElementCollection.vune.ts"), /compiledCollectionContent/)
+
+  const namespaceShadowed = `import * as Vune from "@vune-ui/core"
+const items = Vune.State([{ id: "a", value: "A" }])
+export const App = Vune.defineView("App", { initializers: [Vune.initializer("App()", args => args.length === 0)], body: () => { const Vune = { Element: (...args) => args }; return Vune.ForEach(items.value, item => Vune.Element("span", null, item.value)) } })`
+  assert.doesNotMatch(transformVuneSource(namespaceShadowed, "ShadowedNamespaceCollection.vune.ts"), /compiledCollectionContent/)
 })
 
 test("compiler refuses effectful or structurally complex collection rows", () => {
@@ -1111,6 +1200,7 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
 const items = State([{ id: "a", value: "A" }])
 export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })`
   assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
+
 })
 
 test("compiler keeps proven keyed State collections owned by the collection executor", () => {
@@ -1128,6 +1218,15 @@ const items = S([{ id: "a", value: "A" }])
 export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => item.id, item => Element("span", null, item.value))) })`
   const output = transformVuneSource(source, "AliasedStateCollection.vune.ts")
   assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+})
+
+test("compiler specializes namespace-imported keyed State collections", () => {
+  const source = `import * as Vune from "@vune-ui/core"
+const items = Vune.State([{ id: "a", value: "A" }])
+export const App = Vune.defineView("App", { initializers: [Vune.initializer("App()", args => args.length === 0)], body: () => Vune.Element("section", null, Vune.ForEach(items.value, item => item.id, item => Vune.Element("span", { title: item.value }, item.value))) })`
+  const output = transformVuneSource(source, "NamespaceStateCollection.vune.ts")
+  assert.match(output, /Vune\.ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+  assert.match(output, /evaluateKey: item => item\.id/)
 })
 
 test("compiler does not rewrite a shadowing local value as a StateRef collection", () => {

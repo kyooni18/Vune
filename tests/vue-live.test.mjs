@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { JSDOM } from "jsdom"
-import { ForEach, GeometryReader, State, Text, defineView, initializer, viewElement } from "../packages/core/dist/index.js"
+import { ForEach, GeometryReader, State, Text, compiledCollectionContent, defineView, initializer, viewElement } from "../packages/core/dist/index.js"
 
 test("Vue consumes core keyed View identity for reorder and remount State semantics", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
@@ -37,6 +37,127 @@ test("Vue consumes core keyed View identity for reorder and remount State semant
     items.value = [{ id: "a" }, ...items.value]
     await nextTick()
     assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "a:0")
+    app.unmount()
+  } finally {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.Element = previous.Element
+    globalThis.SVGElement = previous.SVGElement
+    globalThis.Node = previous.Node
+    dom.window.close()
+  }
+})
+
+test("Vue owns compiler-planned State collections without rebuilding the parent View graph", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>")
+  const previous = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, SVGElement: globalThis.SVGElement, Node: globalThis.Node }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.Element = dom.window.Element
+  globalThis.SVGElement = dom.window.SVGElement
+  globalThis.Node = dom.window.Node
+  try {
+    const { createApp, nextTick } = await import("vue")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }])
+    let parentRuns = 0
+    let genericRuns = 0
+    let rowRuns = 0
+    const content = compiledCollectionContent(item => {
+      genericRuns += 1
+      return viewElement("span", { "data-row": item.id }, [item.value])
+    }, {
+      kind: "flat-text-host",
+      indexIndependent: true,
+      evaluateKey: item => item.id,
+      evaluate: item => {
+        rowRuns += 1
+        return { type: "span", props: { "data-row": item.id, class: item.value, style: { opacity: item.id === "a" ? 0.5 : 1 } }, text: item.value }
+      },
+    })
+    const App = defineView("VueCompiledCollectionApp", {
+      initializers: [initializer("App()", args => args.length === 0)],
+      body: () => {
+        parentRuns += 1
+        return viewElement("section", null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+      },
+    })
+    const app = createApp(VuneView, { render: () => App() })
+    app.mount(dom.window.document.getElementById("app"))
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    const a = dom.window.document.querySelector('[data-row="a"]')
+
+    rowRuns = 0
+    items.value[1] = { id: "b", value: "B1" }
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    assert.equal(dom.window.document.querySelector('[data-row="b"]')?.textContent, "B1")
+
+    rowRuns = 0
+    items.value.reverse()
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["B1", "A"])
+    assert.strictEqual(dom.window.document.querySelector('[data-row="a"]'), a)
+    app.unmount()
+  } finally {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.Element = previous.Element
+    globalThis.SVGElement = previous.SVGElement
+    globalThis.Node = previous.Node
+    dom.window.close()
+  }
+})
+
+test("Vue collection fallback keeps source and row State dependencies below the parent View", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>")
+  const previous = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, SVGElement: globalThis.SVGElement, Node: globalThis.Node }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.Element = dom.window.Element
+  globalThis.SVGElement = dom.window.SVGElement
+  globalThis.Node = dom.window.Node
+  try {
+    const { createApp, nextTick } = await import("vue")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const items = State([{ id: "a" }])
+    const suffix = State("0")
+    let parentRuns = 0
+    let rowRuns = 0
+    const App = defineView("VueGenericCollectionDependencies", {
+      initializers: [initializer("App()", args => args.length === 0)],
+      body: () => {
+        parentRuns += 1
+        return viewElement("section", null, [ForEach(items, item => item.id, item => {
+          rowRuns += 1
+          return viewElement("span", { "data-row": item.id }, [`${item.id}:${suffix.value}`])
+        })])
+      },
+    })
+    const app = createApp(VuneView, { render: () => App() })
+    app.mount(dom.window.document.getElementById("app"))
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 1)
+    assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "a:0")
+
+    suffix.value = "1"
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 2)
+    assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "a:1")
+
+    items.value.push({ id: "b" })
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 4)
+    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["a:1", "b:1"])
     app.unmount()
   } finally {
     globalThis.window = previous.window

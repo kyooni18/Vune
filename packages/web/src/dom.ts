@@ -4,6 +4,7 @@ import {
   edgeInsetsFromCss,
   frameStyle,
   keyedCollectionChildKey,
+  keyedCollectionEntryKey,
   keyedCollectionEntries,
   isStateRef,
   reactiveIdentity,
@@ -1509,7 +1510,7 @@ function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boole
       if (!descriptor || !("value" in descriptor)) return false
       const value = descriptor.value
       if (key === "key" || key === "children") continue
-      if (directKeyedPatchUnsafeProps.has(key)) return false
+      if (key === "__proto__" || directKeyedPatchUnsafeProps.has(key)) return false
       if (key.startsWith("data-vune-")) return false
       if (key === "style") {
         if (!value || typeof value !== "object") {
@@ -1517,7 +1518,7 @@ function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boole
           continue
         }
         for (const styleKey of Reflect.ownKeys(value)) {
-          if (typeof styleKey !== "string") return false
+          if (typeof styleKey !== "string" || styleKey === "__proto__") return false
           const styleDescriptor = Object.getOwnPropertyDescriptor(value, styleKey)
           if (!styleDescriptor || !("value" in styleDescriptor)) return false
           const item = styleDescriptor.value
@@ -1526,10 +1527,10 @@ function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boole
         }
         continue
       }
-      if (/^on[A-Za-z]/.test(key)) {
-        if (value !== undefined && value !== null && typeof value !== "function") return false
-        continue
-      }
+      // Event listener lifecycle is renderer state, not a data-only host prop.
+      // Keep it on the generic graph path even when a manually supplied
+      // compiled plan happens to return a function.
+      if (/^on[A-Za-z]/.test(key)) return false
       const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
         || (typeof value === "number" && Number.isFinite(value))
       if (!primitive) return false
@@ -1926,7 +1927,7 @@ function patchStructuralCompiledCollectionMutation(
       const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta
       occurrenceDeltas.set(resolved.identity, delta + 1)
       const entry: KeyedCollectionEntry = {
-        key: keyedCollectionChildKey(resolved.identity, occurrence),
+        key: keyedCollectionEntryKey(resolved.identity, occurrence),
         baseKey: resolved.identity,
         displayKey: resolved.display,
         occurrence,
@@ -2098,6 +2099,37 @@ function materializeDirectCollection(
   registerDomCollection(runtime, instance)
   subscribeDomCollection(instance, context, runtime)
   return fragment
+}
+
+function registerGenericStateCollection(
+  node: KeyedCollectionViewNode,
+  identity: readonly (string | number)[],
+  ownerKey: string,
+  context: DomRenderContext,
+  runtime: DomViewRuntime,
+): void {
+  // Compiler-owned State collections normally stay entirely inside the direct
+  // executor. Runtime values can still invalidate that proof (for example a
+  // manually supplied descriptor returning an event prop). Keep the source
+  // subscription even when rendering the row graph generically, otherwise the
+  // compiler's parent-invalidation isolation would leave that fallback stale.
+  if (!isStateRef(node.source) || !node.compiled?.evaluateKey) return
+  const key = viewIdentityKey([...identity, "collection-executor"])
+  const instance: DomCollectionInstance = {
+    key,
+    ownerKey,
+    node,
+    sourceIdentity: collectionSourceIdentity(node),
+    rows: new Map(),
+    order: [],
+    rowsByItem: new Map(),
+    actualKeys: new Set(),
+    occurrenceCounts: new Map(),
+    pendingMutations: [],
+    scheduled: false,
+  }
+  registerDomCollection(runtime, instance)
+  subscribeDomCollection(instance, context, runtime)
 }
 
 function collectionMutationEffects(
@@ -2892,11 +2924,17 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     collection(node, renderEntry, identity) {
       const ownerKey = runtime?.stack.at(-1)
       const owner = ownerKey ? runtime?.boundaries.get(ownerKey) : undefined
-      if (runtime && ownerKey && owner && !runtime.suppressCollectionDirect
-        && !context.hydrating && !context.stagingProps && !context.stagingEvents
-        && !owner.mounted && owner.currentNodes.length === 0) {
-        const direct = materializeDirectCollection(node, identity, ownerKey, context, runtime)
-        if (direct) return direct
+      const canTrackCollection = Boolean(runtime && ownerKey && owner
+        && !context.hydrating && !context.stagingProps && !context.stagingEvents)
+      if (canTrackCollection && runtime && ownerKey && owner) {
+        if (!runtime.suppressCollectionDirect && !owner.mounted && owner.currentNodes.length === 0) {
+          const direct = materializeDirectCollection(node, identity, ownerKey, context, runtime)
+          if (direct) return direct
+        }
+        // Candidate fallback rendering suppresses direct DOM ownership, but a
+        // compiler-isolated State source still needs a fresh invalidation
+        // subscription after the previous executor is discarded.
+        registerGenericStateCollection(node, identity, ownerKey, context, runtime)
       }
       const fragment = context.document.createDocumentFragment()
       for (const entry of keyedCollectionEntries(node)) appendDomChild(fragment, renderEntry(entry), context)

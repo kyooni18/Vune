@@ -2295,6 +2295,43 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
   dom.window.close()
 })
 
+test("@vune-ui/web keeps eventful compiled collection rows on the generic renderer path", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A", calls: 0 }])
+  let parentRuns = 0
+  let genericRows = 0
+  const content = compiledCollectionContent(item => {
+    genericRows += 1
+    return Element("button", { "data-row": item.id, onClick: () => { item.calls += 1 } }, item.value)
+  }, {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => item.id,
+    evaluate: item => ({ type: "button", props: { "data-row": item.id, onClick: () => { item.calls += 1 } }, text: item.value }),
+  })
+  const App = defineView("EventfulCompiledCollectionFallbackApp", {
+    initializers: [initializer("EventfulCompiledCollectionFallbackApp()", args => args.length === 0)],
+    body: () => { parentRuns += 1; return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])) },
+  })
+  const unmount = mount(App(), container)
+  assert.equal(genericRows, 1)
+  container.querySelector("button")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(items.value[0].calls, 1)
+  assert.equal(parentRuns, 2)
+  assert.equal(genericRows, 2)
+
+  items.value[0].value = "A2"
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(container.querySelector("button")?.textContent, "A2")
+  assert.equal(parentRuns, 3)
+  assert.equal(genericRows, 3)
+  unmount()
+  dom.window.close()
+})
+
 
 test("@vune-ui/web executes push pop and reverse without reevaluating stable compiled rows", async () => {
   const dom = new JSDOM("<div id=app></div>")
@@ -2350,6 +2387,50 @@ test("@vune-ui/web executes push pop and reverse without reevaluating stable com
   assert.strictEqual(container.querySelector("[data-row=a]"), a)
   assert.strictEqual(container.querySelector("[data-row=b]"), b)
   assert.strictEqual(container.querySelector("[data-row=c]"), c)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web preserves duplicate occurrence identity after append falls back to generic reconcile", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A0" }])
+  let parentRuns = 0
+  let rowRuns = 0
+  let keyRuns = 0
+  const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => { keyRuns += 1; return item.id },
+    evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
+  })
+  const App = defineView("DuplicateAppendCompiledCollectionApp", {
+    initializers: [initializer("DuplicateAppendCompiledCollectionApp()", args => args.length === 0)],
+    body: () => { parentRuns += 1; return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])) },
+  })
+  const unmount = mount(App(), container)
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value.push({ id: "a", value: "A1" })
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
+  const appended = container.querySelectorAll('[data-row="a"]')[1]
+  assert.ok(appended)
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value.splice(0, 0, { id: "z", value: "Z" })
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 3)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["Z", "A0", "A1"])
+  assert.strictEqual(container.querySelectorAll('[data-row="a"]')[1], appended)
 
   unmount()
   dom.window.close()

@@ -20,6 +20,7 @@ import {
   edgeInsetsFromCss,
   frameStyle,
   isForeignComponent,
+  keyedCollectionEntries,
   layoutLength,
   renderViewNode,
   stateTransaction,
@@ -31,6 +32,8 @@ import {
   zeroGeometry,
   type CompiledTemplateValue,
   type GeometryProxy,
+  type KeyedCollectionEntry,
+  type KeyedCollectionViewNode,
   type ModifiableViewNode,
   type VuneRenderer,
   type StateRef,
@@ -190,6 +193,89 @@ function normalizeElementProps(props: Record<string, unknown> | null): Record<st
     }
   }
   return next
+}
+
+const directCollectionUnsafeTags = new Set([
+  "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+  "table", "caption", "colgroup", "thead", "tbody", "tfoot", "tr", "td", "th",
+  "select", "option", "optgroup", "template", "svg", "math",
+])
+
+const directCollectionUnsafeProps = new Set([
+  "children", "key", "ref", "innerHTML", "outerHTML", "textContent", "innerText", "dangerouslySetInnerHTML", "__proto__",
+])
+
+function directCollectionPropsSafe(props: Record<string, unknown> | null): boolean {
+  if (!props) return true
+  try {
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") return false
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) return false
+      const value = descriptor.value
+      if (directCollectionUnsafeProps.has(key) || key.startsWith("data-vune-") || /^on[a-z]/i.test(key)) return false
+      if (key === "style") {
+        if (value === undefined || value === null || typeof value === "string") continue
+        if (typeof value !== "object") return false
+        for (const styleKey of Reflect.ownKeys(value)) {
+          if (typeof styleKey !== "string" || styleKey === "__proto__") return false
+          const styleDescriptor = Object.getOwnPropertyDescriptor(value, styleKey)
+          if (!styleDescriptor || !("value" in styleDescriptor)) return false
+          const item = styleDescriptor.value
+          if (item !== undefined && item !== null && typeof item !== "string"
+            && (typeof item !== "number" || !Number.isFinite(item))) return false
+        }
+        continue
+      }
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (!primitive) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function directCollectionText(value: unknown): { readonly ok: true; readonly value: ReactNode } | { readonly ok: false } {
+  if (value === null || value === undefined || typeof value === "boolean") return { ok: true, value: null }
+  if (typeof value === "string" || typeof value === "number") return { ok: true, value }
+  if (typeof value === "bigint") return { ok: true, value: String(value) }
+  return { ok: false }
+}
+
+function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): ReactNode | undefined {
+  const plan = node.compiled
+  if (plan?.kind !== "flat-text-host") return undefined
+  const row = plan.evaluate(entry.item, entry.index)
+  if (!row || typeof row !== "object" || typeof row.type !== "string" || row.type.includes("-")
+    || directCollectionUnsafeTags.has(row.type.toLowerCase()) || !directCollectionPropsSafe(row.props)) return undefined
+  const text = directCollectionText(row.text)
+  if (!text.ok) return undefined
+  return createElement(row.type, { ...(normalizeElementProps(row.props) ?? {}), key: entry.key }, text.value)
+}
+
+function ReactCollectionHost({
+  node,
+  renderEntry,
+}: {
+  readonly node: KeyedCollectionViewNode
+  readonly renderEntry: (entry: KeyedCollectionEntry) => ReactNode
+}): ReactNode {
+  // Keep collection reads below their own React boundary. The direct plan
+  // avoids rebuilding row View graphs, while collectStateReads still retains
+  // the generic fallback's dependency semantics for manually supplied plans
+  // and ordinary State-backed ForEach nodes.
+  const reactive = useReactiveGraph(() => createElement(
+    Fragment,
+    null,
+    ...keyedCollectionEntries(node).map(entry => {
+      const direct = renderDirectCollectionEntry(node, entry)
+      return direct ?? createElement(Fragment, { key: entry.key }, renderEntry(entry))
+    }),
+  ))
+  return withRenderTransaction(reactive.transaction, () => reactive.value)
 }
 
 function normalizeForeignProps(
@@ -402,6 +488,9 @@ const renderer: VuneRenderer<ReactNode> = {
       reactTemplateFactories.set(node.template, factory)
     }
     return factory(renderSlot)
+  },
+  collection(node, renderEntry, identity) {
+    return createElement(ReactCollectionHost, { key: viewIdentityKey(identity), node, renderEntry })
   },
   modifier(content, modifier) {
     if (modifier.name === "frame") {

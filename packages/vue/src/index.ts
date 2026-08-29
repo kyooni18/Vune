@@ -31,6 +31,7 @@ import {
   frameStyle,
   initializer,
   isForeignComponent,
+  keyedCollectionEntries,
   layoutLength,
   renderViewNode,
   swiftUIAnimatableModifierNames,
@@ -40,6 +41,8 @@ import {
   zeroGeometry,
   type CompiledTemplateValue,
   type GeometryProxy,
+  type KeyedCollectionEntry,
+  type KeyedCollectionViewNode,
   type BindingRef,
   type ModifiableViewNode,
   type VuneRenderer,
@@ -251,6 +254,102 @@ function renderVueElement(type: unknown, props: Record<string, unknown> | null, 
   return h((foreign?.component ?? type) as VueComponentType, normalizedProps, slots)
 }
 
+const directCollectionUnsafeTags = new Set([
+  "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+  "table", "caption", "colgroup", "thead", "tbody", "tfoot", "tr", "td", "th",
+  "select", "option", "optgroup", "template", "svg", "math",
+])
+
+const directCollectionUnsafeProps = new Set([
+  "children", "key", "ref", "innerHTML", "outerHTML", "textContent", "innerText", "dangerouslySetInnerHTML", "__proto__",
+])
+
+function directCollectionPropsSafe(props: Record<string, unknown> | null): boolean {
+  if (!props) return true
+  try {
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") return false
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) return false
+      const value = descriptor.value
+      if (directCollectionUnsafeProps.has(key) || key.startsWith("data-vune-") || /^on[a-z]/i.test(key)) return false
+      if (key === "style") {
+        if (value === undefined || value === null || typeof value === "string") continue
+        if (typeof value !== "object") return false
+        for (const styleKey of Reflect.ownKeys(value)) {
+          if (typeof styleKey !== "string" || styleKey === "__proto__") return false
+          const styleDescriptor = Object.getOwnPropertyDescriptor(value, styleKey)
+          if (!styleDescriptor || !("value" in styleDescriptor)) return false
+          const item = styleDescriptor.value
+          if (item !== undefined && item !== null && typeof item !== "string"
+            && (typeof item !== "number" || !Number.isFinite(item))) return false
+        }
+        continue
+      }
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (!primitive) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function directCollectionText(value: unknown): { readonly ok: true; readonly value: VNodeChild } | { readonly ok: false } {
+  if (value === null || value === undefined || typeof value === "boolean") return { ok: true, value: null }
+  if (typeof value === "string" || typeof value === "number") return { ok: true, value }
+  if (typeof value === "bigint") return { ok: true, value: String(value) }
+  return { ok: false }
+}
+
+function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): VNodeChild | undefined {
+  const plan = node.compiled
+  if (plan?.kind !== "flat-text-host") return undefined
+  const row = plan.evaluate(entry.item, entry.index)
+  if (!row || typeof row !== "object" || typeof row.type !== "string" || row.type.includes("-")
+    || directCollectionUnsafeTags.has(row.type.toLowerCase()) || !directCollectionPropsSafe(row.props)) return undefined
+  const text = directCollectionText(row.text)
+  if (!text.ok) return undefined
+  return renderVueElement(row.type, { ...(row.props ?? {}), key: entry.key }, [text.value])
+}
+
+const VuneCollectionHost = defineComponent({
+  name: "VuneCollectionHost",
+  props: {
+    node: { type: Object as PropType<KeyedCollectionViewNode>, required: true },
+    renderEntry: { type: Function as PropType<(entry: KeyedCollectionEntry) => VNodeChild>, required: true },
+  },
+  setup(props) {
+    const value = shallowRef<VNodeChild>(null)
+    const version = shallowRef(0)
+    const transaction = shallowRef<Transaction | undefined>(undefined)
+    const subscriptions = new Map<StateRef<unknown>, () => void>()
+    let pendingTransaction: Transaction | undefined
+    watchEffect(() => {
+      void version.value
+      const dependencies = new Set<StateRef<unknown>>()
+      transaction.value = pendingTransaction
+      value.value = withRenderTransaction(pendingTransaction, () => collectStateReads(() => h(
+        Fragment,
+        null,
+        keyedCollectionEntries(props.node).map(entry => {
+          const direct = renderDirectCollectionEntry(props.node, entry)
+          return direct ?? h(Fragment, { key: entry.key }, [props.renderEntry(entry)])
+        }),
+      ), dependency => dependencies.add(dependency)))
+      pendingTransaction = undefined
+      sync(subscriptions, dependencies, nextTransaction => {
+        pendingTransaction = nextTransaction
+        version.value += 1
+      })
+    })
+    onScopeDispose(() => subscriptions.forEach(stop => stop()))
+    return () => withRenderTransaction(transaction.value, () => value.value)
+  },
+})
+
 type VueTemplateFactory = (renderSlot: (index: number) => VNodeChild) => VNodeChild
 const vueTemplateFactories = new WeakMap<object, VueTemplateFactory>()
 
@@ -292,6 +391,9 @@ const renderer: VuneRenderer<VNodeChild> = {
       vueTemplateFactories.set(node.template, factory)
     }
     return factory(renderSlot)
+  },
+  collection(node, renderEntry, identity) {
+    return h(VuneCollectionHost, { key: viewIdentityKey(identity), node, renderEntry })
   },
   modifier(content, modifier) {
     if (modifier.name === "frame") {

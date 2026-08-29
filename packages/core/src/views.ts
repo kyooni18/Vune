@@ -6,6 +6,7 @@ import {
   initializer,
   initializerKinds,
   isViewNode,
+  keyedCollectionChildKey,
   keyedCollectionView,
   lazyView,
   resolveBuilderInput,
@@ -521,13 +522,13 @@ function encodedCollectionKey(key: InferredCollectionKey): string {
 
 function appendKeyedCollectionChildren(children: ViewValue[], value: ViewValue, key: string): void {
   if (isViewNode(value)) {
-    children.push(keyedContent(value, `${key}|child:0`))
+    children.push(keyedContent(value, keyedCollectionChildKey(key, 0)))
     return
   }
   const built = ViewBuilder.buildBlock(value)
   for (let index = 0; index < built.length; index += 1) {
     const child = built[index]
-    children.push(isViewNode(child) ? keyedContent(child, `${key}|child:${index}`) : child)
+    children.push(isViewNode(child) ? keyedContent(child, keyedCollectionChildKey(key, index)) : child)
   }
 }
 

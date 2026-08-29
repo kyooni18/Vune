@@ -190,6 +190,11 @@ export function keyedCollectionChildKey(entryKey: string, index: number): string
   return `${entryKey}|child:${index}`
 }
 
+/** Persistent identity for one occurrence of a possibly duplicated base key. */
+export function keyedCollectionEntryKey(baseKey: string, occurrence: number): string {
+  return `${baseKey}|occurrence:${occurrence}`
+}
+
 export function keyedCollectionEntries(node: KeyedCollectionViewNode, itemSnapshot?: readonly unknown[]): readonly KeyedCollectionEntry[] {
   const items = itemSnapshot ?? node.readItems?.() ?? node.items
   const occurrences = new Map<string, number>()
@@ -204,7 +209,7 @@ export function keyedCollectionEntries(node: KeyedCollectionViewNode, itemSnapsh
     occurrences.set(resolved.identity, occurrence + 1)
     if (occurrence > 0) node.onDuplicateKey?.(resolved.display, occurrence)
     entries[index] = {
-      key: `${resolved.identity}|occurrence:${occurrence}`,
+      key: keyedCollectionEntryKey(resolved.identity, occurrence),
       baseKey: resolved.identity,
       displayKey: resolved.display,
       occurrence,

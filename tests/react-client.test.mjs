@@ -17,7 +17,7 @@ import {
   view,
 } from '../dist/legacy.js'
 import { GeometryReader, Text as CanonicalText, mount as canonicalMount, render as canonicalRender, useVuneState, view as canonicalView } from '../packages/react/dist/index.js'
-import { ForEach, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
+import { ForEach, State as CanonicalState, compiledCollectionContent, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
 
 function installDOM() {
   const dom = new JSDOM('<!doctype html><html><body><main id="root"></main></body></html>', {
@@ -99,6 +99,91 @@ test('React consumes core keyed View identity for reorder and remount State sema
     await act(async () => { items.value = items.value.filter(item => item.id !== 'a') })
     await act(async () => { items.value = [{ id: 'a' }, ...items.value] })
     assert.equal(document.querySelector('[data-row="a"]').textContent, 'a:0')
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
+test('React owns compiler-planned State collections without rebuilding the parent View graph', async () => {
+  const restore = installDOM()
+  try {
+    const items = CanonicalState([{ id: 'a', value: 'A' }, { id: 'b', value: 'B' }])
+    let parentRuns = 0
+    let genericRuns = 0
+    let rowRuns = 0
+    const content = compiledCollectionContent(item => {
+      genericRuns += 1
+      return viewElement('span', { 'data-row': item.id }, [item.value])
+    }, {
+      kind: 'flat-text-host',
+      indexIndependent: true,
+      evaluateKey: item => item.id,
+      evaluate: item => {
+        rowRuns += 1
+        return { type: 'span', props: { 'data-row': item.id, class: item.value, style: { opacity: item.id === 'a' ? 0.5 : 1 } }, text: item.value }
+      },
+    })
+    const App = canonicalView(() => {
+      parentRuns += 1
+      return viewElement('section', null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    const a = document.querySelector('[data-row="a"]')
+
+    rowRuns = 0
+    await act(async () => { items.value[1] = { id: 'b', value: 'B1' } })
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    assert.equal(document.querySelector('[data-row="b"]').textContent, 'B1')
+
+    rowRuns = 0
+    await act(async () => { items.value.reverse() })
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 2)
+    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['B1', 'A'])
+    assert.strictEqual(document.querySelector('[data-row="a"]'), a)
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
+test('React collection fallback keeps source and row State dependencies below the parent View', async () => {
+  const restore = installDOM()
+  try {
+    const items = CanonicalState([{ id: 'a' }])
+    const suffix = CanonicalState('0')
+    let parentRuns = 0
+    let rowRuns = 0
+    const App = canonicalView(() => {
+      parentRuns += 1
+      return viewElement('section', null, [ForEach(items, item => item.id, item => {
+        rowRuns += 1
+        return viewElement('span', { 'data-row': item.id }, [`${item.id}:${suffix.value}`])
+      })])
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(createElement(App)) })
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 1)
+    assert.equal(document.querySelector('[data-row="a"]').textContent, 'a:0')
+
+    await act(async () => { suffix.value = '1' })
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 2)
+    assert.equal(document.querySelector('[data-row="a"]').textContent, 'a:1')
+
+    await act(async () => { items.value.push({ id: 'b' }) })
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 4)
+    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['a:1', 'b:1'])
     await act(async () => { root.unmount() })
   } finally {
     restore()
