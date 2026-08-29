@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: collection-runtime-finalize-${{ github.ref }}
+  group: collection-runtime-final-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
