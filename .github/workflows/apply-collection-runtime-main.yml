@@ -31,10 +31,10 @@ jobs:
           mkdir -p /tmp/vune-collection-runtime-patches
           cp .github/patches/collection-runtime/*.patch /tmp/vune-collection-runtime-patches/
           git reset --hard origin/main
-          for patch in /tmp/vune-collection-runtime-patches/*.patch; do
-            git apply --check "$patch"
-            git apply "$patch"
+          for patch_file in /tmp/vune-collection-runtime-patches/*.patch; do
+            patch --batch --forward --fuzz=3 -p1 < "$patch_file"
           done
+          test -z "$(find . -name '*.rej' -print -quit)"
           git diff --check
 
       - name: Set up Node.js
