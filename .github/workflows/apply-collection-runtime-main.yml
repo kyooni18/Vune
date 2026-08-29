@@ -32,7 +32,9 @@ jobs:
           cp .github/patches/collection-runtime/*.patch /tmp/vune-collection-runtime-patches/
           git reset --hard origin/main
           for patch_file in /tmp/vune-collection-runtime-patches/*.patch; do
-            patch --batch --forward --fuzz=3 -p1 < "$patch_file"
+            sanitized="${patch_file%.patch}.sanitized.patch"
+            grep -v '^index ' "$patch_file" > "$sanitized"
+            patch --batch --forward --fuzz=3 -p1 < "$sanitized"
           done
           test -z "$(find . -name '*.rej' -print -quit)"
           git diff --check
