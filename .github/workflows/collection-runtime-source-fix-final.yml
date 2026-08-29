@@ -18,11 +18,9 @@ jobs:
         with:
           ref: codex/collection-runtime-finalize-20260830
           fetch-depth: 0
-
       - uses: pnpm/action-setup@v4
         with:
           version: 11.22.0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.0
@@ -83,19 +81,23 @@ jobs:
           elif new_signature not in dom:
             raise SystemExit('missing directKeyedPatchPropsSafe signature')
 
-          old_event = '''      // Event listener lifecycle is renderer state, not a data-only host prop.
-          // Keep it on the generic graph path even when a manually supplied
-          // compiled plan happens to return a function.
-          if (/^on[A-Za-z]/.test(key)) return false'''
-          new_event = '''      if (/^on[A-Za-z]/.test(key)) {
-            if (!allowEvents) return false
-            if (value !== undefined && value !== null && typeof value !== "function") return false
-            continue
-          }'''
-          if old_event in dom:
-            dom = dom.replace(old_event, new_event, 1)
-          elif new_event not in dom:
-            raise SystemExit('missing event prop safety branch')
+          lines = dom.splitlines()
+          marker = '// Event listener lifecycle is renderer state, not a data-only host prop.'
+          branch = 'if (/^on[A-Za-z]/.test(key)) return false'
+          if not any('if (!allowEvents) return false' in line for line in lines):
+            marker_index = next((i for i, line in enumerate(lines) if line.strip() == marker), None)
+            branch_index = next((i for i, line in enumerate(lines) if line.strip() == branch), None)
+            if marker_index is None or branch_index is None or branch_index < marker_index:
+              raise SystemExit('missing event prop safety branch')
+            indent = lines[branch_index][:-len(lines[branch_index].lstrip())]
+            lines[marker_index:branch_index + 1] = [
+              f'{indent}if (/^on[A-Za-z]/.test(key)) {{',
+              f'{indent}  if (!allowEvents) return false',
+              f'{indent}  if (value !== undefined && value !== null && typeof value !== "function") return false',
+              f'{indent}  continue',
+              f'{indent}}}',
+            ]
+          dom = '\n'.join(lines) + ('\n' if dom.endswith('\n') else '')
 
           old_compiled = '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined'
           new_compiled = '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined'
@@ -108,41 +110,28 @@ jobs:
           git diff --check
 
       - name: Install dependencies
-        shell: bash
         run: pnpm install --frozen-lockfile
-
       - name: Build workspace
-        shell: bash
         run: pnpm run build
-
       - name: State core tests
-        shell: bash
         run: node --test tests/core.test.mjs
-
       - name: Collection-specific Web tests
         shell: bash
         run: |
           node --test \
             --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
             tests/web-package.test.mjs
-
       - name: Compiler tests
-        shell: bash
         run: node --test tests/compiler-package.test.mjs
-
       - name: React and Vue collection adapter tests
         shell: bash
         run: |
           node --test \
             --test-name-pattern='collection|ForEach|keyed' \
             tests/react-client.test.mjs tests/vue-live.test.mjs
-
       - name: Full Web package tests
-        shell: bash
         run: node --test tests/web-package.test.mjs
-
       - name: Full test suite
-        shell: bash
         run: pnpm test
 
       - name: Benchmark checkpoint and optimized branch
@@ -167,8 +156,7 @@ jobs:
           echo 'Optimized benchmark:'
           cat /tmp/vune-validation/optimized.json
 
-      - name: Upload validation evidence
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: collection-runtime-final-evidence
           path: /tmp/vune-validation
@@ -191,19 +179,16 @@ jobs:
           fi
           git rebase origin/codex/collection-runtime-finalize-20260830
           git apply /tmp/collection-source-fix.patch
-
           while IFS= read -r -d '' path; do
             git rm -r -f --ignore-unmatch -- "$path"
           done < <(find .github -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
           while IFS= read -r -d '' path; do
             git rm -f --ignore-unmatch -- "$path"
           done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
-
           if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-)'; then
             echo 'Temporary collection diagnostics remain after cleanup.' >&2
             exit 1
           fi
-
           checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
           optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
           git add packages/core/src/views.ts packages/web/src/dom.ts
