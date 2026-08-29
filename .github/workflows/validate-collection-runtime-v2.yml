@@ -29,14 +29,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for patch in .github/patches/collection-runtime/*.patch; do
-            case "$patch" in
+          for patch_file in .github/patches/collection-runtime/*.patch; do
+            case "$patch_file" in
               *13-o0o0o-public-api.patch) continue ;;
             esac
-            echo "Applying $patch"
-            git apply --recount --check "$patch"
-            git apply --recount "$patch"
+            echo "Applying $patch_file"
+            patch -p1 --batch --forward --fuzz=3 < "$patch_file"
           done
+          git diff --check
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
