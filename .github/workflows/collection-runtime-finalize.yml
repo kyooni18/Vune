@@ -1,4 +1,4 @@
-name: Collection runtime baseline diagnostic
+name: Collection runtime regression bisect
 
 on:
   push:
@@ -9,10 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  baseline-web:
-    if: contains(github.event.head_commit.message, 'check collection web baseline')
+  bisect-web:
+    if: contains(github.event.head_commit.message, 'bisect collection web regression')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,13 +25,39 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - name: Install and build checkpoint
+      - run: pnpm install --frozen-lockfile
+      - name: Bisect flat-keyed regression by source group
+        shell: bash
         run: |
           set -euo pipefail
-          pnpm install --frozen-lockfile
-          pnpm run build
-      - name: Run checkpoint collection-specific Web tests
-        run: |
-          node --test \
-            --test-name-pattern='flat keyed host rows|eventful compiled collection' \
-            tests/web-package.test.mjs
+          checkpoint=71010c2b1c45ff5994eb6561d97e5e406e249d39
+          product=origin/codex/collection-runtime-finalize-20260830
+          run_case() {
+            name=$1
+            shift
+            echo "===== $name ====="
+            git reset --hard "$checkpoint"
+            git clean -fdx -e node_modules
+            if [ "$#" -gt 0 ]; then git checkout "$product" -- "$@"; fi
+            pnpm run build >/tmp/build-$name.log 2>&1 || { cat /tmp/build-$name.log; return 1; }
+            node --test \
+              --test-name-pattern='flat keyed host rows' \
+              tests/web-package.test.mjs
+          }
+          run_case baseline
+          run_case state packages/core/src/state.ts
+          run_case collection-core \
+            packages/core/src/graph/nodes.ts \
+            packages/core/src/index.ts \
+            packages/core/src/views.ts
+          run_case web-and-collection-core \
+            packages/core/src/graph/nodes.ts \
+            packages/core/src/index.ts \
+            packages/core/src/views.ts \
+            packages/web/src/dom.ts
+          run_case all-runtime \
+            packages/core/src/graph/nodes.ts \
+            packages/core/src/index.ts \
+            packages/core/src/state.ts \
+            packages/core/src/views.ts \
+            packages/web/src/dom.ts
