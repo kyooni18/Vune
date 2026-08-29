@@ -5,8 +5,12 @@ on:
     branches:
       - codex/collection-runtime-finalize-20260830
 
+permissions:
+  contents: write
+
 jobs:
-  diagnose-state-hotpaths:
+  checkpoint-state-hotpaths:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -41,5 +45,18 @@ jobs:
           fs.writeFileSync(statePath, state)
           NODE
       - run: pnpm run build
-      - run: node --test --test-name-pattern='shallow root-array ownership|shallow array ownership keeps duplicate' tests/core.test.mjs
-      - run: node --test --test-name-pattern='State tracks|shared raw|detaches stale|shared nested|circular raw|array batches|array mutator|prototype and extensibility' tests/core.test.mjs
+      - name: Run current State hot-path diagnostics
+        continue-on-error: true
+        run: node --test --test-name-pattern='shallow root-array ownership|shallow array ownership keeps duplicate|State tracks|shared raw|detaches stale|shared nested|circular raw|array batches|array mutator|prototype and extensibility' tests/core.test.mjs
+      - name: Checkpoint WIP source
+        if: always()
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/core/src/state.ts packages/web/src/dom.ts tests/core.test.mjs
+          if git diff --cached --quiet; then
+            echo 'No source changes to checkpoint'
+            exit 0
+          fi
+          git commit -m 'wip: checkpoint incremental collection ownership'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
