@@ -1,0 +1,76 @@
+name: Collection runtime observer
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-observer-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - name: Collect branch evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vune-observer
+          git fetch origin main codex/collection-runtime-finalize-20260830
+          {
+            echo "target_sha=$(git rev-parse HEAD)"
+            echo "main_sha=$(git rev-parse origin/main)"
+            echo "report_present=$([ -f benchmarks/collection-runtime-validation-20260830.md ] && echo yes || echo no)"
+            echo "failure_present=$([ -f .github/collection-runtime-v5-failure.txt ] && echo yes || echo no)"
+            echo "temp_collection_files=$(find .github -maxdepth 1 -type f -name 'collection-*' | wc -l | tr -d ' ')"
+            echo "temp_collection_workflows=$(find .github/workflows -maxdepth 1 -type f -name 'collection-runtime*.yml' | wc -l | tr -d ' ')"
+            echo
+            echo '--- recent commits ---'
+            git log --oneline --decorate -20
+            echo
+            echo '--- changed files vs main ---'
+            git diff --name-status origin/main...HEAD
+          } > /tmp/vune-observer/status.txt
+          if [ -f benchmarks/collection-runtime-validation-20260830.md ]; then
+            cp benchmarks/collection-runtime-validation-20260830.md /tmp/vune-observer/final-report.md
+          fi
+          if [ -f .github/collection-runtime-v5-failure.txt ]; then
+            cp .github/collection-runtime-v5-failure.txt /tmp/vune-observer/failure.txt
+          fi
+          git diff --stat origin/main...HEAD > /tmp/vune-observer/diff-stat.txt
+          git diff --numstat origin/main...HEAD > /tmp/vune-observer/diff-numstat.txt
+          tar -C /tmp -czf /tmp/vune-runtime-observer.tar.gz vune-observer
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vune-runtime-observer
+          path: /tmp/vune-runtime-observer.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Commit observer bundle to observer branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git switch --detach
+          git fetch origin codex/collection-runtime-observer-20260830
+          git switch -C observer-output origin/codex/collection-runtime-observer-20260830
+          mkdir -p observer-output
+          cp /tmp/vune-observer/status.txt observer-output/status.txt
+          cp /tmp/vune-observer/diff-stat.txt observer-output/diff-stat.txt
+          cp /tmp/vune-observer/diff-numstat.txt observer-output/diff-numstat.txt
+          cp /tmp/vune-runtime-observer.tar.gz observer-output/vune-runtime-observer.tar.gz
+          if [ -f /tmp/vune-observer/final-report.md ]; then cp /tmp/vune-observer/final-report.md observer-output/final-report.md; fi
+          if [ -f /tmp/vune-observer/failure.txt ]; then cp /tmp/vune-observer/failure.txt observer-output/failure.txt; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add observer-output
+          git commit -m 'chore: capture collection runtime observer output [skip ci]'
+          git push origin HEAD:codex/collection-runtime-observer-20260830
