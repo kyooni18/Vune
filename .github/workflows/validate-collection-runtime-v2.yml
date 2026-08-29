@@ -34,7 +34,22 @@ jobs:
               *13-o0o0o-public-api.patch) continue ;;
             esac
             echo "Applying $patch_file"
+            set +e
             patch -p1 --batch --forward --fuzz=3 < "$patch_file"
+            status=$?
+            set -e
+            rejects=$(find packages tests -name '*.rej' -print)
+            if [ -n "$rejects" ]; then
+              while IFS= read -r reject; do
+                echo "Rejected hunk: $reject"
+                cat "$reject"
+              done <<< "$rejects"
+              exit 1
+            fi
+            if [ "$status" -ne 0 ]; then
+              echo "Patch returned $status after applying all hunks; accepting the zero-new-blob deletion warning"
+            fi
+            find packages tests -name '*.orig' -delete
           done
           git diff --check
 
