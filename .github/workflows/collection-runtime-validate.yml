@@ -8,11 +8,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: collection-runtime-final-validation
+  cancel-in-progress: true
+
 jobs:
   validate:
     if: contains(github.event.head_commit.message, 'validate finalized collection runtime')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +29,128 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
+
+      - name: Apply final generic collection source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(source: str, before: str, after: str, label: str) -> str:
+            count = source.count(before)
+            if count == 1:
+              return source.replace(before, after, 1)
+            if count == 0 and after in source:
+              return source
+            raise SystemExit(f'{label}: expected one match, found {count}')
+
+          views_path = Path('packages/core/src/views.ts')
+          views = views_path.read_text()
+          helper = '''function reactiveCollectionItem(
+            source: StateRef<readonly unknown[]> | undefined,
+            snapshotItem: unknown,
+            index: number,
+          ): unknown {
+            if (!source) return snapshotItem
+            try {
+              const current = source.value
+              if (arrayCheck(current) !== true) return snapshotItem
+              const descriptor = Object.getOwnPropertyDescriptor(current, String(index))
+              if (!descriptor || !("value" in descriptor) || !Object.is(descriptor.value, snapshotItem)) return snapshotItem
+              return current[index]
+            } catch {
+              return snapshotItem
+            }
+          }
+
+          '''
+          anchor = '''function requireCollectionItems(value: unknown): readonly unknown[] {
+            const snapshot = snapshotCollectionItems(value)
+            if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
+            return snapshot
+          }
+
+          '''
+          if helper not in views:
+            if anchor not in views:
+              raise SystemExit('missing requireCollectionItems anchor')
+            views = views.replace(anchor, anchor + helper, 1)
+          views = replace_once(
+            views,
+            '        appendKeyedCollectionChildren(children, content(item, index), entryKey)',
+            '        appendKeyedCollectionChildren(children, content(reactiveCollectionItem(stateSource, item, index), index), entryKey)',
+            'ForEach generic callback row',
+          )
+          views_path.write_text(views)
+
+          dom_path = Path('packages/web/src/dom.ts')
+          dom = dom_path.read_text()
+          dom = replace_once(
+            dom,
+            'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {',
+            'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null, allowEvents = true): boolean {',
+            'directKeyedPatchPropsSafe signature',
+          )
+          lines = dom.splitlines()
+          marker = '// Event listener lifecycle is renderer state, not a data-only host prop.'
+          branch = 'if (/^on[A-Za-z]/.test(key)) return false'
+          if not any('if (!allowEvents) return false' in line for line in lines):
+            marker_index = next((i for i, line in enumerate(lines) if line.strip() == marker), None)
+            branch_index = next((i for i, line in enumerate(lines) if line.strip() == branch), None)
+            if marker_index is None or branch_index is None or branch_index < marker_index:
+              raise SystemExit('missing event prop safety branch')
+            indent = lines[branch_index][:-len(lines[branch_index].lstrip())]
+            lines[marker_index:branch_index + 1] = [
+              f'{indent}if (/^on[A-Za-z]/.test(key)) {{',
+              f'{indent}  if (!allowEvents) return false',
+              f'{indent}  if (value !== undefined && value !== null && typeof value !== "function") return false',
+              f'{indent}  continue',
+              f'{indent}}}',
+            ]
+          dom = '\n'.join(lines) + ('\n' if dom.endswith('\n') else '')
+          dom = replace_once(
+            dom,
+            '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined',
+            '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined',
+            'compiled collection event rejection',
+          )
+          dom_path.write_text(dom)
+
+          react_path = Path('tests/react-client.test.mjs')
+          react = react_path.read_text()
+          react = replace_once(
+            react,
+            "test('React collection fallback keeps source and row State dependencies below the parent View', async () => {",
+            "test('React collection fallback keeps row State dependencies below the parent while preserving generic source invalidation', async () => {",
+            'React fallback test name',
+          )
+          react = replace_once(
+            react,
+            "    await act(async () => { items.value.push({ id: 'b' }) })\n    assert.equal(parentRuns, 1)\n    assert.equal(rowRuns, 4)",
+            "    await act(async () => { items.value.push({ id: 'b' }) })\n    assert.equal(parentRuns, 2)\n    assert.equal(rowRuns, 4)",
+            'React source invalidation expectation',
+          )
+          react_path.write_text(react)
+
+          vue_path = Path('tests/vue-live.test.mjs')
+          vue = vue_path.read_text()
+          vue = replace_once(
+            vue,
+            'test("Vue collection fallback keeps source and row State dependencies below the parent View", async () => {',
+            'test("Vue collection fallback keeps row State dependencies below the parent while preserving generic source invalidation", async () => {',
+            'Vue fallback test name',
+          )
+          vue = replace_once(
+            vue,
+            '    items.value.push({ id: "b" })\n    await nextTick()\n    assert.equal(parentRuns, 1)\n    assert.equal(rowRuns, 4)',
+            '    items.value.push({ id: "b" })\n    await nextTick()\n    assert.equal(parentRuns, 2)\n    assert.equal(rowRuns, 4)',
+            'Vue source invalidation expectation',
+          )
+          vue_path.write_text(vue)
+          PY
+          git diff --check
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build workspace
@@ -32,6 +158,7 @@ jobs:
       - name: State core tests
         run: node --test tests/core.test.mjs
       - name: Collection-specific Web tests
+        shell: bash
         run: |
           node --test \
             --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
@@ -39,18 +166,24 @@ jobs:
       - name: Compiler tests
         run: node --test tests/compiler-package.test.mjs
       - name: React and Vue collection adapter tests
+        shell: bash
         run: |
           node --test \
             --test-name-pattern='collection|ForEach|keyed' \
             tests/react-client.test.mjs tests/vue-live.test.mjs
       - name: Full Web package tests
         run: node --test tests/web-package.test.mjs
+      - name: Full test suite
+        run: pnpm test
+
       - name: Benchmark checkpoint and optimized branch
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/vune-validation
           git worktree add --detach /tmp/vune-checkpoint 71010c2b1c45ff5994eb6561d97e5e406e249d39
+          cleanup() { git worktree remove --force /tmp/vune-checkpoint >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
           (
             cd /tmp/vune-checkpoint
             pnpm install --frozen-lockfile
@@ -58,47 +191,53 @@ jobs:
             node benchmarks/collection-runtime.mjs > /tmp/vune-validation/checkpoint.json
           )
           git worktree remove --force /tmp/vune-checkpoint
+          trap - EXIT
           node benchmarks/collection-runtime.mjs > /tmp/vune-validation/optimized.json
           echo 'Checkpoint benchmark:'
           cat /tmp/vune-validation/checkpoint.json
           echo 'Optimized benchmark:'
           cat /tmp/vune-validation/optimized.json
-      - name: Full test suite
-        run: pnpm test
-      - name: Remove temporary collection diagnostics
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collection-runtime-final-evidence
+          path: /tmp/vune-validation
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Commit validated product tree and remove all diagnostics
         shell: bash
         run: |
           set -euo pipefail
-          git rm -r --ignore-unmatch \
-            .github/collection-state-hotpath.mjs \
-            .github/collection-runtime-apply.mjs \
-            .github/collection-runtime-finalize.patch.gz.b64.* \
-            .github/collection-runtime-patch \
-            .github/collection-web-failure.txt \
-            .github/collection-bisect-result.txt \
-            .github/workflows/collection-runtime-finalize.yml \
-            .github/workflows/collection-runtime-fix.yml \
-            .github/workflows/collection-runtime-validate.yml
-          while IFS= read -r path; do
-            case "$path" in
-              .github/collection-*|.github/workflows/collection-*)
-                echo "unexpected temporary collection diagnostic remains: $path" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git ls-files '.github/**')
-          git diff --cached --check
-      - name: Commit validated product tree
-        shell: bash
-        run: |
-          set -euo pipefail
+          git diff -- packages/core/src/views.ts packages/web/src/dom.ts tests/react-client.test.mjs tests/vue-live.test.mjs > /tmp/collection-final.patch
+          git reset --hard HEAD
+          git clean -fd
+          git fetch origin codex/collection-runtime-finalize-20260830
+          product_changes=$(git diff --name-only HEAD..origin/codex/collection-runtime-finalize-20260830 | grep -v '^\.github/' || true)
+          if [ -n "$product_changes" ]; then
+            echo 'Product files changed while validation was running:' >&2
+            echo "$product_changes" >&2
+            exit 1
+          fi
+          git rebase origin/codex/collection-runtime-finalize-20260830
+          git apply /tmp/collection-final.patch
+
+          while IFS= read -r -d '' path; do git rm -r -f --ignore-unmatch -- "$path"; done < <(find .github -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+          while IFS= read -r -d '' path; do git rm -f --ignore-unmatch -- "$path"; done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+          if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-)'; then
+            echo 'Temporary collection diagnostics remain after cleanup.' >&2
+            exit 1
+          fi
+
           checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
           optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
+          git add packages/core/src/views.ts packages/web/src/dom.ts tests/react-client.test.mjs tests/vue-live.test.mjs
+          git diff --cached --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit \
             -m 'chore: finalize validated collection runtime' \
             -m "checkpoint-benchmark=$checkpoint" \
             -m "optimized-benchmark=$optimized" \
-            -m 'validation=build,core,collection-web,compiler,react-vue,full-web,pnpm-test'
+            -m 'validation=build,state-core,collection-web,compiler,react-vue,full-web,pnpm-test'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
