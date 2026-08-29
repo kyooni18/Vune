@@ -42,11 +42,11 @@ jobs:
 
           const statePath = 'packages/core/src/state.ts'
           let state = fs.readFileSync(statePath, 'utf8')
-          state = state.replaceAll('record.rootArrayRefs.get(previousRaw)', 'record.rootArrayRefs.get(previousRaw as object)')
-          state = state.replaceAll('record.rootArrayRefs.delete(previousRaw)', 'record.rootArrayRefs.delete(previousRaw as object)')
-          state = state.replaceAll('record.rootArrayRefs.set(previousRaw,', 'record.rootArrayRefs.set(previousRaw as object,')
-          state = state.replaceAll('record.rootArrayRefs.get(nextRaw)', 'record.rootArrayRefs.get(nextRaw as object)')
-          state = state.replaceAll('record.rootArrayRefs.set(nextRaw,', 'record.rootArrayRefs.set(nextRaw as object,')
+          for (const name of ['previousRaw', 'nextRaw', 'raw']) {
+            state = state.replaceAll(`record.rootArrayRefs.get(${name})`, `record.rootArrayRefs.get(${name} as object)`)
+            state = state.replaceAll(`record.rootArrayRefs.delete(${name})`, `record.rootArrayRefs.delete(${name} as object)`)
+            state = state.replaceAll(`record.rootArrayRefs.set(${name},`, `record.rootArrayRefs.set(${name} as object,`)
+          }
           fs.writeFileSync(statePath, state)
           NODE
       - run: pnpm run build
