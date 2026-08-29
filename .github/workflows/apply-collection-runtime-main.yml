@@ -39,6 +39,17 @@ jobs:
           test -z "$(find . -name '*.rej' -print -quit)"
           git diff --check
 
+      - name: Materialize the exact candidate tree for inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C codex/collection-runtime-materialized
+          git add -u
+          git commit -m "Materialize persistent keyed collection runtime candidate"
+          git push --force origin HEAD:codex/collection-runtime-materialized
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -53,12 +64,8 @@ jobs:
       - name: Build and run the complete test suite
         run: pnpm test
 
-      - name: Commit validated runtime changes directly to main
+      - name: Push the validated candidate directly to main
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -u
-          git commit -m "Add persistent keyed collection execution runtime"
           git push origin HEAD:main
