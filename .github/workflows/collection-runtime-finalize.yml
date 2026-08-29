@@ -25,23 +25,10 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { transformVuneSource } from './packages/compiler/dist/index.js'
-          const samples = [
-            ['plain', `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-const items = State([{ id: "a", value: "A" }])
-export const App = defineView("App", {
-  initializers: [initializer("App()", args => args.length === 0)],
-  body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))),
-})`],
-            ['builder', `import { State, Element, ForEach } from "@vune-ui/core"
-const items = State([{ id: "a", value: "A" }])
-VStack() {
-  ForEach(items, key: item => item.id) { item in
-    Element("span", { title: item.value }, item.value)
-  }
-}`],
-          ]
-          for (const [name, source] of samples) {
-            console.log(`--- ${name} ---`)
-            console.log(transformVuneSource(source, `${name}.vune.ts`))
-          }
+          const plain = 'import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))) })'
+          const builder = 'import { State, Element, ForEach } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nVStack() { ForEach(items, key: item => item.id) { item in Element("span", { title: item.value }, item.value) } }'
+          console.log('--- plain ---')
+          console.log(transformVuneSource(plain, 'plain.vune.ts'))
+          console.log('--- builder ---')
+          console.log(transformVuneSource(builder, 'builder.vune.ts'))
           NODE
