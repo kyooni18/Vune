@@ -1,0 +1,218 @@
+name: Collection runtime source fix final
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]' && contains(github.event.head_commit.message, 'fix generic collection reactive rows')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Restore reactive rows only for the generic collection callback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          views_path = Path('packages/core/src/views.ts')
+          views = views_path.read_text()
+          helper = '''function reactiveCollectionItem(
+            source: StateRef<readonly unknown[]> | undefined,
+            snapshotItem: unknown,
+            index: number,
+          ): unknown {
+            if (!source) return snapshotItem
+            try {
+              const current = source.value
+              if (arrayCheck(current) !== true) return snapshotItem
+              const descriptor = Object.getOwnPropertyDescriptor(current, String(index))
+              if (!descriptor || !("value" in descriptor) || !Object.is(descriptor.value, snapshotItem)) return snapshotItem
+              return current[index]
+            } catch {
+              return snapshotItem
+            }
+          }
+
+          '''
+          anchor = '''function requireCollectionItems(value: unknown): readonly unknown[] {
+            const snapshot = snapshotCollectionItems(value)
+            if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
+            return snapshot
+          }
+
+          '''
+          if helper not in views:
+            if anchor not in views:
+              raise SystemExit('missing requireCollectionItems anchor')
+            views = views.replace(anchor, anchor + helper, 1)
+          old_content = '        appendKeyedCollectionChildren(children, content(item, index), entryKey)'
+          new_content = '        appendKeyedCollectionChildren(children, content(reactiveCollectionItem(stateSource, item, index), index), entryKey)'
+          if old_content in views:
+            views = views.replace(old_content, new_content, 1)
+          elif new_content not in views:
+            raise SystemExit('missing ForEach content callback anchor')
+          views_path.write_text(views)
+
+          dom_path = Path('packages/web/src/dom.ts')
+          dom = dom_path.read_text()
+          old_signature = 'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {'
+          new_signature = 'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null, allowEvents = true): boolean {'
+          if old_signature in dom:
+            dom = dom.replace(old_signature, new_signature, 1)
+          elif new_signature not in dom:
+            raise SystemExit('missing directKeyedPatchPropsSafe signature')
+
+          old_event = '''      // Event listener lifecycle is renderer state, not a data-only host prop.
+          // Keep it on the generic graph path even when a manually supplied
+          // compiled plan happens to return a function.
+          if (/^on[A-Za-z]/.test(key)) return false'''
+          new_event = '''      if (/^on[A-Za-z]/.test(key)) {
+            if (!allowEvents) return false
+            if (value !== undefined && value !== null && typeof value !== "function") return false
+            continue
+          }'''
+          if old_event in dom:
+            dom = dom.replace(old_event, new_event, 1)
+          elif new_event not in dom:
+            raise SystemExit('missing event prop safety branch')
+
+          old_compiled = '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined'
+          new_compiled = '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined'
+          if old_compiled in dom:
+            dom = dom.replace(old_compiled, new_compiled, 1)
+          elif new_compiled not in dom:
+            raise SystemExit('missing compiled collection prop safety call')
+          dom_path.write_text(dom)
+          PY
+          git diff --check
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        shell: bash
+        run: pnpm run build
+
+      - name: State core tests
+        shell: bash
+        run: node --test tests/core.test.mjs
+
+      - name: Collection-specific Web tests
+        shell: bash
+        run: |
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs
+
+      - name: Compiler tests
+        shell: bash
+        run: node --test tests/compiler-package.test.mjs
+
+      - name: React and Vue collection adapter tests
+        shell: bash
+        run: |
+          node --test \
+            --test-name-pattern='collection|ForEach|keyed' \
+            tests/react-client.test.mjs tests/vue-live.test.mjs
+
+      - name: Full Web package tests
+        shell: bash
+        run: node --test tests/web-package.test.mjs
+
+      - name: Full test suite
+        shell: bash
+        run: pnpm test
+
+      - name: Benchmark checkpoint and optimized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vune-validation
+          git worktree add --detach /tmp/vune-checkpoint 71010c2b1c45ff5994eb6561d97e5e406e249d39
+          cleanup() { git worktree remove --force /tmp/vune-checkpoint >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          (
+            cd /tmp/vune-checkpoint
+            pnpm install --frozen-lockfile
+            pnpm run build
+            node benchmarks/collection-runtime.mjs > /tmp/vune-validation/checkpoint.json
+          )
+          git worktree remove --force /tmp/vune-checkpoint
+          trap - EXIT
+          node benchmarks/collection-runtime.mjs > /tmp/vune-validation/optimized.json
+          echo 'Checkpoint benchmark:'
+          cat /tmp/vune-validation/checkpoint.json
+          echo 'Optimized benchmark:'
+          cat /tmp/vune-validation/optimized.json
+
+      - name: Upload validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: collection-runtime-final-evidence
+          path: /tmp/vune-validation
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Rebase over diagnostic-only commits and commit the validated product tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff -- packages/core/src/views.ts packages/web/src/dom.ts > /tmp/collection-source-fix.patch
+          git reset --hard HEAD
+          git clean -fd
+          git fetch origin codex/collection-runtime-finalize-20260830
+          product_changes=$(git diff --name-only HEAD..origin/codex/collection-runtime-finalize-20260830 | grep -v '^\.github/' || true)
+          if [ -n "$product_changes" ]; then
+            echo 'Product files changed while validation was running:' >&2
+            echo "$product_changes" >&2
+            exit 1
+          fi
+          git rebase origin/codex/collection-runtime-finalize-20260830
+          git apply /tmp/collection-source-fix.patch
+
+          while IFS= read -r -d '' path; do
+            git rm -r -f --ignore-unmatch -- "$path"
+          done < <(find .github -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+          while IFS= read -r -d '' path; do
+            git rm -f --ignore-unmatch -- "$path"
+          done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+
+          if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-)'; then
+            echo 'Temporary collection diagnostics remain after cleanup.' >&2
+            exit 1
+          fi
+
+          checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
+          optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
+          git add packages/core/src/views.ts packages/web/src/dom.ts
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit \
+            -m 'perf: finalize collection runtime hot paths' \
+            -m "checkpoint-benchmark=$checkpoint" \
+            -m "optimized-benchmark=$optimized" \
+            -m 'validation=build,state-core,collection-web,compiler,react-vue,full-web,pnpm-test'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
