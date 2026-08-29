@@ -96,7 +96,7 @@ function patchStructuralCompiledCollectionMutation(
       staged.push({ entry, plan, item })
     }
     for (const { entry, plan, item } of staged) {
-      const element = createTaggedElement(plan.type, context, parent)
+      const element = createTaggedElement(context, plan.type)
       const textNode = context.document.createTextNode(plan.text)
       applyDomProps(element, plan.props, context)
       domContentContainer(element)?.appendChild(textNode)
@@ -118,7 +118,7 @@ function patchStructuralCompiledCollectionMutation(
       instance.order.push(row)
       instance.rows.set(row.entryKey, row)
       appendCollectionRowToItemIndex(instance, row)
-      if (entry.occurrence > 0) node.onDuplicateKey?.(entry.displayKey)
+      if (entry.occurrence > 0) node.onDuplicateKey?.(entry.displayKey, entry.occurrence)
     }
     instance.node = node
     return true
