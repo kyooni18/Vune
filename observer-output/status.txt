@@ -1,0 +1,97 @@
+target_sha=5c13b5f6143678d558d301712f3342d30b677261
+main_sha=747bb775216c4272b9dfd5eeaf49d69c4b95aabb
+report_present=no
+failure_present=yes
+temp_collection_files=22
+temp_collection_workflows=16
+
+--- recent commits ---
+5c13b5f (HEAD -> codex/collection-runtime-finalize-20260830, origin/codex/collection-runtime-finalize-20260830) chore: collection runtime v5 failed at collection-web-before-cleanup [skip ci]
+058091e run collection runtime finalize v5
+514cefd chore: prepare safe collection runtime finalizer v5
+99a4e4f run collection runtime finalize v4
+e81ca8c chore: validate finalized collection runtime with source fixes
+efa7d86 chore: run immutable collection final pass
+c3ef59d chore: record flat keyed metadata recovery failure
+0e8dd3f chore: recover flat keyed live metadata
+6379cbd chore: trigger final collection source validation
+fb9054b chore: rerun final collection validation with generic adapter semantics
+5fc8ca6 run collection runtime diagnostic v3
+0b4144b chore: validate locked collection target
+b6a78ef validate collection runtime v2
+cc5563f chore: lock collection target fix
+eae092b chore: run collection source fix validation without actor gate
+a5abeb1 chore: fix generic collection reactive rows v3
+3d117fb chore: audit collection runtime final tree
+7dea722 chore: run generic collection reactive validation v2
+c027e93 chore: add generic collection reactive validation v2
+d39003d chore: fix generic collection reactive rows
+
+--- changed files vs main ---
+A	.github/collection-key-index.mjs
+A	.github/collection-key-recovery-failure.txt
+A	.github/collection-row-local.mjs
+A	.github/collection-runtime-apply.mjs
+A	.github/collection-runtime-failure.txt
+A	.github/collection-runtime-final-trigger-v4.txt
+A	.github/collection-runtime-final-trigger.txt
+A	.github/collection-runtime-finalize-v5.sh
+A	.github/collection-runtime-finalize.mjs
+A	.github/collection-runtime-finalize.patch.gz.b64.00
+A	.github/collection-runtime-finalize.patch.gz.b64.01
+A	.github/collection-runtime-finalize.patch.gz.b64.02
+A	.github/collection-runtime-finalize.patch.gz.b64.03
+A	.github/collection-runtime-finalize.patch.gz.b64.04
+A	.github/collection-runtime-followup.patch.gz.b64
+A	.github/collection-runtime-patch/00
+A	.github/collection-runtime-patch/01
+A	.github/collection-runtime-patch/02
+A	.github/collection-runtime-patch/03
+A	.github/collection-runtime-patch/04
+A	.github/collection-runtime-patch/05
+A	.github/collection-runtime-patch/06
+A	.github/collection-runtime-source-fix-trigger-v2.txt
+A	.github/collection-runtime-source-fix-trigger.txt
+A	.github/collection-runtime-trigger
+A	.github/collection-runtime-v5-failure.txt
+A	.github/collection-state-hotpath.mjs
+A	.github/collection-structural.mjs
+A	.github/collection-web-failure.txt
+A	.github/workflows/collection-runtime-audit.yml
+A	.github/workflows/collection-runtime-autofinalize.yml
+A	.github/workflows/collection-runtime-diagnostic-v3.yml
+A	.github/workflows/collection-runtime-final-pass.yml
+A	.github/workflows/collection-runtime-finalize-v4.yml
+A	.github/workflows/collection-runtime-finalize-v5.yml
+A	.github/workflows/collection-runtime-finalize.yml
+A	.github/workflows/collection-runtime-fix.yml
+A	.github/workflows/collection-runtime-full.yml
+A	.github/workflows/collection-runtime-key-recovery.yml
+A	.github/workflows/collection-runtime-recover.yml
+A	.github/workflows/collection-runtime-source-fix-final-2.yml
+A	.github/workflows/collection-runtime-source-fix-final.yml
+A	.github/workflows/collection-runtime-target.yml
+A	.github/workflows/collection-runtime-validate.yml
+A	.github/workflows/collection-runtime-validation-v2.yml
+A	benchmarks/collection-runtime.mjs
+A	packages/compiler/src/collection-specialization.ts
+M	packages/compiler/src/pipeline.ts
+M	packages/core/src/graph/arrays.ts
+M	packages/core/src/graph/modifiers.ts
+M	packages/core/src/graph/nodes.ts
+M	packages/core/src/graph/renderer.ts
+M	packages/core/src/graph/types.ts
+M	packages/core/src/state.ts
+M	packages/core/src/views.ts
+M	packages/legacy-react/src/legacy/runtime/renderer.ts
+M	packages/react/src/legacy/runtime/renderer.ts
+M	packages/react/src/renderer.ts
+M	packages/vue/src/index.ts
+M	packages/web/src/dom.ts
+M	packages/web/src/element-motion.ts
+M	packages/web/src/motion.ts
+M	tests/compiler-package.test.mjs
+M	tests/core.test.mjs
+M	tests/react-client.test.mjs
+M	tests/vue-live.test.mjs
+M	tests/web-package.test.mjs
