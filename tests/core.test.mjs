@@ -1093,6 +1093,23 @@ test("@vune-ui/core normalizes boolean leaves and rejects unsupported leaves bef
   }
 })
 
+test("ForEach keeps row builders lazy until children are requested", () => {
+  let rowRuns = 0
+  const value = ForEach(
+    [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+    item => {
+      rowRuns += 1
+      return CoreText(item.label)
+    },
+  )
+
+  assert.equal(rowRuns, 0)
+  assert.equal(value.children.length, 2)
+  assert.equal(rowRuns, 2)
+  assert.equal(value.children.length, 2)
+  assert.equal(rowRuns, 2)
+})
+
 test("@vune-ui/core gives ForEach children stable identity keys", () => {
   const value = ForEach([{ id: "a", label: "A" }, { id: "b", label: "B" }], item => CoreText(item.label))
   assert.deepEqual(modifierGraphOf(value.children[0]).map(item => item.arguments), [["string:1:a|occurrence:0|child:0"]])
