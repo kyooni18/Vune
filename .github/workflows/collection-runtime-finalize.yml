@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   diagnose:
-    if: contains(github.event.head_commit.message, 'diagnose collection web failure')
+    if: contains(github.event.head_commit.message, 'capture collection web assertion')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -25,28 +25,23 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - name: Apply verified product patch
-        run: |
-          set -euo pipefail
-          node .github/collection-runtime-apply.mjs
-          git diff --cached --check
-      - name: Install and build
+      - name: Install and build committed product changes
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm run build
-      - name: Capture collection-specific Web failure
+      - name: Capture collection-specific Web assertion
         shell: bash
         run: |
           set +e
           node --test \
             --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
-            tests/web-package.test.mjs 2>&1 | tee .github/collection-web-failure.log
+            tests/web-package.test.mjs 2>&1 | tee .github/collection-web-failure.txt
           status=${PIPESTATUS[0]}
-          printf '\nexit_status=%s\n' "$status" >> .github/collection-web-failure.log
+          printf '\nexit_status=%s\n' "$status" >> .github/collection-web-failure.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/collection-web-failure.log
-          git commit -m 'chore: record collection web failure'
+          git add -f .github/collection-web-failure.txt
+          git commit -m 'chore: record collection web assertion'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
           exit "$status"
