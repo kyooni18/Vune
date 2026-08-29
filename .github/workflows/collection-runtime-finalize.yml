@@ -5,12 +5,8 @@ on:
     branches:
       - codex/collection-runtime-finalize-20260830
 
-permissions:
-  contents: write
-
 jobs:
-  harden-foreach:
-    if: github.actor != 'github-actions[bot]'
+  diagnose-collection:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -23,42 +19,31 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - name: Harden generic ForEach semantics
+      - name: Instrument collection executor
         run: |
           node <<'NODE'
           const fs = require('node:fs')
           const viewsPath = 'packages/core/src/views.ts'
           let views = fs.readFileSync(viewsPath, 'utf8')
-          const before = 'indexIndependent: content.length < 2,'
-          if (!views.includes(before)) throw new Error('ForEach arity inference marker not found')
-          views = views.replace(before, 'indexIndependent: false,')
+          views = views.replace('indexIndependent: content.length < 2,', 'indexIndependent: false,')
           fs.writeFileSync(viewsPath, views)
 
-          const testPath = 'tests/web-package.test.mjs'
-          let tests = fs.readFileSync(testPath, 'utf8')
-          const startMarker = 'test("@vune-ui/web executes ForEach host rows persistently and invalidates only changed entries", async () => {'
-          const endMarker = 'test("@vune-ui/web batches in-place ForEach mutations and preserves keyed row identity", async () => {'
-          const start = tests.indexOf(startMarker)
-          const end = tests.indexOf(endMarker, start)
-          if (start < 0 || end < 0) throw new Error('persistent ForEach test block not found')
-          let block = tests.slice(start, end)
-          const zeroMatches = block.match(/assert\.equal\(rowRuns, 0\)/g) ?? []
-          if (zeroMatches.length !== 2) throw new Error(`expected two reorder/remove zero-run assertions, found ${zeroMatches.length}`)
-          block = block.replace('assert.equal(rowRuns, 3)', 'assert.ok(rowRuns >= 3)')
-          block = block.replace('assert.equal(rowRuns, 0)', 'assert.equal(rowRuns, 2)')
-          block = block.replace('assert.equal(rowRuns, 0)', 'assert.equal(rowRuns, 2)')
-          block = block.replace('executes ForEach host rows persistently and invalidates only changed entries', 'executes ForEach host rows persistently and preserves unchanged DOM')
-          const indexTest = `test("@vune-ui/web reevaluates moved generic ForEach rows when content can depend on ambient index state", async () => {\n  const dom = new JSDOM("<div id=app></div>")\n  const container = dom.window.document.querySelector("#app")\n  assert.ok(container)\n  const items = State([{ id: "a" }, { id: "b" }, { id: "c" }])\n  let rowRuns = 0\n  const App = defineView("AmbientIndexedPersistentForEachHostApp", {\n    initializers: [initializer("AmbientIndexedPersistentForEachHostApp()", args => args.length === 0)],\n    body: () => Element("section", null, ForEach(items.value, item => {\n      const index = items.value.findIndex(candidate => candidate.id === item.id)\n      rowRuns += 1\n      return Element("span", { "data-row": item.id }, String(index) + ":" + item.id)\n    })),\n  })\n\n  const unmount = mount(App(), container)\n  assert.ok(rowRuns >= 3)\n  rowRuns = 0\n  items.value = [...items.value].reverse()\n  await Promise.resolve()\n  assert.equal(rowRuns, 2)\n  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["0:c", "1:b", "2:a"])\n  unmount()\n  dom.window.close()\n})\n\n`
-          tests = tests.slice(0, start) + block + indexTest + tests.slice(end)
-          fs.writeFileSync(testPath, tests)
+          const domPath = 'packages/web/src/dom.ts'
+          let dom = fs.readFileSync(domPath, 'utf8')
+          const effectsLine = '  const effects = collectionMutationEffects(instance, node, mutations)\n  const indexIndependent = node.compiled?.indexIndependent ?? node.indexIndependent\n'
+          if (!dom.includes(effectsLine)) throw new Error('effects marker missing')
+          dom = dom.replace(effectsLine, effectsLine + '  console.log("[collection-diag] patch", { mutations: mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")), forceAll: effects.forceAll, touched: effects.touched.size, entries: entries.length, indexIndependent })\n  let evaluatedCount = 0\n')
+          const evaluatedLine = '    const plan = evaluated\n      ? directCollectionHostRow(node, entry)\n'
+          if (!dom.includes(evaluatedLine)) throw new Error('evaluated marker missing')
+          dom = dom.replace(evaluatedLine, '    if (evaluated) evaluatedCount += 1\n' + evaluatedLine)
+          const successLine = '  instance.node = node\n  instance.sourceIdentity = reactiveIdentity(node.source)\n'
+          if (!dom.includes(successLine)) throw new Error('success marker missing')
+          dom = dom.replace(successLine, '  console.log("[collection-diag] success", { evaluatedCount })\n' + successLine)
+          const subLine = '          boundary.pendingTransaction = transaction\n          boundary.pendingMutations.push(...batch.mutations)\n'
+          if (!dom.includes(subLine)) throw new Error('subscription marker missing')
+          dom = dom.replace(subLine, subLine + '          console.log("[collection-diag] subscription", boundary.key, batch.mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")))\n')
+          fs.writeFileSync(domPath, dom)
           NODE
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: node --test --test-name-pattern='ForEach' tests/web-package.test.mjs
-      - name: Commit validated hardening
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/core/src/views.ts tests/web-package.test.mjs
-          git commit -m 'Harden generic ForEach reorder semantics'
-          git push origin HEAD:codex/collection-runtime-finalize-20260830
+      - run: node --test --test-name-pattern='executes ForEach host rows persistently' tests/web-package.test.mjs
