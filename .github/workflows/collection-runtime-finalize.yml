@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-collection-key-index:
+  validate-state-collection-hotpaths:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,14 +24,30 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node .github/collection-key-index.mjs
+      - run: node .github/collection-state-hotpath.mjs
+      - name: Keep append occurrence staging proportional to touched keys
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'packages/web/src/dom.ts'
+          let source = fs.readFileSync(path, 'utf8')
+          const a = '    const stagedOccurrenceCounts = new Map(instance.occurrenceCounts)\n'
+          const b = '      const occurrence = stagedOccurrenceCounts.get(resolved.identity) ?? 0\n      stagedOccurrenceCounts.set(resolved.identity, occurrence + 1)\n'
+          const c = '    instance.occurrenceCounts = stagedOccurrenceCounts\n    instance.node = node\n'
+          if (!source.includes(a) || !source.includes(b) || !source.includes(c)) throw new Error('occurrence staging markers missing')
+          source = source.replace(a, '    const occurrenceDeltas = new Map<string, number>()\n')
+          source = source.replace(b, '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
+          source = source.replace(c, '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
+          fs.writeFileSync(path, source)
+          NODE
       - run: pnpm run build
-      - run: node --test --test-name-pattern='push pop and reverse|compiled keyed collection own' tests/web-package.test.mjs
-      - run: node benchmarks/collection-runtime.mjs
-      - name: Commit validated key index
+      - run: node --test tests/core.test.mjs
+      - run: node --test --test-name-pattern='push pop and reverse|compiled keyed collection own|ForEach host rows persistently' tests/web-package.test.mjs
+      - run: VUNE_COLLECTION_ROWS=5000 node benchmarks/collection-runtime.mjs
+      - name: Commit validated hot paths
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/web/src/dom.ts benchmarks/collection-runtime.mjs
-          git commit -m 'Keep compiled collection key index persistent'
+          git add packages/core/src/state.ts packages/web/src/dom.ts tests/core.test.mjs
+          git commit -m 'Make collection State ownership incremental'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
