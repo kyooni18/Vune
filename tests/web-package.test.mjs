@@ -1593,6 +1593,84 @@ test("@vune-ui/web patches flat keyed host rows in place and preserves generic f
   dom.window.close()
 })
 
+test("@vune-ui/web executes ForEach host rows persistently and invalidates only changed entries", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([
+    { id: "a", value: "A" },
+    { id: "b", value: "B" },
+    { id: "c", value: "C" },
+  ])
+  let rowRuns = 0
+  const App = defineView("PersistentForEachHostApp", {
+    initializers: [initializer("PersistentForEachHostApp()", args => args.length === 0)],
+    body: () => Element("section", null, ForEach(items.value, item => {
+      rowRuns += 1
+      return Element("span", { "data-row": item.id, title: item.value }, item.value)
+    })),
+  })
+
+  const unmount = mount(App(), container)
+  assert.equal(rowRuns, 3)
+  const original = Object.fromEntries([...container.querySelectorAll("span")].map(node => [node.dataset.row, node]))
+  const createElement = dom.window.document.createElement.bind(dom.window.document)
+  const createTextNode = dom.window.document.createTextNode.bind(dom.window.document)
+  let allocations = 0
+  dom.window.document.createElement = (...args) => {
+    allocations += 1
+    return createElement(...args)
+  }
+  dom.window.document.createTextNode = (...args) => {
+    allocations += 1
+    return createTextNode(...args)
+  }
+
+  rowRuns = 0
+  const changed = [...items.value]
+  changed[1] = { ...changed[1], value: "B1" }
+  items.value = changed
+  await Promise.resolve()
+  assert.equal(rowRuns, 1)
+  assert.equal(allocations, 0)
+  assert.equal(container.querySelector('[data-row="a"]'), original.a)
+  assert.equal(container.querySelector('[data-row="b"]'), original.b)
+  assert.equal(container.querySelector('[data-row="b"]')?.textContent, "B1")
+  assert.equal(container.querySelector('[data-row="b"]')?.title, "B1")
+
+  rowRuns = 0
+  allocations = 0
+  items.value = [...items.value].reverse()
+  await Promise.resolve()
+  assert.equal(rowRuns, 0)
+  assert.equal(allocations, 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "b", "a"])
+
+  rowRuns = 0
+  allocations = 0
+  items.value = [...items.value, { id: "d", value: "D" }]
+  await Promise.resolve()
+  assert.equal(rowRuns, 1)
+  assert.equal(allocations, 2)
+  const appended = container.querySelector('[data-row="d"]')
+  assert.equal(appended?.textContent, "D")
+
+  rowRuns = 0
+  allocations = 0
+  items.value = items.value.filter(item => item.id !== "b")
+  await Promise.resolve()
+  assert.equal(rowRuns, 0)
+  assert.equal(allocations, 0)
+  assert.equal(container.querySelector('[data-row="a"]'), original.a)
+  assert.equal(container.querySelector('[data-row="c"]'), original.c)
+  assert.equal(container.querySelector('[data-row="d"]'), appended)
+
+  dom.window.document.createElement = createElement
+  dom.window.document.createTextNode = createTextNode
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web batches in-place ForEach mutations and preserves keyed row identity", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")

@@ -1,6 +1,6 @@
 import { keyedViewIdentity, viewTypeIdentity, type ViewIdentity } from "../identity.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
-import { isForeignComponent, isViewNode } from "./nodes.js"
+import { isForeignComponent, isViewNode, keyedCollectionEntries } from "./nodes.js"
 import { zeroGeometry } from "./environment.js"
 import type { CompiledTemplateValue, GeometryProxy, LazyViewRange, VuneRenderer, ViewGraphValue, ViewHostNode } from "./types.js"
 
@@ -22,6 +22,9 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
       return value.children.flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "fragment", index]))
     case "template":
       return value.slots.flatMap((slot, index) => collectLogicalViewIdentities(slot, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])]))
+    case "collection":
+      return keyedCollectionEntries(value).flatMap(entry => collectLogicalViewIdentities(
+        value.content(entry.item, entry.index, entry.key), [...identity, "fragment", entry.index]))
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {
@@ -82,6 +85,13 @@ export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRe
       return renderer.template
         ? renderer.template(value, renderSlot, identity)
         : renderCompiledTemplateValue(value.template.root, renderer, renderSlot)
+    }
+    case "collection": {
+      const renderEntry = (entry: ReturnType<typeof keyedCollectionEntries>[number]): Output => renderViewNodeAt(
+        value.content(entry.item, entry.index, entry.key), renderer, [...identity, "fragment", entry.index])
+      return renderer.collection
+        ? renderer.collection(value, renderEntry, identity)
+        : renderer.fragment(keyedCollectionEntries(value).map(renderEntry))
     }
     case "modified": {
       let contentIdentity = identity

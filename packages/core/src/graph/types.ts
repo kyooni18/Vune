@@ -158,6 +158,57 @@ export interface CompiledViewBodyPlan<Props extends object = Record<string, unkn
   readonly evaluate: (props: Props) => CompiledViewBodyEvaluation
 }
 
+/** Compiler/runtime-neutral identity for one logical collection item. */
+export interface KeyedCollectionIdentity {
+  readonly identity: string
+  readonly display: string
+}
+
+/** Lightweight collection entry. It deliberately contains no row View graph. */
+export interface KeyedCollectionEntry {
+  /** Unique collection-item identity, including duplicate occurrence. */
+  readonly key: string
+  readonly baseKey: string
+  readonly displayKey: string
+  readonly occurrence: number
+  readonly item: unknown
+  readonly index: number
+}
+
+/** One compiler-proven flat host row with one primitive text slot. */
+export interface CompiledCollectionRow {
+  readonly type: string
+  readonly props: Record<string, unknown> | null
+  readonly text: ViewGraphLeaf
+}
+
+/** Persistent collection execution metadata emitted once by the compiler. */
+export interface CompiledCollectionPlan {
+  readonly kind: "flat-text-host"
+  /** True when moving an existing item cannot change its row output. */
+  readonly indexIndependent: boolean
+  readonly evaluate: (item: unknown, index: number) => CompiledCollectionRow
+}
+
+/**
+ * A keyed collection remains compact until a renderer asks for rows. The
+ * compatibility children view is lazy, while execution-capable renderers can
+ * retain native rows and evaluate only changed entries.
+ */
+export interface KeyedCollectionViewNode {
+  readonly kind: "collection"
+  readonly items: readonly unknown[]
+  /** Original collection identity before the descriptor-only snapshot. */
+  readonly source: unknown
+  readonly key: (item: unknown, index: number) => KeyedCollectionIdentity
+  readonly content: (item: unknown, index: number, entryKey: string) => ViewGraphValue
+  readonly indexIndependent: boolean
+  readonly compiled?: CompiledCollectionPlan
+  readonly onDuplicateKey?: (displayKey: string, occurrence: number) => void
+  /** Compatibility materialization. Renderers should use collection(). */
+  readonly children: readonly ViewGraphChild[]
+}
+
 export interface ViewHostNode {
   readonly kind: "view"
   readonly name: string
@@ -202,7 +253,7 @@ export interface ModifiedContent {
   readonly arguments: readonly unknown[]
 }
 
-export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
+export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateViewNode | KeyedCollectionViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
 /** Public View value: an immutable graph node with value-semantic modifiers. */
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
@@ -250,6 +301,11 @@ export interface VuneRenderer<Output = unknown> {
   modifier(content: Output, modifier: ViewModifierNode): Output
   /** Materialize a compiler-generated static template without generic graph traversal. */
   template?(node: CompiledTemplateViewNode, renderSlot: (index: number) => Output, identity: ViewIdentity): Output
+  /**
+   * Execute a compact keyed collection without requiring eager row graphs.
+   * Renderers without this hook receive the exact compatibility graph.
+   */
+  collection?(node: KeyedCollectionViewNode, renderEntry: (entry: KeyedCollectionEntry) => Output, identity: ViewIdentity): Output
   /** Render a View host with an optional renderer-owned resolved prop set. */
   view?(node: ViewHostNode, render: (props?: Record<string, unknown>) => Output, identity: ViewIdentity): Output
   /** Materialize a geometry boundary and feed its measured proxy to the body. */

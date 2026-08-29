@@ -68,6 +68,9 @@ export function renderViewNode<Output>(
   if (value.kind === 'template') {
     return renderCompiledTemplateValue(value.template.root, renderer, index => renderViewNode(value.slots[index] ?? null, renderer))
   }
+  if (value.kind === 'collection') {
+    return renderer.fragment(snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)))
+  }
   if (value.kind === 'geometry') {
     return renderViewNode(value.content(zeroGeometry), renderer)
   }

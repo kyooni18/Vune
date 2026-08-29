@@ -1,15 +1,18 @@
 import {
   ViewBuilder,
+  compiledCollectionPlanOf,
   defineBuiltinView,
   geometryView,
   initializer,
   initializerKinds,
   isViewNode,
+  keyedCollectionView,
   lazyView,
   resolveBuilderInput,
   type NamedArguments,
   type ViewValue,
   type ViewBuilderClosure,
+  type ModifiableViewNode,
   type ViewBuilderContent,
   type TypedViewConstructor,
   viewElement,
@@ -560,9 +563,9 @@ interface ForEachProps<Item> {
 }
 
 interface ForEachCall {
-  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
-  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, key: CollectionKeySelector<Item>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
-  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, options: NamedArguments<{ readonly key: CollectionKeySelector<Item> }>, content: (item: Item, index: number) => ViewValue): ReturnType<typeof viewFragment>
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, content: (item: Item, index: number) => ViewValue): ModifiableViewNode
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, key: CollectionKeySelector<Item>, content: (item: Item, index: number) => ViewValue): ModifiableViewNode
+  <Item>(items: readonly Item[] | StateRef<readonly Item[]>, options: NamedArguments<{ readonly key: CollectionKeySelector<Item> }>, content: (item: Item, index: number) => ViewValue): ModifiableViewNode
 }
 
 const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
@@ -586,20 +589,27 @@ const ForEachType = defineBuiltinView<ForEachProps<unknown>>(
     ),
   ],
   ({ items, key, content }) => {
-    const collection = requireCollectionItems(isStateRef(items) ? items.value : items)
+    const source = isStateRef(items) ? items.value : items
+    const collection = requireCollectionItems(source)
     const selector = key as CollectionKeySelector<unknown> | undefined
-    const occurrences = new Map<string, number>()
-    const children: ViewValue[] = []
-    for (let index = 0; index < collection.length; index += 1) {
-      const item = collection[index]
-      const rawKey = collectionKey(item, index, selector)
-      const identity = encodedCollectionKey(rawKey)
-      const occurrence = occurrences.get(identity) ?? 0
-      occurrences.set(identity, occurrence + 1)
-      if (occurrence > 0) warnForEachIdentity(`ForEach contains duplicate key "${String(rawKey)}"; state identity is ambiguous.`)
-      appendKeyedCollectionChildren(children, content(item, index), `${identity}|occurrence:${occurrence}`)
-    }
-    return viewFragment(children)
+    return keyedCollectionView(
+      collection,
+      source,
+      (item, index) => {
+        const rawKey = collectionKey(item, index, selector)
+        return { identity: encodedCollectionKey(rawKey), display: String(rawKey) }
+      },
+      (item, index, entryKey) => {
+        const children: ViewValue[] = []
+        appendKeyedCollectionChildren(children, content(item, index), entryKey)
+        return children.length === 1 ? children[0] : viewFragment(children)
+      },
+      {
+        indexIndependent: content.length < 2,
+        compiled: compiledCollectionPlanOf(content),
+        onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),
+      },
+    )
   },
   "Item",
 )
