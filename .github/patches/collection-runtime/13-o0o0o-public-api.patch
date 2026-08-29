@@ -21,7 +21,7 @@ diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
 +} from "o0o0o"
  import type { Animation } from "@vune-ui/core"
  import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
-@@ -46,13 +45,13 @@ type MotionRoute =
+@@ -46,11 +45,11 @@ type MotionRoute =
    | { readonly kind: "scalar"; readonly unit: string; readonly value: number }
    | { readonly kind: "interpolated"; readonly options: InterpolatorOptions }
  
@@ -36,7 +36,7 @@ diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
    readonly delayMs: number
    /** Number of forward passes. Infinity means repeat forever. */
    readonly repeatCount: number
-@@ -157,15 +156,14 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
+@@ -157,14 +156,13 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
    }
  
 -  const spec = descriptor.kind === "spring"
@@ -53,7 +53,7 @@ diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
      delayMs,
      repeatCount,
      autoreverses,
-@@ -181,7 +179,7 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
+@@ -181,6 +179,6 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
  }
  
 -/** Convert and memoize Vune's SwiftUI-shaped value into an o0o0o execution spec. */
@@ -62,26 +62,26 @@ diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
 +export function motionSpecForAnimation(animation: Animation): VuneMotionSpec {
    return compileMotionPlan(animation).spec
  }
-@@ -309,7 +307,7 @@ class ScalarMotionChannel implements MotionChannel {
+@@ -309,5 +307,5 @@ class ScalarMotionChannel implements MotionChannel {
            // Calling animate() on the same MotionValue deliberately avoids a
            // pre-cancel here: o0o0o retargets a live spring in-place and carries
            // its velocity into the new target.
 -          this.#control = animate(this.#value, target.value, plan.executionPlan)
 +          this.#control = animate(this.#value, target.value, plan.spec)
            const forward = await this.#control.finished
-@@ -318,7 +316,7 @@ class ScalarMotionChannel implements MotionChannel {
+@@ -318,4 +316,4 @@ class ScalarMotionChannel implements MotionChannel {
            if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
            if (plan.autoreverses) {
 -            this.#control = animate(this.#value, origin, plan.executionPlan)
 +            this.#control = animate(this.#value, origin, plan.spec)
              const reverse = await this.#control.finished
-@@ -402,7 +400,7 @@ class InterpolatedMotionChannel implements MotionChannel {
+@@ -402,4 +400,4 @@ class InterpolatedMotionChannel implements MotionChannel {
          while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || forwardPass < plan.repeatCount)) {
            this.#progress.set(0, 0)
 -          this.#control = animate(this.#progress, 1, plan.executionPlan)
 +          this.#control = animate(this.#progress, 1, plan.spec)
            const forward = await this.#control.finished
-@@ -411,7 +409,7 @@ class InterpolatedMotionChannel implements MotionChannel {
+@@ -411,4 +409,4 @@ class InterpolatedMotionChannel implements MotionChannel {
            if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
            if (plan.autoreverses) {
 -            this.#control = animate(this.#progress, 0, plan.executionPlan)
@@ -90,13 +90,13 @@ diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
 diff --git a/packages/web/src/element-motion.ts b/packages/web/src/element-motion.ts
 --- a/packages/web/src/element-motion.ts
 +++ b/packages/web/src/element-motion.ts
-@@ -7,7 +7,6 @@ import {
+@@ -7,5 +7,4 @@ import {
    type AnimationControls,
    type InterpolatorOptions,
  } from "o0o0o"
 -import { ownStyleAnimation } from "o0o0o/dom"
  import { motionSpecForAnimation } from "./motion.js"
-@@ -29,6 +28,39 @@ export interface MotionHandle {
+@@ -29,4 +28,35 @@ export interface MotionHandle {
    cancel(): void
  }
  
