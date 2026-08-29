@@ -1,4 +1,4 @@
-name: Collection runtime regression bisect
+name: Collection runtime final validation
 
 on:
   push:
@@ -8,11 +8,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: collection-runtime-finalize-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  bisect:
-    if: contains(github.event.head_commit.message, 'run collection bisect diagnostic')
+  validate-and-commit:
+    if: contains(github.event.head_commit.message, 'run final collection runtime validation')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,50 +29,168 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Bisect flat-keyed regression
+
+      - name: Prepare validation workspace
+        run: mkdir -p validation-output
+
+      - name: Apply collection runtime follow-up
         shell: bash
         run: |
-          set -uo pipefail
-          checkpoint=71010c2b1c45ff5994eb6561d97e5e406e249d39
-          product=origin/codex/collection-runtime-finalize-20260830
-          original="$GITHUB_SHA"
-          result=/tmp/collection-bisect.txt
-          : > "$result"
+          set -euo pipefail
+          base64 --decode .github/collection-runtime-followup.patch.gz.b64 \
+            | gzip --decompress \
+            > /tmp/collection-runtime-followup.patch
+          git apply --check /tmp/collection-runtime-followup.patch
+          git apply --index /tmp/collection-runtime-followup.patch
+          git diff --cached --check
 
-          run_case() {
-            name="$1"
-            shift
-            git reset --hard "$checkpoint" >/dev/null
-            if [ "$#" -gt 0 ]; then
-              git checkout "$product" -- "$@"
-            fi
-            printf '\n=== %s ===\n' "$name" | tee -a "$result"
-            if ! pnpm run build > "/tmp/${name}-build.log" 2>&1; then
-              echo 'BUILD_FAIL' | tee -a "$result"
-              tail -n 80 "/tmp/${name}-build.log" >> "$result"
-              return
-            fi
-            if node --test --test-name-pattern='patches flat keyed host rows' tests/web-package.test.mjs > "/tmp/${name}-test.log" 2>&1; then
-              echo 'PASS' | tee -a "$result"
-            else
-              echo 'FAIL' | tee -a "$result"
-              tail -n 100 "/tmp/${name}-test.log" >> "$result"
-            fi
+      - name: Install dependencies
+        shell: bash
+        run: set -o pipefail; pnpm install --frozen-lockfile 2>&1 | tee validation-output/current-install.log
+
+      - name: Build workspace
+        shell: bash
+        run: set -o pipefail; pnpm run build 2>&1 | tee validation-output/current-build.log
+
+      - name: State core tests
+        shell: bash
+        run: set -o pipefail; node --test tests/core.test.mjs 2>&1 | tee validation-output/current-state-core.log
+
+      - name: Collection-specific Web tests
+        shell: bash
+        run: >-
+          set -o pipefail; node --test
+          --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
+          tests/web-package.test.mjs 2>&1 | tee validation-output/current-web-collection.log
+
+      - name: Compiler tests
+        shell: bash
+        run: set -o pipefail; node --test tests/compiler-package.test.mjs 2>&1 | tee validation-output/current-compiler.log
+
+      - name: React and Vue collection adapter tests
+        shell: bash
+        run: >-
+          set -o pipefail; node --test
+          --test-name-pattern='compiler-planned State collections|collection fallback keeps source'
+          tests/react-client.test.mjs tests/vue-live.test.mjs 2>&1 | tee validation-output/current-adapters.log
+
+      - name: Full Web package tests
+        shell: bash
+        run: set -o pipefail; node --test tests/web-package.test.mjs 2>&1 | tee validation-output/current-web-full.log
+
+      - name: Checkpoint 25k collection benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/vune-checkpoint 71010c2b1c45ff5994eb6561d97e5e406e249d39
+          cleanup() { git worktree remove --force /tmp/vune-checkpoint >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          (
+            cd /tmp/vune-checkpoint
+            set -o pipefail
+            pnpm install --frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/validation-output/checkpoint-install.log"
+            pnpm run build 2>&1 | tee "$GITHUB_WORKSPACE/validation-output/checkpoint-build.log"
+            node benchmarks/collection-runtime.mjs 2>&1 | tee "$GITHUB_WORKSPACE/validation-output/checkpoint-benchmark.json"
+          )
+
+      - name: Optimized 25k collection benchmark
+        shell: bash
+        run: set -o pipefail; node benchmarks/collection-runtime.mjs 2>&1 | tee validation-output/current-benchmark.json
+
+      - name: Full test suite
+        shell: bash
+        run: set -o pipefail; pnpm test 2>&1 | tee validation-output/current-pnpm-test.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: collection-runtime-validation-${{ github.run_id }}
+          path: validation-output
+          retention-days: 2
+          if-no-files-found: warn
+
+      - name: Record failure diagnostics
+        if: failure()
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const root = 'validation-output'
+          const names = fs.existsSync(root)
+            ? fs.readdirSync(root).filter(name => fs.statSync(path.join(root, name)).isFile()).sort()
+            : []
+          const tail = (text, count = 180) => text.split(/\r?\n/).slice(-count).join('\n')
+          let report = `Collection runtime validation failure\nsource_sha=${process.env.SOURCE_SHA}\n\n`
+          for (const name of names) {
+            const content = fs.readFileSync(path.join(root, name), 'utf8').trim()
+            report += `===== ${name} =====\n${tail(content)}\n\n`
           }
-
-          run_case baseline
-          run_case state packages/core/src/state.ts
-          run_case graph packages/core/src/graph/nodes.ts packages/core/src/views.ts
-          run_case graph_web packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/web/src/dom.ts
-          run_case state_graph_web packages/core/src/state.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/web/src/dom.ts
-
-          git reset --hard "$original" >/dev/null
-          cp "$result" .github/collection-bisect-result.txt
+          fs.writeFileSync('.github/collection-runtime-failure.txt', report)
+          NODE
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -f .github/collection-bisect-result.txt
-          git commit -m 'chore: record collection bisect result'
+          git add -f .github/collection-runtime-failure.txt
+          git commit --only .github/collection-runtime-failure.txt -m 'chore: record collection runtime validation failure'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
-          cat .github/collection-bisect-result.txt
+
+      - name: Commit validated product changes and remove diagnostics
+        if: success()
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs')
+          const checkpoint = JSON.parse(fs.readFileSync('validation-output/checkpoint-benchmark.json', 'utf8'))
+          const current = JSON.parse(fs.readFileSync('validation-output/current-benchmark.json', 'utf8'))
+          const delta = key => Number((((current[key] / checkpoint[key]) - 1) * 100).toFixed(1))
+          const metric = (label, key) => `${label}: ${checkpoint[key]} ms -> ${current[key]} ms (${delta(key)}%)`
+          const message = [
+            'Optimize keyed collection runtime ownership',
+            '',
+            `Validated source: ${process.env.SOURCE_SHA}`,
+            'Checkpoint: 71010c2b1c45ff5994eb6561d97e5e406e249d39',
+            '',
+            'Passed: workspace build, State core tests, collection-specific Web tests, compiler tests, React/Vue adapter tests, full Web package tests, and complete pnpm test suite.',
+            '',
+            '25,000-row JSDOM benchmark:',
+            metric('mount', 'mountMs'),
+            metric('single replace', 'replaceOneMs'),
+            metric('direct field mutation', 'mutateOneMs'),
+            metric('push', 'pushOneMs'),
+            metric('pop', 'popOneMs'),
+            metric('reverse', 'reverseMs'),
+            '',
+            'Evaluator contract: parent body stayed at one execution; replace, direct mutation, and push used one key evaluation and one row evaluation; pop and reverse used zero key and row evaluations.',
+          ].join('\n')
+          fs.writeFileSync('/tmp/collection-runtime-commit-message.txt', message)
+          NODE
+
+          while IFS= read -r -d '' path; do
+            git rm -r -f --ignore-unmatch -- "$path"
+          done < <(find .github -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+          while IFS= read -r -d '' path; do
+            git rm -r -f --ignore-unmatch -- "$path"
+          done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
+
+          if find .github -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
+            echo 'temporary collection diagnostics remain under .github' >&2
+            find .github -maxdepth 1 -name 'collection-*' -print >&2
+            exit 1
+          fi
+          if find .github/workflows -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
+            echo 'temporary collection workflows remain' >&2
+            find .github/workflows -maxdepth 1 -name 'collection-*' -print >&2
+            exit 1
+          fi
+
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -F /tmp/collection-runtime-commit-message.txt
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
