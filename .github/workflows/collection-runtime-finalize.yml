@@ -30,20 +30,54 @@ jobs:
 
           const domPath = 'packages/web/src/dom.ts'
           let dom = fs.readFileSync(domPath, 'utf8')
+          dom = dom.replace('  const entries = keyedCollectionEntries(node)\n  // An empty runtime-inferred collection', '  const entries = keyedCollectionEntries(node)\n  console.log("[collection-diag] materializeDirect", ownerKey, entries.length, node.indexIndependent)\n  // An empty runtime-inferred collection')
           const effectsLine = '  const effects = collectionMutationEffects(instance, node, mutations)\n  const indexIndependent = node.compiled?.indexIndependent ?? node.indexIndependent\n'
-          if (!dom.includes(effectsLine)) throw new Error('effects marker missing')
           dom = dom.replace(effectsLine, effectsLine + '  console.log("[collection-diag] patch", { mutations: mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")), forceAll: effects.forceAll, touched: effects.touched.size, entries: entries.length, indexIndependent })\n  let evaluatedCount = 0\n')
           const evaluatedLine = '    const plan = evaluated\n      ? directCollectionHostRow(node, entry)\n'
-          if (!dom.includes(evaluatedLine)) throw new Error('evaluated marker missing')
           dom = dom.replace(evaluatedLine, '    if (evaluated) evaluatedCount += 1\n' + evaluatedLine)
           const successLine = '  instance.node = node\n  instance.sourceIdentity = reactiveIdentity(node.source)\n'
-          if (!dom.includes(successLine)) throw new Error('success marker missing')
-          dom = dom.replace(successLine, '  console.log("[collection-diag] success", { evaluatedCount })\n' + successLine)
+          dom = dom.replace(successLine, '  console.log("[collection-diag] patch-success", { evaluatedCount })\n' + successLine)
+          const collectionDirect = '        const direct = materializeDirectCollection(node, identity, ownerKey, context, runtime)\n        if (direct) return direct\n'
+          dom = dom.replace(collectionDirect, '        const direct = materializeDirectCollection(node, identity, ownerKey, context, runtime)\n        if (direct) { console.log("[collection-diag] collection-direct"); return direct }\n')
+          const fallback = '      const fragment = context.document.createDocumentFragment()\n      for (const entry of keyedCollectionEntries(node)) appendDomChild(fragment, renderEntry(entry), context)\n'
+          dom = dom.replace(fallback, '      console.log("[collection-diag] collection-fallback", node.indexIndependent, owner?.mounted, context.stagingProps, context.stagingEvents)\n' + fallback)
+          const updateMarker = '    update = () => {\n      if (stopped) return\n'
+          dom = dom.replace(updateMarker, '    update = () => {\n      if (stopped) return\n      console.log("[collection-diag] root-update")\n')
           const subLine = '          boundary.pendingTransaction = transaction\n          boundary.pendingMutations.push(...batch.mutations)\n'
-          if (!dom.includes(subLine)) throw new Error('subscription marker missing')
-          dom = dom.replace(subLine, subLine + '          console.log("[collection-diag] subscription", boundary.key, batch.mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")))\n')
+          dom = dom.replace(subLine, subLine + '          console.log("[collection-diag] boundary-subscription", batch.mutations.map(m => m.kind + ":" + String(m.property ?? m.method ?? "")))\n')
           fs.writeFileSync(domPath, dom)
           NODE
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: node --test --test-name-pattern='executes ForEach host rows persistently' tests/web-package.test.mjs
+      - name: Run diagnostic fixture
+        run: |
+          node --input-type=module <<'NODE'
+          import { JSDOM } from 'jsdom'
+          import { Element, ForEach, State, defineView, initializer } from './packages/core/dist/index.js'
+          import { mount } from './packages/web/dist/index.js'
+          const dom = new JSDOM('<div id=app></div>')
+          const container = dom.window.document.querySelector('#app')
+          const items = State([{ id: 'a', value: 'A' }, { id: 'b', value: 'B' }, { id: 'c', value: 'C' }])
+          let rowRuns = 0
+          const App = defineView('DiagCollectionApp', {
+            initializers: [initializer('DiagCollectionApp()', args => args.length === 0)],
+            body: () => Element('section', null, ForEach(items.value, item => {
+              rowRuns += 1
+              return Element('span', { 'data-row': item.id, title: item.value }, item.value)
+            })),
+          })
+          const unmount = mount(App(), container)
+          console.log('[fixture] initial', rowRuns)
+          rowRuns = 0
+          const changed = [...items.value]
+          changed[1] = { ...changed[1], value: 'B1' }
+          items.value = changed
+          await Promise.resolve(); await Promise.resolve()
+          console.log('[fixture] single', rowRuns)
+          rowRuns = 0
+          items.value = [...items.value].reverse()
+          await Promise.resolve(); await Promise.resolve()
+          console.log('[fixture] reverse', rowRuns)
+          unmount()
+          dom.window.close()
+          NODE
