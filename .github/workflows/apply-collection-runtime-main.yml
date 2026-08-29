@@ -67,8 +67,9 @@ jobs:
           set -euo pipefail
           package_dir="node_modules/.pnpm/o0o0o@0.2.2/node_modules/o0o0o"
           cat "$package_dir/package.json"
-          find "$package_dir" -maxdepth 4 -type f -print | sort
-          grep -R -n -E 'ownStyleAnimation|export .*animate|createInterpolator|interpolateCss|Motion' "$package_dir" || true
+          sed -n '1,270p' "$package_dir/index.d.ts"
+          cat "$package_dir/src/dom/index.d.ts"
+          grep -R -n -E 'compileMotionPlan|MotionExecutionPlan|ownStyleAnimation' "$package_dir" || true
 
       - name: Build and run the complete test suite
         run: pnpm test
