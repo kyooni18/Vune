@@ -1,0 +1,69 @@
+name: Apply collection runtime executor to main
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-executor-20260830
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-collection-runtime-main
+  cancel-in-progress: false
+
+jobs:
+  validate-and-apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out staged patch branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply staged patches onto the exact main base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "747bb775216c4272b9dfd5eeaf49d69c4b95aabb"
+          mkdir -p /tmp/vune-collection-runtime-patches
+          cp .github/patches/collection-runtime/*.patch /tmp/vune-collection-runtime-patches/
+          git reset --hard origin/main
+          for patch in /tmp/vune-collection-runtime-patches/*.patch; do
+            git apply --check "$patch"
+            git apply "$patch"
+          done
+          git diff --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build and run the complete test suite
+        run: pnpm test
+
+      - name: Commit validated runtime changes directly to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/core/src/state.ts \
+            packages/core/src/graph/types.ts \
+            packages/core/src/graph/nodes.ts \
+            packages/core/src/graph/renderer.ts \
+            packages/core/src/views.ts \
+            packages/web/src/dom.ts \
+            tests/web-package.test.mjs
+          git commit -m "Add persistent keyed collection execution runtime"
+          git push origin HEAD:main
