@@ -25,20 +25,29 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node .github/collection-state-hotpath.mjs
-      - name: Keep append occurrence staging proportional to touched keys
+      - name: Finalize proportional occurrence staging and ownership typing
         run: |
           node <<'NODE'
           const fs = require('node:fs')
-          const path = 'packages/web/src/dom.ts'
-          let source = fs.readFileSync(path, 'utf8')
+          const domPath = 'packages/web/src/dom.ts'
+          let dom = fs.readFileSync(domPath, 'utf8')
           const a = '    const stagedOccurrenceCounts = new Map(instance.occurrenceCounts)\n'
           const b = '      const occurrence = stagedOccurrenceCounts.get(resolved.identity) ?? 0\n      stagedOccurrenceCounts.set(resolved.identity, occurrence + 1)\n'
           const c = '    instance.occurrenceCounts = stagedOccurrenceCounts\n    instance.node = node\n'
-          if (!source.includes(a) || !source.includes(b) || !source.includes(c)) throw new Error('occurrence staging markers missing')
-          source = source.replace(a, '    const occurrenceDeltas = new Map<string, number>()\n')
-          source = source.replace(b, '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
-          source = source.replace(c, '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
-          fs.writeFileSync(path, source)
+          if (!dom.includes(a) || !dom.includes(b) || !dom.includes(c)) throw new Error('occurrence staging markers missing')
+          dom = dom.replace(a, '    const occurrenceDeltas = new Map<string, number>()\n')
+          dom = dom.replace(b, '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
+          dom = dom.replace(c, '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
+          fs.writeFileSync(domPath, dom)
+
+          const statePath = 'packages/core/src/state.ts'
+          let state = fs.readFileSync(statePath, 'utf8')
+          state = state.replaceAll('record.rootArrayRefs.get(previousRaw)', 'record.rootArrayRefs.get(previousRaw as object)')
+          state = state.replaceAll('record.rootArrayRefs.delete(previousRaw)', 'record.rootArrayRefs.delete(previousRaw as object)')
+          state = state.replaceAll('record.rootArrayRefs.set(previousRaw,', 'record.rootArrayRefs.set(previousRaw as object,')
+          state = state.replaceAll('record.rootArrayRefs.get(nextRaw)', 'record.rootArrayRefs.get(nextRaw as object)')
+          state = state.replaceAll('record.rootArrayRefs.set(nextRaw,', 'record.rootArrayRefs.set(nextRaw as object,')
+          fs.writeFileSync(statePath, state)
           NODE
       - run: pnpm run build
       - run: node --test tests/core.test.mjs
