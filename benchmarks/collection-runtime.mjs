@@ -109,7 +109,12 @@ const pushOneMs = ms(start)
 assert.equal(parentRuns, 1)
 assert.equal(rowRuns, 1)
 assert.equal(keyRuns, 1)
-assert.equal(container.querySelector("[data-row=row-extra]")?.textContent, "Extra")
+const section = container.querySelector("section")
+assert.ok(section)
+const appended = section.lastElementChild
+assert.ok(appended)
+assert.equal(appended.getAttribute("data-row"), "row-extra")
+assert.equal(appended.textContent, "Extra")
 
 rowRuns = 0
 keyRuns = 0

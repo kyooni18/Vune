@@ -103,6 +103,7 @@ interface DomCollectionInstance {
   rows: Map<string, DomCollectionRow>
   order: DomCollectionRow[]
   rowsByItem: Map<object, Set<DomCollectionRow>>
+  actualKeys: Set<string | number>
   pendingTransaction?: Transaction
   readonly pendingMutations: StateMutation[]
   scheduled: boolean
@@ -1890,6 +1891,7 @@ function patchStructuralCompiledCollectionMutation(
     if (!row || row.element.parentNode !== parent) return false
     instance.order.pop()
     instance.rows.delete(row.entryKey)
+    instance.actualKeys.delete(row.key)
     removeCollectionRowFromItemIndex(instance, row)
     removeNodeBatch(parent, [row.element], context)
     instance.node = node
@@ -1904,7 +1906,7 @@ function patchStructuralCompiledCollectionMutation(
     const occurrenceCounts = new Map<string, number>()
     for (const row of instance.order) occurrenceCounts.set(row.baseKey, Math.max(occurrenceCounts.get(row.baseKey) ?? 0, row.occurrence + 1))
     const staged: Array<{ readonly entry: KeyedCollectionEntry; readonly plan: FlatKeyedHostRow; readonly item: unknown }> = []
-    const actualKeys = new Set(instance.order.map(row => row.key))
+    const stagedKeys = new Set<string | number>()
     for (let offset = 0; offset < added.length; offset += 1) {
       const index = start + offset
       const item = dataArrayItem(source, index)
@@ -1922,14 +1924,14 @@ function patchStructuralCompiledCollectionMutation(
         index,
       }
       const plan = directCollectionHostRow(node, entry)
-      if (!plan || actualKeys.has(plan.key)) return false
-      actualKeys.add(plan.key)
+      if (!plan || instance.actualKeys.has(plan.key) || stagedKeys.has(plan.key)) return false
+      stagedKeys.add(plan.key)
       staged.push({ entry, plan, item })
     }
     for (const { entry, plan, item } of staged) {
       const element = createTaggedElement(context, plan.type)
       const textNode = context.document.createTextNode(plan.text)
-      applyDomProps(element, plan.props, context)
+      patchDomProps(element, plan.props, context)
       domContentContainer(element)?.appendChild(textNode)
       parent.appendChild(element)
       const row: DomCollectionRow = {
@@ -1948,6 +1950,7 @@ function patchStructuralCompiledCollectionMutation(
       }
       instance.order.push(row)
       instance.rows.set(row.entryKey, row)
+      instance.actualKeys.add(row.key)
       appendCollectionRowToItemIndex(instance, row)
       if (entry.occurrence > 0) node.onDuplicateKey?.(entry.displayKey, entry.occurrence)
     }
@@ -2074,6 +2077,7 @@ function materializeDirectCollection(
     rows,
     order,
     rowsByItem: indexCollectionRowsByItem(order),
+    actualKeys: new Set(order.map(row => row.key)),
     pendingMutations: [],
     scheduled: false,
   }
@@ -2235,6 +2239,7 @@ function patchPersistentCollection(
   instance.rows = nextRows
   instance.order = order
   instance.rowsByItem = indexCollectionRowsByItem(order)
+  instance.actualKeys = new Set(order.map(row => row.key))
   return true
 }
 
