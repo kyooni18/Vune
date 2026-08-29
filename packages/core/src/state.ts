@@ -44,6 +44,7 @@ interface StateRecord<T> {
   listeners: Set<Listener>
   version: number
   owners: Set<ReactiveOwner>
+  rootArrayRefs?: Map<object, number>
   transaction: Transaction
   batchDepth: number
   pendingNotification: boolean
@@ -215,11 +216,140 @@ function attachGraph(record: StateRecord<unknown>, value: unknown): void {
 function detach(record: StateRecord<unknown>): void {
   for (const owner of record.owners) owner.records.delete(record)
   record.owners.clear()
+  record.rootArrayRefs = undefined
+}
+
+function buildRootArrayRefs(record: StateRecord<unknown>): void {
+  const raw = unwrap(record.current)
+  if (!Array.isArray(raw)) {
+    record.rootArrayRefs = undefined
+    return
+  }
+  const refs = new Map<object, number>()
+  let length = 0
+  try { length = raw.length } catch { record.rootArrayRefs = undefined; return }
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined
+    try { descriptor = Object.getOwnPropertyDescriptor(raw, String(index)) } catch { continue }
+    if (!descriptor || !("value" in descriptor)) continue
+    const value = unwrap(descriptor.value)
+    if (!reactiveContainer(value)) continue
+    refs.set(value, (refs.get(value) ?? 0) + 1)
+  }
+  record.rootArrayRefs = refs
 }
 
 function reconcile(record: StateRecord<unknown>): void {
   detach(record)
   attachGraph(record, record.current)
+  buildRootArrayRefs(record)
+}
+
+function shallowReactiveLeaf(value: unknown): value is object {
+  const raw = unwrap(value)
+  if (!reactiveContainer(raw)) return false
+  let properties: readonly PropertyKey[]
+  try { properties = Reflect.ownKeys(raw) } catch { return false }
+  for (const property of properties) {
+    let descriptor: PropertyDescriptor | undefined
+    try { descriptor = Object.getOwnPropertyDescriptor(raw, property) } catch { return false }
+    if (!descriptor) continue
+    if (!("value" in descriptor)) return false
+    if (reactiveContainer(unwrap(descriptor.value))) return false
+  }
+  return true
+}
+
+function detachReactiveLeaf(record: StateRecord<unknown>, value: unknown): void {
+  const raw = unwrap(value)
+  if (!reactiveContainer(raw)) return
+  const owner = owners.get(raw)
+  if (!owner) return
+  owner.records.delete(record)
+  record.owners.delete(owner)
+}
+
+function updateRootArrayReference(
+  record: StateRecord<unknown>,
+  arrayOwner: ReactiveOwner,
+  previous: unknown,
+  next: unknown,
+): boolean {
+  if (!record.rootArrayRefs || unwrap(record.current) !== arrayOwner.raw) return false
+  const previousRaw = unwrap(previous)
+  const nextRaw = unwrap(next)
+  const previousReactive = reactiveContainer(previousRaw)
+  const nextReactive = reactiveContainer(nextRaw)
+
+  if (previousReactive && !Object.is(previousRaw, nextRaw)) {
+    const count = record.rootArrayRefs.get(previousRaw as object) ?? 0
+    if (count <= 1) {
+      record.rootArrayRefs.delete(previousRaw as object)
+      if (shallowReactiveLeaf(previousRaw)) detachReactiveLeaf(record, previousRaw)
+      else return false
+    } else {
+      record.rootArrayRefs.set(previousRaw as object, count - 1)
+    }
+  }
+
+  if (nextReactive && !Object.is(previousRaw, nextRaw)) {
+    const count = record.rootArrayRefs.get(nextRaw as object) ?? 0
+    record.rootArrayRefs.set(nextRaw as object, count + 1)
+    if (count === 0) attachGraph(record, nextRaw)
+  }
+  return true
+}
+
+function notifyRootArraySlot(
+  owner: ReactiveOwner,
+  previous: unknown,
+  next: unknown,
+  mutation: StateMutation,
+): void {
+  reactiveMutationClock += 1
+  const affected = [...owner.records]
+  for (const record of affected) {
+    if (!updateRootArrayReference(record, owner, previous, next)) {
+      const change = ownershipChange(previous, next)
+      updateOwnership(record, change, change === "add" ? next : undefined)
+    }
+  }
+  let failed = false
+  let failure: unknown
+  for (const record of affected) {
+    try { notify(record, mutation) } catch (error) {
+      if (!failed) { failed = true; failure = error }
+    }
+  }
+  if (failed) throw failure
+}
+
+function notifyRootArrayRemoval(owner: ReactiveOwner, removed: unknown, mutation: StateMutation): void {
+  reactiveMutationClock += 1
+  const affected = [...owner.records]
+  for (const record of affected) {
+    if (!record.rootArrayRefs || unwrap(record.current) !== owner.raw || !reactiveContainer(unwrap(removed))) {
+      updateOwnership(record, reactiveContainer(unwrap(removed)) ? "reconcile" : "none")
+      continue
+    }
+    const raw = unwrap(removed)
+    const count = record.rootArrayRefs.get(raw as object) ?? 0
+    if (count <= 1) {
+      record.rootArrayRefs.delete(raw as object)
+      if (shallowReactiveLeaf(raw)) detachReactiveLeaf(record, raw)
+      else requestReconcile(record)
+    } else {
+      record.rootArrayRefs.set(raw as object, count - 1)
+    }
+  }
+  let failed = false
+  let failure: unknown
+  for (const record of affected) {
+    try { notify(record, mutation) } catch (error) {
+      if (!failed) { failed = true; failure = error }
+    }
+  }
+  if (failed) throw failure
 }
 
 function requestReconcile(record: StateRecord<unknown>): void {
@@ -283,7 +413,15 @@ function notifyOwnerAdditions(
   for (const record of affected) {
     if (record.listeners.size === 0) continue
     for (const addition of additions) {
-      if (reactiveContainer(unwrap(addition))) attachGraph(record, addition)
+      const raw = unwrap(addition)
+      if (!reactiveContainer(raw)) continue
+      if (record.rootArrayRefs && unwrap(record.current) === owner.raw) {
+        const count = record.rootArrayRefs.get(raw as object) ?? 0
+        record.rootArrayRefs.set(raw as object, count + 1)
+        if (count === 0) attachGraph(record, raw)
+      } else {
+        attachGraph(record, raw)
+      }
     }
   }
   let failed = false
@@ -375,6 +513,8 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
                 const additions = mutatorArguments.filter(value => reactiveContainer(unwrap(value)))
                 if (additions.length > 0) notifyOwnerAdditions(owner, additions, mutation)
                 else notifyOwner(owner, "none", undefined, mutation)
+              } else if (property === "pop" && reactiveContainer(unwrap(result))) {
+                notifyRootArrayRemoval(owner, result, mutation)
               } else if ((property === "pop" || property === "shift") && !reactiveContainer(unwrap(result))) {
                 notifyOwner(owner, "none", undefined, mutation)
               } else {
@@ -424,13 +564,15 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
         : ownershipChange(undefined, normalized, false)
       const previous = descriptor && "value" in descriptor ? unwrap(descriptor.value) : undefined
       const updated = Reflect.set(target, property, normalized, target)
-      if (updated && changed) notifyOwner(owner, change, change === "add" ? normalized : undefined, {
-        kind: "set",
-        target,
-        property,
-        previous,
-        value: normalized,
-      })
+      if (updated && changed) {
+        const mutation: StateMutation = { kind: "set", target, property, previous, value: normalized }
+        const index = Array.isArray(target) && typeof property !== "symbol" ? Number(property) : Number.NaN
+        if (Array.isArray(target) && Number.isSafeInteger(index) && index >= 0 && String(index) === String(property)) {
+          notifyRootArraySlot(owner, previous, normalized, mutation)
+        } else {
+          notifyOwner(owner, change, change === "add" ? normalized : undefined, mutation)
+        }
+      }
       return updated
     },
     deleteProperty(target, property) {

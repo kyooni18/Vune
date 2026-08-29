@@ -104,6 +104,7 @@ interface DomCollectionInstance {
   order: DomCollectionRow[]
   rowsByItem: Map<object, Set<DomCollectionRow>>
   actualKeys: Set<string | number>
+  occurrenceCounts: Map<string, number>
   pendingTransaction?: Transaction
   readonly pendingMutations: StateMutation[]
   scheduled: boolean
@@ -1690,6 +1691,12 @@ function collectionRowItemIdentity(item: unknown): object | undefined {
   return identity && typeof identity === "object" ? identity : undefined
 }
 
+function indexCollectionOccurrences(rows: readonly DomCollectionRow[]): Map<string, number> {
+  const result = new Map<string, number>()
+  for (const row of rows) result.set(row.baseKey, Math.max(result.get(row.baseKey) ?? 0, row.occurrence + 1))
+  return result
+}
+
 function indexCollectionRowsByItem(rows: readonly DomCollectionRow[]): Map<object, Set<DomCollectionRow>> {
   const result = new Map<object, Set<DomCollectionRow>>()
   for (const row of rows) {
@@ -1892,6 +1899,9 @@ function patchStructuralCompiledCollectionMutation(
     instance.order.pop()
     instance.rows.delete(row.entryKey)
     instance.actualKeys.delete(row.key)
+    const occurrences = instance.occurrenceCounts.get(row.baseKey) ?? 0
+    if (occurrences <= 1) instance.occurrenceCounts.delete(row.baseKey)
+    else instance.occurrenceCounts.set(row.baseKey, occurrences - 1)
     removeCollectionRowFromItemIndex(instance, row)
     removeNodeBatch(parent, [row.element], context)
     instance.node = node
@@ -1903,8 +1913,7 @@ function patchStructuralCompiledCollectionMutation(
     if (added.length === 0) return true
     const start = instance.order.length
     if (start === 0 || length !== start + added.length) return undefined
-    const occurrenceCounts = new Map<string, number>()
-    for (const row of instance.order) occurrenceCounts.set(row.baseKey, Math.max(occurrenceCounts.get(row.baseKey) ?? 0, row.occurrence + 1))
+    const occurrenceDeltas = new Map<string, number>()
     const staged: Array<{ readonly entry: KeyedCollectionEntry; readonly plan: FlatKeyedHostRow; readonly item: unknown }> = []
     const stagedKeys = new Set<string | number>()
     for (let offset = 0; offset < added.length; offset += 1) {
@@ -1913,8 +1922,9 @@ function patchStructuralCompiledCollectionMutation(
       if (item === missingCollectionItem) return undefined
       const resolved = node.key(item, index)
       if (!resolved) return undefined
-      const occurrence = occurrenceCounts.get(resolved.identity) ?? 0
-      occurrenceCounts.set(resolved.identity, occurrence + 1)
+      const delta = occurrenceDeltas.get(resolved.identity) ?? 0
+      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta
+      occurrenceDeltas.set(resolved.identity, delta + 1)
       const entry: KeyedCollectionEntry = {
         key: keyedCollectionChildKey(resolved.identity, occurrence),
         baseKey: resolved.identity,
@@ -1953,6 +1963,9 @@ function patchStructuralCompiledCollectionMutation(
       instance.actualKeys.add(row.key)
       appendCollectionRowToItemIndex(instance, row)
       if (entry.occurrence > 0) node.onDuplicateKey?.(entry.displayKey, entry.occurrence)
+    }
+    for (const [baseKey, delta] of occurrenceDeltas) {
+      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)
     }
     instance.node = node
     return true
@@ -2078,6 +2091,7 @@ function materializeDirectCollection(
     order,
     rowsByItem: indexCollectionRowsByItem(order),
     actualKeys: new Set(order.map(row => row.key)),
+    occurrenceCounts: indexCollectionOccurrences(order),
     pendingMutations: [],
     scheduled: false,
   }
@@ -2240,6 +2254,7 @@ function patchPersistentCollection(
   instance.order = order
   instance.rowsByItem = indexCollectionRowsByItem(order)
   instance.actualKeys = new Set(order.map(row => row.key))
+  instance.occurrenceCounts = indexCollectionOccurrences(order)
   return true
 }
 

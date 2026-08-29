@@ -1609,3 +1609,45 @@ test("re-marking an overloaded closure preserves its dispatch variants", () => {
   assert.equal(closureForKind(reMarked, "action"), action)
   assert.equal(closureKindOf(reMarked), "viewBuilder")
 })
+
+
+test("State updates shallow root-array ownership without rescanning unrelated rows", () => {
+  let ownKeysCalls = 0
+  const rows = Array.from({ length: 256 }, (_, index) => new Proxy({ id: index, value: String(index) }, {
+    ownKeys(target) { ownKeysCalls += 1; return Reflect.ownKeys(target) },
+  }))
+  const state = State(rows)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const stale = state.value[128]
+  ownKeysCalls = 0
+
+  state.value[128] = { id: 128, value: "changed" }
+  assert.equal(notifications, 1)
+  assert.ok(ownKeysCalls <= 2)
+  notifications = 0
+  stale.value = "stale"
+  assert.equal(notifications, 0)
+
+  const removed = state.value.at(-1)
+  ownKeysCalls = 0
+  state.value.pop()
+  assert.equal(ownKeysCalls, 0)
+  notifications = 0
+  removed.value = "removed"
+  assert.equal(notifications, 0)
+  unsubscribe()
+})
+
+test("State shallow array ownership keeps duplicate object references live", () => {
+  const shared = { value: 0 }
+  const state = State([shared, shared])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const proxy = state.value[0]
+  state.value.pop()
+  notifications = 0
+  proxy.value += 1
+  assert.equal(notifications, 1)
+  unsubscribe()
+})
