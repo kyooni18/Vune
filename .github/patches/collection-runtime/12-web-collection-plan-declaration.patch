@@ -1,0 +1,11 @@
+diff --git a/packages/web/src/dom.ts b/packages/web/src/dom.ts
+--- a/packages/web/src/dom.ts
++++ b/packages/web/src/dom.ts
+@@ -1608,1 +1608,7 @@
++interface FlatKeyedCollectionBoundaryPlan {
++  readonly rootType: string
++  readonly rootProps: Record<string, unknown> | null
++  readonly collection: KeyedCollectionViewNode
++}
++
+ function flatKeyedCollectionBoundaryPlan(value: ViewGraphValue): FlatKeyedCollectionBoundaryPlan | undefined {
