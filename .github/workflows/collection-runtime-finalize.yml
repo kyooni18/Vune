@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  compiler-collection-plan:
+  validate-compiler-collection-plan:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,271 +24,65 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Add compiler-native collection specialization
+      - name: Wire compiler collection pass
         run: |
-          cat > packages/compiler/src/collection-specialization.ts <<'EOF'
-          import * as ts from "typescript"
-
-          interface RowAnalysis {
-            readonly pure: boolean
-            readonly indexDependent: boolean
-          }
-
-          interface CollectionRowPlan {
-            readonly typeSource: string
-            readonly propsSource: string
-            readonly textSource: string
-            readonly itemName: string
-            readonly indexName?: string
-            readonly indexIndependent: boolean
-          }
-
-          function unwrapExpression(expression: ts.Expression): ts.Expression {
-            let current = expression
-            while (ts.isParenthesizedExpression(current)
-              || ts.isAsExpression(current)
-              || ts.isTypeAssertionExpression(current)
-              || ts.isNonNullExpression(current)
-              || ts.isSatisfiesExpression(current)) {
-              current = current.expression
-            }
-            return current
-          }
-
-          function mergeAnalysis(...values: readonly RowAnalysis[]): RowAnalysis {
-            return {
-              pure: values.every(value => value.pure),
-              indexDependent: values.some(value => value.indexDependent),
-            }
-          }
-
-          function analyzeRowExpression(
-            expression: ts.Expression,
-            itemName: string,
-            indexName: string | undefined,
-          ): RowAnalysis {
-            const value = unwrapExpression(expression)
-            if (ts.isStringLiteralLike(value) || ts.isNumericLiteral(value) || ts.isBigIntLiteral(value)
-              || value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword
-              || value.kind === ts.SyntaxKind.NullKeyword) return { pure: true, indexDependent: false }
-            if (ts.isIdentifier(value)) {
-              if (value.text === itemName || value.text === "undefined") return { pure: true, indexDependent: false }
-              if (indexName && value.text === indexName) return { pure: true, indexDependent: true }
-              return { pure: false, indexDependent: false }
-            }
-            if (ts.isPropertyAccessExpression(value)) {
-              return analyzeRowExpression(value.expression, itemName, indexName)
-            }
-            if (ts.isElementAccessExpression(value)) {
-              if (!value.argumentExpression) return { pure: false, indexDependent: false }
-              return mergeAnalysis(
-                analyzeRowExpression(value.expression, itemName, indexName),
-                analyzeRowExpression(value.argumentExpression, itemName, indexName),
-              )
-            }
-            if (ts.isPrefixUnaryExpression(value)) {
-              if (![ts.SyntaxKind.PlusToken, ts.SyntaxKind.MinusToken, ts.SyntaxKind.ExclamationToken, ts.SyntaxKind.TildeToken].includes(value.operator)) {
-                return { pure: false, indexDependent: false }
-              }
-              return analyzeRowExpression(value.operand, itemName, indexName)
-            }
-            if (ts.isBinaryExpression(value)) {
-              const operator = value.operatorToken.kind
-              if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) return { pure: false, indexDependent: false }
-              if (operator === ts.SyntaxKind.CommaToken) return { pure: false, indexDependent: false }
-              return mergeAnalysis(
-                analyzeRowExpression(value.left, itemName, indexName),
-                analyzeRowExpression(value.right, itemName, indexName),
-              )
-            }
-            if (ts.isConditionalExpression(value)) {
-              return mergeAnalysis(
-                analyzeRowExpression(value.condition, itemName, indexName),
-                analyzeRowExpression(value.whenTrue, itemName, indexName),
-                analyzeRowExpression(value.whenFalse, itemName, indexName),
-              )
-            }
-            if (ts.isTemplateExpression(value)) {
-              return mergeAnalysis(...value.templateSpans.map(span => analyzeRowExpression(span.expression, itemName, indexName)))
-            }
-            if (ts.isArrayLiteralExpression(value)) {
-              const analyses: RowAnalysis[] = []
-              for (const element of value.elements) {
-                if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return { pure: false, indexDependent: false }
-                analyses.push(analyzeRowExpression(element, itemName, indexName))
-              }
-              return mergeAnalysis(...analyses)
-            }
-            if (ts.isObjectLiteralExpression(value)) {
-              const analyses: RowAnalysis[] = []
-              for (const property of value.properties) {
-                if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return { pure: false, indexDependent: false }
-                analyses.push(analyzeRowExpression(property.initializer, itemName, indexName))
-              }
-              return mergeAnalysis(...analyses)
-            }
-            return { pure: false, indexDependent: false }
-          }
-
-          function closureResult(closure: ts.ArrowFunction | ts.FunctionExpression): ts.Expression | undefined {
-            if (!ts.isBlock(closure.body)) return unwrapExpression(closure.body)
-            if (closure.body.statements.length !== 1) return undefined
-            const statement = closure.body.statements[0]
-            return ts.isReturnStatement(statement) && statement.expression ? unwrapExpression(statement.expression) : undefined
-          }
-
-          function singleBuilderResult(expression: ts.Expression): ts.Expression {
-            const value = unwrapExpression(expression)
-            if (ts.isArrayLiteralExpression(value) && value.elements.length === 1) {
-              const element = value.elements[0]
-              if (ts.isExpression(element) && !ts.isSpreadElement(element)) return unwrapExpression(element)
-            }
-            return value
-          }
-
-          function importedBindings(sourceFile: ts.SourceFile, importedName: string): { names: Set<string>; namespaces: Set<string> } {
-            const names = new Set<string>()
-            const namespaces = new Set<string>()
-            for (const statement of sourceFile.statements) {
-              if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-              const moduleName = statement.moduleSpecifier.text
-              if (moduleName !== "vune-ui" && !moduleName.startsWith("@vune-ui/")) continue
-              const bindings = statement.importClause?.namedBindings
-              if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
-              if (bindings && ts.isNamedImports(bindings)) {
-                for (const element of bindings.elements) {
-                  if ((element.propertyName?.text ?? element.name.text) === importedName) names.add(element.name.text)
-                }
-              }
-            }
-            return { names, namespaces }
-          }
-
-          function isImportedElementCall(
-            call: ts.CallExpression,
-            elements: ReturnType<typeof importedBindings>,
-          ): boolean {
-            const callee = unwrapExpression(call.expression)
-            if (ts.isIdentifier(callee)) return elements.names.has(callee.text)
-            return ts.isPropertyAccessExpression(callee)
-              && callee.name.text === "Element"
-              && ts.isIdentifier(callee.expression)
-              && elements.namespaces.has(callee.expression.text)
-          }
-
-          function collectionRowPlan(
-            closure: ts.Expression,
-            sourceFile: ts.SourceFile,
-            elements: ReturnType<typeof importedBindings>,
-          ): CollectionRowPlan | undefined {
-            const value = unwrapExpression(closure)
-            if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return undefined
-            if (value.parameters.length < 1 || value.parameters.length > 2) return undefined
-            const item = value.parameters[0]
-            const index = value.parameters[1]
-            if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return undefined
-            if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return undefined
-            const result = closureResult(value)
-            if (!result) return undefined
-            const row = singleBuilderResult(result)
-            if (!ts.isCallExpression(row) || !isImportedElementCall(row, elements) || row.arguments.length !== 3) return undefined
-            const [type, props, text] = row.arguments
-            if (!ts.isStringLiteral(type) || type.text.includes("-")) return undefined
-            const itemName = item.name.text
-            const indexName = index && ts.isIdentifier(index.name) ? index.name.text : undefined
-            const propsValue = unwrapExpression(props)
-            if (propsValue.kind !== ts.SyntaxKind.NullKeyword && !ts.isObjectLiteralExpression(propsValue)) return undefined
-            const propsAnalysis = propsValue.kind === ts.SyntaxKind.NullKeyword
-              ? { pure: true, indexDependent: false }
-              : analyzeRowExpression(propsValue, itemName, indexName)
-            const textAnalysis = analyzeRowExpression(text, itemName, indexName)
-            if (!propsAnalysis.pure || !textAnalysis.pure) return undefined
-            return {
-              typeSource: type.getText(sourceFile),
-              propsSource: props.getText(sourceFile),
-              textSource: text.getText(sourceFile),
-              itemName,
-              ...(indexName ? { indexName } : {}),
-              indexIndependent: !propsAnalysis.indexDependent && !textAnalysis.indexDependent,
-            }
-          }
-
-          function compiledForEachContent(
-            call: ts.CallExpression,
-            foreachNames: ReadonlySet<string>,
-          ): ts.Expression | undefined {
-            const callee = unwrapExpression(call.expression)
-            if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "createNodeCompiled") return undefined
-            const viewType = unwrapExpression(callee.expression)
-            if (!ts.isPropertyAccessExpression(viewType) || viewType.name.text !== "viewType") return undefined
-            const owner = unwrapExpression(viewType.expression)
-            if (!ts.isIdentifier(owner) || !foreachNames.has(owner.text)) return undefined
-            if (call.arguments.length !== 2 || !ts.isArrayLiteralExpression(call.arguments[1])) return undefined
-            const argumentsArray = call.arguments[1]
-            const content = argumentsArray.elements.at(-1)
-            return content && ts.isExpression(content) && !ts.isSpreadElement(content) ? content : undefined
-          }
-
-          export function lowerCompiledCollections(source: string): string {
-            if (!source.includes("createNodeCompiled") || !source.includes("ForEach")) return source
-            const sourceFile = ts.createSourceFile("vune-compiled-collections.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-            const foreach = importedBindings(sourceFile, "ForEach")
-            if (foreach.names.size === 0) return source
-            const elements = importedBindings(sourceFile, "Element")
-            if (elements.names.size === 0 && elements.namespaces.size === 0) return source
-            const edits: Array<{ start: number; end: number; replacement: string }> = []
-            const visit = (node: ts.Node): void => {
-              if (ts.isCallExpression(node)) {
-                const content = compiledForEachContent(node, foreach.names)
-                if (content) {
-                  const plan = collectionRowPlan(content, sourceFile, elements)
-                  if (plan) {
-                    const parameters = plan.indexName ? `${plan.itemName}, ${plan.indexName}` : plan.itemName
-                    edits.push({
-                      start: content.getStart(sourceFile),
-                      end: content.end,
-                      replacement: `compiledCollectionContent(${content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${plan.indexIndependent}, evaluate: (${parameters}) => ({ type: ${plan.typeSource}, props: ${plan.propsSource}, text: ${plan.textSource} }) })`,
-                    })
-                    return
-                  }
-                }
-              }
-              ts.forEachChild(node, visit)
-            }
-            visit(sourceFile)
-            if (edits.length === 0) return source
-            let result = source
-            for (const edit of edits.sort((left, right) => right.start - left.start)) {
-              result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
-            }
-            return result
-          }
-          EOF
-
           node <<'NODE'
           const fs = require('node:fs')
-          const pipelinePath = 'packages/compiler/src/pipeline.ts'
-          let pipeline = fs.readFileSync(pipelinePath, 'utf8')
+          const path = 'packages/compiler/src/pipeline.ts'
+          let source = fs.readFileSync(path, 'utf8')
           const importMarker = 'import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"\n'
-          if (!pipeline.includes(importMarker)) throw new Error('compiler specialization import marker missing')
-          pipeline = pipeline.replace(importMarker, importMarker + 'import { lowerCompiledCollections } from "./collection-specialization.js"\n')
-          const helperMarker = 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate"]'
-          if (!pipeline.includes(helperMarker)) throw new Error('ensureImports helper marker missing')
-          pipeline = pipeline.replace(helperMarker, 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", "compiledCollectionContent"]')
-          const passMarker = '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)\n'
-          if (!pipeline.includes(passMarker)) throw new Error('compiler pass marker missing')
-          pipeline = pipeline.replace(passMarker, '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledCollections = lowerCompiledCollections(withSemanticSpecializations)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withCompiledCollections)\n')
-          fs.writeFileSync(pipelinePath, pipeline)
-
-          const testPath = 'tests/compiler-package.test.mjs'
-          let tests = fs.readFileSync(testPath, 'utf8')
-          tests += `\n\ntest("compiler emits direct collection row plans only for proven flat host rows", () => {\n  const source = \`import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))) })\`\n  const output = transformVuneSource(source, "CompiledCollection.vune.ts")\n  assert.match(output, /compiledCollectionContent\\(item => Element\\("span"/)\n  assert.match(output, /kind: "flat-text-host", indexIndependent: true/)\n  assert.match(output, /evaluate: \\(item\\) => \\(\\{ type: "span", props: \\{ title: item\\.value \\}, text: item\\.value \\}\\)/)\n  assert.match(output, /import \\{[^}]*compiledCollectionContent[^}]*\\} from "@vune-ui\\/core"/)\n  assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)\n})\n\ntest("compiler keeps index-sensitive collection plans conservative", () => {\n  const source = \`import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, \\\`\\${index}:\\${item.value}\\\`))) })\`\n  const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")\n  assert.match(output, /compiledCollectionContent/)\n  assert.match(output, /indexIndependent: false/)\n})\n\ntest("compiler refuses effectful or structurally complex collection rows", () => {\n  const effectful = \`import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nconst format = value => value.toUpperCase()\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: format(item.value) }, item.value))) })\`\n  assert.doesNotMatch(transformVuneSource(effectful, "EffectfulCollection.vune.ts"), /compiledCollectionContent/)\n\n  const nested = \`import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })\`\n  assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)\n})\n`
-          fs.writeFileSync(testPath, tests)
+          if (!source.includes(importMarker)) throw new Error('specialization import marker missing')
+          source = source.replace(importMarker, importMarker + 'import { lowerCompiledCollections } from "./collection-specialization.js"\n')
+          const helpers = 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate"]'
+          if (!source.includes(helpers)) throw new Error('runtime helper marker missing')
+          source = source.replace(helpers, 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", "compiledCollectionContent"]')
+          const pass = '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)\n'
+          if (!source.includes(pass)) throw new Error('compiler pass marker missing')
+          source = source.replace(pass, '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledCollections = lowerCompiledCollections(withSemanticSpecializations)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withCompiledCollections)\n')
+          fs.writeFileSync(path, source)
           NODE
+      - name: Add compiler regressions
+        run: |
+          cat >> tests/compiler-package.test.mjs <<'EOF'
+
+          test("compiler emits direct collection row plans only for proven flat host rows", () => {
+            const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+          const items = State([{ id: "a", value: "A" }])
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))) })`
+            const output = transformVuneSource(source, "CompiledCollection.vune.ts")
+            assert.match(output, /compiledCollectionContent\(item => Element\("span"/)
+            assert.match(output, /kind: "flat-text-host", indexIndependent: true/)
+            assert.match(output, /evaluate: \(item\) => \(\{ type: "span", props: \{ title: item\.value \}, text: item\.value \}\)/)
+            assert.match(output, /import \{[^}]*compiledCollectionContent[^}]*\} from "@vune-ui\/core"/)
+            assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+          })
+
+          test("compiler keeps index-sensitive collection plans conservative", () => {
+            const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+          const items = State([{ id: "a", value: "A" }])
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, String(index) + ":" + item.value))) })`
+            const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")
+            assert.match(output, /compiledCollectionContent/)
+            assert.match(output, /indexIndependent: false/)
+          })
+
+          test("compiler refuses effectful or structurally complex collection rows", () => {
+            const effectful = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+          const items = State([{ id: "a", value: "A" }])
+          const format = value => value.toUpperCase()
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: format(item.value) }, item.value))) })`
+            assert.doesNotMatch(transformVuneSource(effectful, "EffectfulCollection.vune.ts"), /compiledCollectionContent/)
+
+            const nested = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+          const items = State([{ id: "a", value: "A" }])
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })`
+            assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
+          })
+          EOF
       - run: pnpm run build
       - run: node --test --test-name-pattern='collection row plans|collection plans conservative|collection rows' tests/compiler-package.test.mjs
       - run: node --test --test-name-pattern='ForEach' tests/web-package.test.mjs
-      - name: Commit compiler plan
+      - name: Commit validated compiler pass
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
