@@ -1,0 +1,134 @@
+diff --git a/packages/web/src/motion.ts b/packages/web/src/motion.ts
+--- a/packages/web/src/motion.ts
++++ b/packages/web/src/motion.ts
+@@ -1,16 +1,15 @@
+ import {
+   animate,
+-  compileMotionPlan as compileEngineMotionPlan,
+   curves,
++  createInterpolator,
+   motionValue,
+   smooth,
+   spring,
+   timing,
+   type AnimationControls,
+-  type MotionExecutionPlan,
++  type InterpolatorOptions,
+   type MotionSpec,
+   type MotionValue,
+-} from "o0o0o/core"
+-import { createInterpolator, type InterpolatorOptions } from "o0o0o/interpolate/css"
++} from "o0o0o"
+ import type { Animation } from "@vune-ui/core"
+ import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
+@@ -46,13 +45,13 @@ type MotionRoute =
+   | { readonly kind: "scalar"; readonly unit: string; readonly value: number }
+   | { readonly kind: "interpolated"; readonly options: InterpolatorOptions }
+ 
++type VuneMotionSpec = MotionSpec & { readonly blendDuration?: number }
++
+ interface CompiledMotionPlan {
+   /** Public/raw spec retained for compatibility and diagnostics. */
+-  readonly spec: MotionSpec
+-  /** Fully compiled o0o0o route: spring coefficients/easing LUT are ready. */
+-  readonly executionPlan: MotionExecutionPlan
++  readonly spec: VuneMotionSpec
+   readonly delayMs: number
+   /** Number of forward passes. Infinity means repeat forever. */
+   readonly repeatCount: number
+@@ -157,15 +156,14 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
+   }
+ 
+-  const spec = descriptor.kind === "spring"
+-    ? spring({ response, dampingRatio, blendDuration })
++  const spec: VuneMotionSpec = descriptor.kind === "spring"
++    ? Object.freeze({ ...spring({ response, dampingRatio }), blendDuration })
+     : (() => {
+         const base = curveFor(descriptor.kind)
+         return base.kind === "timing" ? timing({ duration, curve: base.curve }) : base
+       })()
+   const plan: CompiledMotionPlan = Object.freeze({
+     spec,
+-    executionPlan: compileEngineMotionPlan(spec),
+     delayMs,
+     repeatCount,
+     autoreverses,
+@@ -181,7 +179,7 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
+ }
+ 
+-/** Convert and memoize Vune's SwiftUI-shaped value into an o0o0o execution spec. */
+-export function motionSpecForAnimation(animation: Animation): MotionSpec {
++/** Convert and memoize Vune's SwiftUI-shaped value into a public o0o0o spec. */
++export function motionSpecForAnimation(animation: Animation): VuneMotionSpec {
+   return compileMotionPlan(animation).spec
+ }
+@@ -309,7 +307,7 @@ class ScalarMotionChannel implements MotionChannel {
+           // Calling animate() on the same MotionValue deliberately avoids a
+           // pre-cancel here: o0o0o retargets a live spring in-place and carries
+           // its velocity into the new target.
+-          this.#control = animate(this.#value, target.value, plan.executionPlan)
++          this.#control = animate(this.#value, target.value, plan.spec)
+           const forward = await this.#control.finished
+@@ -318,7 +316,7 @@ class ScalarMotionChannel implements MotionChannel {
+           if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
+           if (plan.autoreverses) {
+-            this.#control = animate(this.#value, origin, plan.executionPlan)
++            this.#control = animate(this.#value, origin, plan.spec)
+             const reverse = await this.#control.finished
+@@ -402,7 +400,7 @@ class InterpolatedMotionChannel implements MotionChannel {
+         while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || forwardPass < plan.repeatCount)) {
+           this.#progress.set(0, 0)
+-          this.#control = animate(this.#progress, 1, plan.executionPlan)
++          this.#control = animate(this.#progress, 1, plan.spec)
+           const forward = await this.#control.finished
+@@ -411,7 +409,7 @@ class InterpolatedMotionChannel implements MotionChannel {
+           if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
+           if (plan.autoreverses) {
+-            this.#control = animate(this.#progress, 0, plan.executionPlan)
++            this.#control = animate(this.#progress, 0, plan.spec)
+             const reverse = await this.#control.finished
+diff --git a/packages/web/src/element-motion.ts b/packages/web/src/element-motion.ts
+--- a/packages/web/src/element-motion.ts
++++ b/packages/web/src/element-motion.ts
+@@ -7,7 +7,6 @@ import {
+   type AnimationControls,
+   type InterpolatorOptions,
+ } from "o0o0o"
+-import { ownStyleAnimation } from "o0o0o/dom"
+ import { motionSpecForAnimation } from "./motion.js"
+@@ -29,6 +28,39 @@ export interface MotionHandle {
+   cancel(): void
+ }
+ 
++const styleAnimationOwners = new WeakMap<Element, Map<string, MotionHandle>>()
++
++/** Keep one active writer per CSS property without relying on private o0o0o APIs. */
++function ownStyleAnimation(element: Element, properties: readonly string[], handle: MotionHandle): void {
++  const uniqueProperties = [...new Set(properties)]
++  if (uniqueProperties.length === 0) return
++  let owners = styleAnimationOwners.get(element)
++  if (!owners) {
++    owners = new Map()
++    styleAnimationOwners.set(element, owners)
++  }
++
++  const displaced = new Set<MotionHandle>()
++  for (const property of uniqueProperties) {
++    const previous = owners.get(property)
++    if (previous && previous !== handle) displaced.add(previous)
++  }
++  for (const previous of displaced) previous.cancel()
++  for (const property of uniqueProperties) owners.set(property, handle)
++
++  const release = () => {
++    const current = styleAnimationOwners.get(element)
++    if (!current) return
++    for (const property of uniqueProperties) {
++      if (current.get(property) === handle) current.delete(property)
++    }
++    if (current.size === 0) styleAnimationOwners.delete(element)
++  }
++  void handle.finished.then(release, release)
++}
++
+ interface AnimationTiming {
