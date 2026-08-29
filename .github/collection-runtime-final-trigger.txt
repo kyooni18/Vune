@@ -1,0 +1,1 @@
+Trigger the isolated final collection runtime validation after the previous run was cancelled by a concurrent diagnostic commit.
