@@ -2255,10 +2255,11 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
   const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])
   let parentRuns = 0
   let rowRuns = 0
+  let keyRuns = 0
   const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
     kind: "flat-text-host",
     indexIndependent: true,
-    evaluateKey: item => item.id,
+    evaluateKey: item => { keyRuns += 1; return item.id },
     evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
   })
   const App = defineView("OwnedCompiledCollectionApp", {
@@ -2268,14 +2269,28 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
   const unmount = mount(App(), container)
   assert.equal(parentRuns, 1)
   assert.equal(rowRuns, 3)
+
   rowRuns = 0
+  keyRuns = 0
   const before = container.querySelector("[data-row=b]")
   items.value[1] = { id: "b", value: "B1" }
   await Promise.resolve(); await Promise.resolve()
   assert.equal(parentRuns, 1)
   assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
   assert.strictEqual(container.querySelector("[data-row=b]"), before)
   assert.equal(container.querySelector("[data-row=b]")?.textContent, "B1")
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value[1].value = "B2"
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
+  assert.strictEqual(container.querySelector("[data-row=b]"), before)
+  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B2")
+
   unmount()
   dom.window.close()
 })
