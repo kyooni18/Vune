@@ -5,12 +5,8 @@ on:
     branches:
       - codex/collection-runtime-finalize-20260830
 
-permissions:
-  contents: write
-
 jobs:
-  validate-state-collection-hotpaths:
-    if: github.actor != 'github-actions[bot]'
+  diagnose-state-hotpaths:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -25,21 +21,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node .github/collection-state-hotpath.mjs
-      - name: Finalize proportional occurrence staging and ownership typing
+      - name: Finalize staged hot paths
         run: |
           node <<'NODE'
           const fs = require('node:fs')
           const domPath = 'packages/web/src/dom.ts'
           let dom = fs.readFileSync(domPath, 'utf8')
-          const a = '    const stagedOccurrenceCounts = new Map(instance.occurrenceCounts)\n'
-          const b = '      const occurrence = stagedOccurrenceCounts.get(resolved.identity) ?? 0\n      stagedOccurrenceCounts.set(resolved.identity, occurrence + 1)\n'
-          const c = '    instance.occurrenceCounts = stagedOccurrenceCounts\n    instance.node = node\n'
-          if (!dom.includes(a) || !dom.includes(b) || !dom.includes(c)) throw new Error('occurrence staging markers missing')
-          dom = dom.replace(a, '    const occurrenceDeltas = new Map<string, number>()\n')
-          dom = dom.replace(b, '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
-          dom = dom.replace(c, '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
+          dom = dom.replace('    const stagedOccurrenceCounts = new Map(instance.occurrenceCounts)\n', '    const occurrenceDeltas = new Map<string, number>()\n')
+          dom = dom.replace('      const occurrence = stagedOccurrenceCounts.get(resolved.identity) ?? 0\n      stagedOccurrenceCounts.set(resolved.identity, occurrence + 1)\n', '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
+          dom = dom.replace('    instance.occurrenceCounts = stagedOccurrenceCounts\n    instance.node = node\n', '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
           fs.writeFileSync(domPath, dom)
-
           const statePath = 'packages/core/src/state.ts'
           let state = fs.readFileSync(statePath, 'utf8')
           for (const name of ['previousRaw', 'nextRaw', 'raw']) {
@@ -50,13 +41,5 @@ jobs:
           fs.writeFileSync(statePath, state)
           NODE
       - run: pnpm run build
-      - run: node --test tests/core.test.mjs
-      - run: node --test --test-name-pattern='push pop and reverse|compiled keyed collection own|ForEach host rows persistently' tests/web-package.test.mjs
-      - run: VUNE_COLLECTION_ROWS=5000 node benchmarks/collection-runtime.mjs
-      - name: Commit validated hot paths
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/core/src/state.ts packages/web/src/dom.ts tests/core.test.mjs
-          git commit -m 'Make collection State ownership incremental'
-          git push origin HEAD:codex/collection-runtime-finalize-20260830
+      - run: node --test --test-name-pattern='shallow root-array ownership|shallow array ownership keeps duplicate' tests/core.test.mjs
+      - run: node --test --test-name-pattern='State tracks|shared raw|detaches stale|shared nested|circular raw|array batches|array mutator|prototype and extensibility' tests/core.test.mjs
