@@ -1,6 +1,7 @@
 import { vuneForeignComponent } from "./symbols.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { decorate, modifiedContent, snapshotRecord } from "./modifiers.js"
+import { snapshotElementProps } from "./element-internal.js"
 import type { StateRef } from "../state.js"
 import type {
   CompiledTemplateDescriptor,
@@ -50,30 +51,6 @@ function ownDataValue(value: unknown, key: PropertyKey): unknown {
     return descriptor && "value" in descriptor ? descriptor.value : undefined
   } catch {
     return undefined
-  }
-}
-
-function snapshotElementProps(type: unknown, props: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = snapshotRecord(props, true) as Record<string, unknown>
-  if (typeof type !== "string" || type.includes("-")) return snapshot
-  try {
-    const normalized: Record<string, unknown> = {}
-    for (const key of Reflect.ownKeys(snapshot)) {
-      if (typeof key !== "string") continue
-      const descriptor = Object.getOwnPropertyDescriptor(snapshot, key)
-      if (!descriptor || !("value" in descriptor)) continue
-      const value = descriptor.value
-      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
-        || (typeof value === "number" && Number.isFinite(value))
-      const supported = primitive
-        || (key === "style" && typeof value === "object" && value !== null)
-        || (key === "ref" && (typeof value === "object" || typeof value === "function"))
-        || (/^on[A-Za-z]/.test(key) && typeof value === "function")
-      if (supported) Object.defineProperty(normalized, key, { ...descriptor, configurable: true })
-    }
-    return Object.freeze(normalized)
-  } catch {
-    return Object.freeze({})
   }
 }
 

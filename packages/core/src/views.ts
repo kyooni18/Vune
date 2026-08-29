@@ -15,6 +15,7 @@ import {
   viewElement,
   viewFragment,
 } from "./graph.js"
+import { viewElementOwned } from "./graph/element-internal.js"
 import type { VuneCustomElementAttributes, VuneHtmlAttributes, VuneHtmlTagName } from "./html.js"
 import { layoutLength } from "./layout.js"
 import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
@@ -334,7 +335,7 @@ export const Group = defineBuiltinView<{ content: ViewValue[] }>(
 export function Element<Tag extends VuneHtmlTagName>(tag: Tag, props?: VuneHtmlAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
 export function Element<Tag extends `${string}-${string}`>(tag: Tag, props?: VuneCustomElementAttributes<Tag> | null, ...children: ViewValue[]): ReturnType<typeof viewElement>
 export function Element(tag: string, props: object | null = null, ...children: ViewValue[]): ReturnType<typeof viewElement> {
-  return viewElement(tag, props as Record<string, unknown> | null, children)
+  return viewElementOwned(tag, props as Record<string, unknown> | null, children)
 }
 
 interface ButtonProps {

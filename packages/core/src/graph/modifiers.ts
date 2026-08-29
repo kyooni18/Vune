@@ -177,18 +177,20 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
 
 /** Add the shared immutable modifier surface to a graph node. */
 export function decorate(node: ViewNode, owned = false): ModifiableViewNode {
-  const existing = decoratedNodes.get(node)
-  if (existing) return existing
-  let result: ModifiableViewNode
+  // Internal graph constructors hand us a fresh object that cannot have been
+  // decorated before. Mark it in place and return it directly: caching the
+  // same frozen object as both key and value only adds two WeakMap writes per
+  // transient node (notably every row in a large Element/ForEach tree).
   if (owned && Object.isExtensible(node)) {
     Object.setPrototypeOf(node, modifierPrototype)
-    result = node as ModifiableViewNode
-  } else {
-    result = Object.assign(Object.create(modifierPrototype), node) as ModifiableViewNode
+    return Object.freeze(node) as ModifiableViewNode
   }
+  const existing = decoratedNodes.get(node)
+  if (existing) return existing
+  const result = Object.assign(Object.create(modifierPrototype), node) as ModifiableViewNode
   const frozen = Object.freeze(result)
   decoratedNodes.set(node, frozen)
-  decoratedNodes.set(frozen, frozen)
+  if (frozen !== node) decoratedNodes.set(frozen, frozen)
   return frozen
 }
 

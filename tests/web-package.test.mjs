@@ -1506,6 +1506,82 @@ test("@vune-ui/web isolates row-local invalidation and reuses unchanged keyed Vi
   dom.window.close()
 })
 
+test("@vune-ui/web patches flat keyed host rows in place and preserves generic fallback behavior", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([
+    { id: "a", value: "A", title: "one" },
+    { id: "b", value: "B", title: "two" },
+    { id: "c", value: "C", title: "three" },
+  ])
+  const attachRefs = State(false)
+  const clicks = []
+  const App = defineView("FlatKeyedHostPatchApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => Element("section", { class: items.value[0].title },
+      items.value.map(item => Element("span", {
+        key: item.id,
+        "data-row": item.id,
+        title: item.title,
+        onclick: () => clicks.push(item.value),
+        ...(attachRefs.value ? { ref: () => {} } : {}),
+      }, item.value)),
+    ),
+  })
+
+  const unmount = mount(App(), container)
+  const original = Object.fromEntries([...container.querySelectorAll("span")].map(node => [node.dataset.row, node]))
+  const createElement = dom.window.document.createElement.bind(dom.window.document)
+  const createTextNode = dom.window.document.createTextNode.bind(dom.window.document)
+  let candidateNodes = 0
+  dom.window.document.createElement = (...args) => {
+    candidateNodes += 1
+    return createElement(...args)
+  }
+  dom.window.document.createTextNode = (...args) => {
+    candidateNodes += 1
+    return createTextNode(...args)
+  }
+
+  items.value = items.value.map(item => ({ ...item, value: `${item.value}1`, title: `${item.title}-next` }))
+  await Promise.resolve()
+  assert.equal(candidateNodes, 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => `${node.dataset.row}:${node.textContent}:${node.title}`), [
+    "a:A1:one-next", "b:B1:two-next", "c:C1:three-next",
+  ])
+  assert.ok([...container.querySelectorAll("span")].every(node => node === original[node.dataset.row]))
+  assert.equal(container.querySelector("section")?.className, "one-next")
+  assert.ok([...container.querySelectorAll("span")].every(node => !node.hasAttribute("key")))
+  container.querySelector('[data-row="b"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.deepEqual(clicks, ["B1"])
+
+  candidateNodes = 0
+  items.value = [...items.value].reverse()
+  await Promise.resolve()
+  assert.equal(candidateNodes, 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "b", "a"])
+  assert.ok([...container.querySelectorAll("span")].every(node => node === original[node.dataset.row]))
+
+  candidateNodes = 0
+  attachRefs.value = true
+  await Promise.resolve()
+  assert.ok(candidateNodes > 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "b", "a"])
+
+  candidateNodes = 0
+  items.value = [...items.value, { id: "d", value: "D", title: "four" }]
+  await Promise.resolve()
+  assert.ok(candidateNodes > 0)
+  assert.equal(container.querySelector('[data-row="a"]'), original.a)
+  assert.equal(container.querySelector('[data-row="d"]')?.textContent, "D")
+
+  dom.window.document.createElement = createElement
+  dom.window.document.createTextNode = createTextNode
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web batches in-place ForEach mutations and preserves keyed row identity", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")

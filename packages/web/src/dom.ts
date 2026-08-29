@@ -1397,6 +1397,261 @@ function lazySpacer(context: DomRenderContext, node: LazyViewNode, size: number,
 const HTML_NS = "http://www.w3.org/1999/xhtml"
 const SVG_NS = "http://www.w3.org/2000/svg"
 
+interface FlatKeyedHostRow {
+  readonly key: string | number
+  readonly type: string
+  readonly props: Record<string, unknown> | null
+  readonly text: string
+}
+
+interface FlatKeyedHostPlan {
+  readonly rootType: string
+  readonly rootProps: Record<string, unknown> | null
+  readonly rows: readonly FlatKeyedHostRow[]
+}
+
+const directKeyedPatchUnsafeTags = new Set([
+  ...rawTextHtmlElements,
+  ...voidHtmlElements,
+  "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th",
+  "select", "option", "optgroup", "textarea", "template", "svg", "math",
+])
+
+const directKeyedPatchUnsafeProps = new Set([
+  "ref",
+  "innerHTML",
+  "outerHTML",
+  "textContent",
+  "innerText",
+  "dangerouslySetInnerHTML",
+])
+
+function safeGraphArrayValues(value: unknown): readonly unknown[] | undefined {
+  try {
+    if (!Array.isArray(value)) return undefined
+    const length = Object.getOwnPropertyDescriptor(value, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return []
+    const snapshot = new Array<unknown>(length.value)
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      snapshot[index] = descriptor && "value" in descriptor ? descriptor.value : undefined
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
+}
+
+function ownGraphDataValue(value: unknown, key: PropertyKey): unknown {
+  if (!value || typeof value !== "object") return undefined
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function ownGraphKind(value: unknown): string | undefined {
+  const kind = ownGraphDataValue(value, "kind")
+  return typeof kind === "string" ? kind : undefined
+}
+
+function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {
+  if (!props) return true
+  try {
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key !== "string") return false
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      if (!descriptor || !("value" in descriptor)) return false
+      const value = descriptor.value
+      if (key === "key" || key === "children") continue
+      if (directKeyedPatchUnsafeProps.has(key)) return false
+      if (key.startsWith("data-vune-")) return false
+      if (key === "style") {
+        if (!value || typeof value !== "object") {
+          if (typeof value !== "string" && value !== undefined && value !== null) return false
+          continue
+        }
+        for (const styleKey of Reflect.ownKeys(value)) {
+          if (typeof styleKey !== "string") return false
+          const styleDescriptor = Object.getOwnPropertyDescriptor(value, styleKey)
+          if (!styleDescriptor || !("value" in styleDescriptor)) return false
+          const item = styleDescriptor.value
+          if (item !== undefined && item !== null && typeof item !== "string"
+            && (typeof item !== "number" || !Number.isFinite(item))) return false
+        }
+        continue
+      }
+      if (/^on[A-Za-z]/.test(key)) {
+        if (value !== undefined && value !== null && typeof value !== "function") return false
+        continue
+      }
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+        || (typeof value === "number" && Number.isFinite(value))
+      if (!primitive) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function ordinaryDirectHostTag(type: unknown): type is string {
+  return typeof type === "string" && !type.includes("-") && !directKeyedPatchUnsafeTags.has(type.toLowerCase())
+}
+
+function flatKeyedHostRow(value: unknown): FlatKeyedHostRow | undefined {
+  let content = value as ViewGraphValue
+  let modifierKey: string | number | undefined
+  if (ownGraphKind(content) === "modified") {
+    const modifiers = safeGraphArrayValues(ownGraphDataValue(content, "modifiers"))
+    if (!modifiers) return undefined
+    for (const item of modifiers) {
+      if (!item || typeof item !== "object") return undefined
+      if (ownGraphDataValue(item, "name") !== "keyed") return undefined
+      const arguments_ = safeGraphArrayValues(ownGraphDataValue(item, "arguments"))
+      const key = arguments_?.[0]
+      if (typeof key !== "string" && typeof key !== "number") return undefined
+      modifierKey = key
+    }
+    content = ownGraphDataValue(content, "content") as ViewGraphValue
+  }
+  if (ownGraphKind(content) !== "element") return undefined
+  const type = ownGraphDataValue(content, "type")
+  const propsValue = ownGraphDataValue(content, "props")
+  const props = propsValue === null ? null : propsValue && typeof propsValue === "object"
+    ? propsValue as Record<string, unknown>
+    : undefined
+  if (!ordinaryDirectHostTag(type) || props === undefined || !directKeyedPatchPropsSafe(props)) return undefined
+  const children = safeGraphArrayValues(ownGraphDataValue(content, "children"))
+  if (!children || children.length !== 1) return undefined
+  const text = compiledTextSlotValue(children[0])
+  if (!text.ok) return undefined
+  const propKey = props ? ownGraphDataValue(props, "key") : undefined
+  const key = modifierKey ?? (typeof propKey === "string" || typeof propKey === "number" ? propKey : undefined)
+  if (key === undefined) return undefined
+  return { key, type, props, text: text.value }
+}
+
+function appendFlatKeyedHostRows(value: unknown, rows: FlatKeyedHostRow[]): boolean {
+  const array = safeGraphArrayValues(value)
+  if (array) {
+    for (const item of array) if (!appendFlatKeyedHostRows(item, rows)) return false
+    return true
+  }
+  if (ownGraphKind(value) === "fragment") {
+    const children = safeGraphArrayValues(ownGraphDataValue(value, "children"))
+    if (!children) return false
+    for (const child of children) if (!appendFlatKeyedHostRows(child, rows)) return false
+    return true
+  }
+  const row = flatKeyedHostRow(value)
+  if (!row) return false
+  rows.push(row)
+  return true
+}
+
+function flatKeyedHostPlan(value: ViewGraphValue): FlatKeyedHostPlan | undefined {
+  if (ownGraphKind(value) !== "element") return undefined
+  const type = ownGraphDataValue(value, "type")
+  const propsValue = ownGraphDataValue(value, "props")
+  const props = propsValue === null ? null : propsValue && typeof propsValue === "object"
+    ? propsValue as Record<string, unknown>
+    : undefined
+  if (!ordinaryDirectHostTag(type) || props === undefined || !directKeyedPatchPropsSafe(props)) return undefined
+  const children = safeGraphArrayValues(ownGraphDataValue(value, "children"))
+  if (!children) return undefined
+  const rows: FlatKeyedHostRow[] = []
+  for (const child of children) if (!appendFlatKeyedHostRows(child, rows)) return undefined
+  if (rows.length === 0) return undefined
+  const keys = new Set<string | number>()
+  for (const row of rows) {
+    if (keys.has(row.key)) return undefined
+    keys.add(row.key)
+  }
+  return { rootType: type, rootProps: props, rows }
+}
+
+function reorderKnownKeyedChildren(parent: Node, desired: readonly Node[], indices: readonly number[]): void {
+  let alreadyOrdered = true
+  let strictlyDescending = true
+  for (let index = 0; index < indices.length; index += 1) {
+    if (indices[index] !== index) alreadyOrdered = false
+    if (index > 0 && indices[index] >= indices[index - 1]) strictlyDescending = false
+  }
+  if (alreadyOrdered) return
+  if (strictlyDescending) {
+    appendNodeBatch(parent, desired)
+    return
+  }
+  const stable = longestIncreasingSubsequenceIndices(indices)
+  const moveCount = desired.length - stable.size
+  if (desired.length >= 64 && moveCount * 2 >= desired.length) {
+    appendNodeBatch(parent, desired)
+    return
+  }
+  for (let index = desired.length - 1; index >= 0; index -= 1) {
+    if (stable.has(index)) continue
+    const anchor = index + 1 < desired.length ? desired[index + 1] : null
+    if (desired[index].nextSibling !== anchor) parent.insertBefore(desired[index], anchor)
+  }
+}
+
+function patchFlatKeyedHostBoundary(boundary: DomViewBoundary, value: ViewGraphValue, context: DomRenderContext): boolean {
+  if (context.hydrating || context.activeTransaction?.animation || boundary.children.size > 0
+    || boundary.outerModifiers.length > 0 || boundary.currentNodes.length !== 1) return false
+  const plan = flatKeyedHostPlan(value)
+  const root = boundary.currentNodes[0]
+  if (!plan || root?.nodeType !== 1) return false
+  const rootElement = root as Element
+  if (rootElement.namespaceURI !== HTML_NS || rootElement.localName.toLowerCase() !== plan.rootType.toLowerCase()) return false
+  const parent = domContentContainer(rootElement)
+  const currentChildren = [...parent.childNodes]
+  if (currentChildren.length !== plan.rows.length) return false
+
+  const keyed = new Map<string | number, Element>()
+  const oldIndex = new Map<Element, number>()
+  for (let index = 0; index < currentChildren.length; index += 1) {
+    const child = currentChildren[index]
+    const key = context.domKeys.get(child)
+    if (child.nodeType !== 1 || key === undefined || keyed.has(key)) return false
+    const element = child as Element
+    keyed.set(key, element)
+    oldIndex.set(element, index)
+  }
+
+  const desired: Element[] = new Array(plan.rows.length)
+  const indices: number[] = new Array(plan.rows.length)
+  const textNodes: Text[] = new Array(plan.rows.length)
+  for (let index = 0; index < plan.rows.length; index += 1) {
+    const row = plan.rows[index]
+    const live = keyed.get(row.key)
+    if (!live || live.parentNode !== parent || live.namespaceURI !== HTML_NS
+      || live.localName.toLowerCase() !== row.type.toLowerCase()) return false
+    const content = domContentContainer(live)
+    if (content.childNodes.length !== 1 || content.firstChild?.nodeType !== 3) return false
+    const position = oldIndex.get(live)
+    if (position === undefined) return false
+    desired[index] = live
+    indices[index] = position
+    textNodes[index] = content.firstChild as Text
+  }
+
+  patchDomProps(rootElement, plan.rootProps, context)
+  context.hasDomKeys = true
+  context.keyedParents.add(parent)
+  for (let index = 0; index < plan.rows.length; index += 1) {
+    const row = plan.rows[index]
+    const live = desired[index]
+    context.domKeys.set(live, row.key)
+    patchDomProps(live, row.props, context)
+    if (textNodes[index].nodeValue !== row.text) textNodes[index].nodeValue = row.text
+  }
+  reorderKnownKeyedChildren(parent, desired, indices)
+  return true
+}
+
 function createTaggedElement(context: DomRenderContext, tag: string, namespace = HTML_NS): Element {
   const lower = tag.toLowerCase()
   const actualNamespace = namespace === SVG_NS || lower === "svg" ? SVG_NS : HTML_NS
@@ -1738,7 +1993,20 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     let output: Node
     try {
       output = withRenderTransaction(boundary.pendingTransaction, () => collectStateReads(
-        () => render(resolvedProps),
+        () => {
+          // A locally-updated, modifier-free View whose body is one ordinary
+          // host element containing a stable keyed text-row set can patch the
+          // bound live nodes directly. Evaluate the graph once, validate the
+          // complete shape before touching the DOM, and retain the generic
+          // renderer/reconciler as the exact fallback for every other case.
+          if (force && previousOuterModifiers.length === 0 && boundary.children.size === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {
+            const graph = node.render(resolvedProps)
+            if (patchFlatKeyedHostBoundary(boundary, graph, context)) return reusableBoundaryOutput(boundary, context)
+            return renderViewNodeAt(graph, renderer, [...identity, "body"])
+          }
+          return render(resolvedProps)
+        },
         dependency => { if (!(declared && node.dependenciesComplete === true)) dependencies.add(dependency) },
       ))
     } finally {
