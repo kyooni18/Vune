@@ -6,17 +6,17 @@ on:
       - codex/collection-runtime-finalize-20260830
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  bisect-web:
-    if: contains(github.event.head_commit.message, 'bisect collection web regression')
+  bisect:
+    if: contains(github.event.head_commit.message, 'run collection bisect diagnostic')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 71010c2b1c45ff5994eb6561d97e5e406e249d39
+          ref: codex/collection-runtime-finalize-20260830
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
@@ -25,39 +25,50 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Bisect flat-keyed regression by source group
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Bisect flat-keyed regression
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           checkpoint=71010c2b1c45ff5994eb6561d97e5e406e249d39
           product=origin/codex/collection-runtime-finalize-20260830
+          original="$GITHUB_SHA"
+          result=/tmp/collection-bisect.txt
+          : > "$result"
+
           run_case() {
-            name=$1
+            name="$1"
             shift
-            echo "===== $name ====="
-            git reset --hard "$checkpoint"
-            git clean -fdx -e node_modules
-            if [ "$#" -gt 0 ]; then git checkout "$product" -- "$@"; fi
-            pnpm run build >/tmp/build-$name.log 2>&1 || { cat /tmp/build-$name.log; return 1; }
-            node --test \
-              --test-name-pattern='flat keyed host rows' \
-              tests/web-package.test.mjs
+            git reset --hard "$checkpoint" >/dev/null
+            if [ "$#" -gt 0 ]; then
+              git checkout "$product" -- "$@"
+            fi
+            printf '\n=== %s ===\n' "$name" | tee -a "$result"
+            if ! pnpm run build > "/tmp/${name}-build.log" 2>&1; then
+              echo 'BUILD_FAIL' | tee -a "$result"
+              tail -n 80 "/tmp/${name}-build.log" >> "$result"
+              return
+            fi
+            if node --test --test-name-pattern='patches flat keyed host rows' tests/web-package.test.mjs > "/tmp/${name}-test.log" 2>&1; then
+              echo 'PASS' | tee -a "$result"
+            else
+              echo 'FAIL' | tee -a "$result"
+              tail -n 100 "/tmp/${name}-test.log" >> "$result"
+            fi
           }
+
           run_case baseline
           run_case state packages/core/src/state.ts
-          run_case collection-core \
-            packages/core/src/graph/nodes.ts \
-            packages/core/src/index.ts \
-            packages/core/src/views.ts
-          run_case web-and-collection-core \
-            packages/core/src/graph/nodes.ts \
-            packages/core/src/index.ts \
-            packages/core/src/views.ts \
-            packages/web/src/dom.ts
-          run_case all-runtime \
-            packages/core/src/graph/nodes.ts \
-            packages/core/src/index.ts \
-            packages/core/src/state.ts \
-            packages/core/src/views.ts \
-            packages/web/src/dom.ts
+          run_case graph packages/core/src/graph/nodes.ts packages/core/src/views.ts
+          run_case graph_web packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/web/src/dom.ts
+          run_case state_graph_web packages/core/src/state.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/web/src/dom.ts
+
+          git reset --hard "$original" >/dev/null
+          cp "$result" .github/collection-bisect-result.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -f .github/collection-bisect-result.txt
+          git commit -m 'chore: record collection bisect result'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
+          cat .github/collection-bisect-result.txt
