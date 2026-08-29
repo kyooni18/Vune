@@ -60,7 +60,7 @@ jobs:
           test("compiler keeps index-sensitive collection plans conservative", () => {
             const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
           const items = State([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, String(index) + ":" + item.value))) })`
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, index + ":" + item.value))) })`
             const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")
             assert.match(output, /compiledCollectionContent/)
             assert.match(output, /indexIndependent: false/)
