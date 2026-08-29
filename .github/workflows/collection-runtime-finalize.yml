@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-deferred-collection-snapshots:
+  validate-collection-owned-state:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,118 +24,416 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Defer State-backed collection snapshots
+      - name: Apply collection ownership runtime
         run: |
-          cat > packages/core/src/graph/arrays.ts <<'EOF'
-          const dataOnlySnapshots = new WeakSet<object>()
+          cat > /tmp/patch-collection.mjs <<'NODE'
+          import fs from 'node:fs'
 
-          /** Check array identity without leaking revoked Proxy errors. */
-          export function arrayCheck(value: unknown): boolean | undefined {
-            try {
-              return Array.isArray(value)
-            } catch {
-              return undefined
-            }
+          const replace = (path, before, after) => {
+            let source = fs.readFileSync(path, 'utf8')
+            if (!source.includes(before)) throw new Error(`marker missing in ${path}: ${before.slice(0, 80)}`)
+            source = source.replace(before, after)
+            fs.writeFileSync(path, source)
           }
 
-          /**
-           * Strict descriptor-only snapshot used at collection boundaries. Indexed
-           * accessors are rejected instead of executed, and the resulting frozen
-           * snapshot is branded internally so graph constructors can reuse it.
-           */
-          export function snapshotDataArrayValues(value: unknown): readonly unknown[] | undefined {
-            if (arrayCheck(value) !== true) return undefined
-            const values = value as readonly unknown[]
-            try {
-              const length = Object.getOwnPropertyDescriptor(values, "length")
-              if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
-              const snapshot = new Array<unknown>(length.value)
-              for (let index = 0; index < length.value; index += 1) {
-                const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
-                if (!descriptor) continue
-                if (!("value" in descriptor)) return undefined
-                snapshot[index] = descriptor.value
-              }
-              Object.freeze(snapshot)
-              dataOnlySnapshots.add(snapshot)
-              return snapshot
-            } catch {
-              return undefined
-            }
-          }
+          fs.writeFileSync('packages/core/src/graph/arrays.ts', `const dataOnlySnapshots = new WeakSet<object>()
 
-          /** Snapshot array indices without invoking iterators or indexed accessors. */
-          export function snapshotArrayValues(value: readonly unknown[]): readonly unknown[] {
-            try {
-              if (dataOnlySnapshots.has(value as object)) return value
-              const length = Object.getOwnPropertyDescriptor(value, "length")
-              if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return Object.freeze([])
-              const snapshot = new Array<unknown>(length.value)
-              for (let index = 0; index < length.value; index += 1) {
-                const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-                snapshot[index] = descriptor && "value" in descriptor ? descriptor.value : undefined
-              }
-              return Object.freeze(snapshot)
-            } catch {
-              return Object.freeze([])
-            }
-          }
-          EOF
+/** Check array identity without leaking revoked Proxy errors. */
+export function arrayCheck(value: unknown): boolean | undefined {
+  try { return Array.isArray(value) } catch { return undefined }
+}
 
-          node <<'NODE'
-          const fs = require('node:fs')
+/** Strict descriptor-only snapshot used at collection boundaries. */
+export function snapshotDataArrayValues(value: unknown): readonly unknown[] | undefined {
+  if (arrayCheck(value) !== true) return undefined
+  const values = value as readonly unknown[]
+  try {
+    const length = Object.getOwnPropertyDescriptor(values, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
+    const snapshot = new Array<unknown>(length.value)
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+      if (!descriptor) continue
+      if (!("value" in descriptor)) return undefined
+      snapshot[index] = descriptor.value
+    }
+    Object.freeze(snapshot)
+    dataOnlySnapshots.add(snapshot)
+    return snapshot
+  } catch { return undefined }
+}
 
-          const typesPath = 'packages/core/src/graph/types.ts'
-          let types = fs.readFileSync(typesPath, 'utf8')
-          const itemsMarker = '  readonly items: readonly unknown[]\n  /** Original collection identity before the descriptor-only snapshot. */\n'
-          if (!types.includes(itemsMarker)) throw new Error('collection items type marker missing')
-          types = types.replace(itemsMarker, '  readonly items: readonly unknown[]\n  /** Deferred strict snapshot for a State-backed source. */\n  readonly readItems?: () => readonly unknown[]\n  /** Original collection identity before the descriptor-only snapshot. */\n')
-          fs.writeFileSync(typesPath, types)
+/** Snapshot array indices without invoking iterators or indexed accessors. */
+export function snapshotArrayValues(value: readonly unknown[]): readonly unknown[] {
+  try {
+    if (dataOnlySnapshots.has(value as object)) return value
+    const length = Object.getOwnPropertyDescriptor(value, "length")
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return Object.freeze([])
+    const snapshot = new Array<unknown>(length.value)
+    for (let index = 0; index < length.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      snapshot[index] = descriptor && "value" in descriptor ? descriptor.value : undefined
+    }
+    return Object.freeze(snapshot)
+  } catch { return Object.freeze([]) }
+}
+`)
 
-          const nodesPath = 'packages/core/src/graph/nodes.ts'
-          let nodes = fs.readFileSync(nodesPath, 'utf8')
-          const entriesStart = 'export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {\n  const occurrences = new Map<string, number>()\n  const entries = new Array<KeyedCollectionEntry>(node.items.length)\n  for (let index = 0; index < node.items.length; index += 1) {\n    const item = node.items[index]\n'
-          if (!nodes.includes(entriesStart)) throw new Error('keyedCollectionEntries marker missing')
-          nodes = nodes.replace(entriesStart, 'export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {\n  const items = node.readItems?.() ?? node.items\n  const occurrences = new Map<string, number>()\n  const entries = new Array<KeyedCollectionEntry>(items.length)\n  for (let index = 0; index < items.length; index += 1) {\n    const item = items[index]\n')
-          const optionMarker = '    readonly indexIndependent?: boolean\n    readonly compiled?: CompiledCollectionPlan\n    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]\n'
-          if (!nodes.includes(optionMarker)) throw new Error('keyedCollectionView options marker missing')
-          nodes = nodes.replace(optionMarker, '    readonly indexIndependent?: boolean\n    readonly compiled?: CompiledCollectionPlan\n    readonly readItems?: KeyedCollectionViewNode["readItems"]\n    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]\n')
-          const nodeMarker = '    content,\n    indexIndependent: options.indexIndependent === true,\n    ...(options.compiled ? { compiled: options.compiled } : {}),\n'
-          if (!nodes.includes(nodeMarker)) throw new Error('keyedCollectionView node marker missing')
-          nodes = nodes.replace(nodeMarker, '    content,\n    indexIndependent: options.indexIndependent === true,\n    ...(options.compiled ? { compiled: options.compiled } : {}),\n    ...(options.readItems ? { readItems: options.readItems } : {}),\n')
-          fs.writeFileSync(nodesPath, nodes)
+          replace('packages/core/src/graph/types.ts',
+`  readonly indexIndependent: boolean
+  readonly evaluate: (item: unknown, index: number) => CompiledCollectionRow
+}`,
+`  readonly indexIndependent: boolean
+  /** Compiler-proven stable key evaluator. Required for collection-owned State invalidation. */
+  readonly evaluateKey?: (item: unknown, index: number) => string | number
+  readonly evaluate: (item: unknown, index: number) => CompiledCollectionRow
+}`)
+          replace('packages/core/src/graph/types.ts',
+`  readonly items: readonly unknown[]
+  /** Original collection identity before the descriptor-only snapshot. */`,
+`  readonly items: readonly unknown[]
+  /** Deferred strict snapshot for a State-backed source. */
+  readonly readItems?: () => readonly unknown[]
+  /** Original collection identity before the descriptor-only snapshot. */`)
 
+          replace('packages/core/src/graph/nodes.ts',
+`export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {
+  const occurrences = new Map<string, number>()
+  const entries = new Array<KeyedCollectionEntry>(node.items.length)
+  for (let index = 0; index < node.items.length; index += 1) {
+    const item = node.items[index]`,
+`export function keyedCollectionEntries(node: KeyedCollectionViewNode, itemSnapshot?: readonly unknown[]): readonly KeyedCollectionEntry[] {
+  const items = itemSnapshot ?? node.readItems?.() ?? node.items
+  const occurrences = new Map<string, number>()
+  const entries = new Array<KeyedCollectionEntry>(items.length)
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]`)
+          replace('packages/core/src/graph/nodes.ts',
+`    readonly indexIndependent?: boolean
+    readonly compiled?: CompiledCollectionPlan
+    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]`,
+`    readonly indexIndependent?: boolean
+    readonly compiled?: CompiledCollectionPlan
+    readonly readItems?: KeyedCollectionViewNode["readItems"]
+    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]`)
+          replace('packages/core/src/graph/nodes.ts',
+`    indexIndependent: options.indexIndependent === true,
+    ...(options.compiled ? { compiled: options.compiled } : {}),
+    ...(options.onDuplicateKey ? { onDuplicateKey: options.onDuplicateKey } : {}),`,
+`    indexIndependent: options.indexIndependent === true,
+    ...(options.compiled ? { compiled: options.compiled } : {}),
+    ...(options.readItems ? { readItems: options.readItems } : {}),
+    ...(options.onDuplicateKey ? { onDuplicateKey: options.onDuplicateKey } : {}),`)
+
+          replace('packages/core/src/views.ts', 'import { arrayCheck } from "./graph/arrays.js"', 'import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"')
           const viewsPath = 'packages/core/src/views.ts'
           let views = fs.readFileSync(viewsPath, 'utf8')
-          views = views.replace('import { arrayCheck } from "./graph/arrays.js"', 'import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"')
           const snapshotStart = views.indexOf('function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {')
           const requireStart = views.indexOf('function requireCollectionItems(value: unknown): readonly unknown[] {', snapshotStart)
           if (snapshotStart < 0 || requireStart < 0) throw new Error('collection snapshot helper markers missing')
-          views = views.slice(0, snapshotStart)
-            + 'function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {\n  return snapshotDataArrayValues(value)\n}\n\n'
-            + views.slice(requireStart)
-          const requireEnd = '  return snapshot\n}\n\ninterface ForEachProps<Item> {'
-          if (!views.includes(requireEnd)) throw new Error('requireCollectionItems end marker missing')
-          views = views.replace(requireEnd, '  return snapshot\n}\n\nconst emptyCollectionItems = Object.freeze([]) as readonly unknown[]\n\ninterface ForEachProps<Item> {')
-          const bodyStart = '  ({ items, key, content }) => {\n    const source = isStateRef(items) ? items.value : items\n    const collection = requireCollectionItems(source)\n    const selector = key as CollectionKeySelector<unknown> | undefined\n'
-          if (!views.includes(bodyStart)) throw new Error('ForEach body marker missing')
-          views = views.replace(bodyStart, '  ({ items, key, content }) => {\n    const stateSource = isStateRef(items) ? items as StateRef<readonly unknown[]> : undefined\n    const source = stateSource ? stateSource.value : items\n    if (arrayCheck(source) !== true) throw new TypeError("ForEach items must be a data-only array")\n    const collection = stateSource ? emptyCollectionItems : requireCollectionItems(source)\n    const selector = key as CollectionKeySelector<unknown> | undefined\n')
-          const optionsMarker = '      {\n        indexIndependent: false,\n        compiled: compiledCollectionPlanOf(content),\n        onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),\n'
-          if (!views.includes(optionsMarker)) throw new Error('ForEach options marker missing')
-          views = views.replace(optionsMarker, '      {\n        indexIndependent: false,\n        compiled: compiledCollectionPlanOf(content),\n        ...(stateSource ? { readItems: () => requireCollectionItems(stateSource.value) } : {}),\n        onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),\n')
+          views = views.slice(0, snapshotStart) + `function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {
+  return snapshotDataArrayValues(value)
+}
+
+` + views.slice(requireStart)
+          views = views.replace('  return snapshot\n}\n\ninterface ForEachProps<Item> {', '  return snapshot\n}\n\nconst emptyCollectionItems = Object.freeze([]) as readonly unknown[]\n\ninterface ForEachProps<Item> {')
+          const foreachBefore = `  ({ items, key, content }) => {
+    const source = isStateRef(items) ? items.value : items
+    const collection = requireCollectionItems(source)
+    const selector = key as CollectionKeySelector<unknown> | undefined
+    return keyedCollectionView(
+      collection,
+      source,`
+          const foreachAfter = `  ({ items, key, content }) => {
+    const stateSource = isStateRef(items) ? items as StateRef<readonly unknown[]> : undefined
+    const source = stateSource ?? items
+    const collection = stateSource ? emptyCollectionItems : requireCollectionItems(items)
+    const compiled = compiledCollectionPlanOf(content)
+    const selector = (compiled?.evaluateKey ?? key) as CollectionKeySelector<unknown> | undefined
+    return keyedCollectionView(
+      collection,
+      source,`
+          if (!views.includes(foreachBefore)) throw new Error('ForEach source marker missing')
+          views = views.replace(foreachBefore, foreachAfter)
+          views = views.replace(`        indexIndependent: false,
+        compiled: compiledCollectionPlanOf(content),
+        onDuplicateKey:`, `        indexIndependent: false,
+        compiled,
+        ...(stateSource ? { readItems: () => requireCollectionItems(stateSource.value) } : {}),
+        onDuplicateKey:`)
           fs.writeFileSync(viewsPath, views)
 
-          const testPath = 'tests/web-package.test.mjs'
+          // Compiler: carry an explicit, proven key evaluator and only hand StateRef
+          // ownership to the runtime when both row and key are statically safe.
+          const compilerPath = 'packages/compiler/src/collection-specialization.ts'
+          let compiler = fs.readFileSync(compilerPath, 'utf8')
+          compiler = compiler.replace(`interface CompiledForEachCall {
+  readonly content: ts.Expression
+  readonly items: ts.Expression
+}`, `interface CompiledForEachCall {
+  readonly initializerIndex: number
+  readonly content: ts.Expression
+  readonly items: ts.Expression
+  readonly key?: ts.Expression
+}`)
+          const parserStart = compiler.indexOf('function compiledForEachCall(')
+          const lowerStart = compiler.indexOf('export function lowerCompiledCollections', parserStart)
+          if (parserStart < 0 || lowerStart < 0) throw new Error('compiler parser markers missing')
+          const parser = `function collectionKeyPlan(closure: ts.Expression): { readonly source: string; readonly indexIndependent: boolean } | undefined {
+  const value = unwrapExpression(closure)
+  if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return undefined
+  if (value.parameters.length < 1 || value.parameters.length > 2) return undefined
+  const item = value.parameters[0]
+  const index = value.parameters[1]
+  if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return undefined
+  if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return undefined
+  const result = closureResult(value)
+  if (!result) return undefined
+  const indexName = index && ts.isIdentifier(index.name) ? index.name.text : undefined
+  const analysis = analyzeRowExpression(result, item.name.text, indexName)
+  if (!analysis.pure) return undefined
+  return { source: closure.getText(), indexIndependent: !analysis.indexDependent }
+}
+
+function compiledForEachCall(call: ts.CallExpression, foreachNames: ReadonlySet<string>): CompiledForEachCall | undefined {
+  const callee = unwrapExpression(call.expression)
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "createNodeCompiled") return undefined
+  const viewType = unwrapExpression(callee.expression)
+  if (!ts.isPropertyAccessExpression(viewType) || viewType.name.text !== "viewType") return undefined
+  const owner = unwrapExpression(viewType.expression)
+  if (!ts.isIdentifier(owner) || !foreachNames.has(owner.text)) return undefined
+  if (call.arguments.length !== 2 || !ts.isNumericLiteral(call.arguments[0]) || !ts.isArrayLiteralExpression(call.arguments[1])) return undefined
+  const initializerIndex = Number(call.arguments[0].text)
+  if (initializerIndex !== 0 && initializerIndex !== 1) return undefined
+  const values = call.arguments[1].elements
+  const items = values[0]
+  const key = initializerIndex === 1 ? values[1] : undefined
+  const content = values.at(-1)
+  if (!items || !content || ts.isSpreadElement(items) || ts.isOmittedExpression(items)
+    || (key && (ts.isSpreadElement(key) || ts.isOmittedExpression(key)))
+    || ts.isSpreadElement(content) || ts.isOmittedExpression(content)) return undefined
+  return { initializerIndex, items, ...(key ? { key } : {}), content }
+}
+
+`
+          compiler = compiler.slice(0, parserStart) + parser + compiler.slice(lowerStart)
+          const lowerOld = `      if (compiled) {
+        const stateRef = provenStateRefSource(compiled.items, sourceFile, states)
+        if (stateRef) {
+          edits.push({
+            start: compiled.items.getStart(sourceFile),
+            end: compiled.items.end,
+            replacement: stateRef.getText(sourceFile),
+          })
+        }
+        if (elements.names.size > 0 || elements.namespaces.size > 0) {
+          const plan = collectionRowPlan(compiled.content, sourceFile, elements)
+          if (plan) {
+            const parameters = plan.indexName ? \`${plan.itemName}, ${plan.indexName}\` : plan.itemName
+            edits.push({
+              start: compiled.content.getStart(sourceFile),
+              end: compiled.content.end,
+              replacement: \`compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${plan.indexIndependent}, evaluate: (${parameters}) => ({ type: ${plan.typeSource}, props: ${plan.propsSource}, text: ${plan.textSource} }) })\`,
+            })
+          }
+        }
+        return
+      }`
+          const lowerNew = `      if (compiled) {
+        const rowPlan = elements.names.size > 0 || elements.namespaces.size > 0
+          ? collectionRowPlan(compiled.content, sourceFile, elements)
+          : undefined
+        const keyPlan = compiled.key ? collectionKeyPlan(compiled.key) : undefined
+        const stateRef = rowPlan && keyPlan ? provenStateRefSource(compiled.items, sourceFile, states) : undefined
+        if (stateRef) {
+          edits.push({ start: compiled.items.getStart(sourceFile), end: compiled.items.end, replacement: stateRef.getText(sourceFile) })
+        }
+        if (rowPlan) {
+          const parameters = rowPlan.indexName ? \`${rowPlan.itemName}, ${rowPlan.indexName}\` : rowPlan.itemName
+          const compiledKey = keyPlan ? \`, evaluateKey: ${keyPlan.source}\` : ""
+          edits.push({
+            start: compiled.content.getStart(sourceFile),
+            end: compiled.content.end,
+            replacement: \`compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${rowPlan.indexIndependent}${compiledKey}, evaluate: (${parameters}) => ({ type: ${rowPlan.typeSource}, props: ${rowPlan.propsSource}, text: ${rowPlan.textSource} }) })\`,
+          })
+        }
+        return
+      }`
+          if (!compiler.includes(lowerOld)) throw new Error('compiler lowering marker missing')
+          compiler = compiler.replace(lowerOld, lowerNew)
+          fs.writeFileSync(compilerPath, compiler)
+
+          // Web collection executor: read State source without leaking it into the
+          // parent collector, subscribe the collection directly, and patch it in
+          // its own microtask. Capability loss falls back to the normal View boundary.
+          const domPath = 'packages/web/src/dom.ts'
+          let dom = fs.readFileSync(domPath, 'utf8')
+          dom = dom.replace('  keyedCollectionEntries,\n  reactiveIdentity,', '  keyedCollectionEntries,\n  isStateRef,\n  reactiveIdentity,')
+          dom = dom.replace(`  order: DomCollectionRow[]
+}`, `  order: DomCollectionRow[]
+  pendingTransaction?: Transaction
+  readonly pendingMutations: StateMutation[]
+  scheduled: boolean
+  unsubscribe?: () => void
+}`)
+          dom = dom.replace(`  materializeView?: (
+    node: ViewHostNode,`, `  invalidateBoundary?: (key: string, transaction: Transaction | undefined, mutations: readonly StateMutation[]) => void
+  materializeView?: (
+    node: ViewHostNode,`)
+          const discardOld = `function discardDomCollections(runtime: DomViewRuntime, ownerKey: string): void {
+  const keys = runtime.collectionKeysByOwner.get(ownerKey)
+  if (!keys) return
+  for (const key of keys) runtime.collections.delete(key)
+  runtime.collectionKeysByOwner.delete(ownerKey)
+}
+
+function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {
+  runtime.collections.set(instance.key, instance)
+  const keys = runtime.collectionKeysByOwner.get(instance.ownerKey) ?? new Set<string>()
+  keys.add(instance.key)
+  runtime.collectionKeysByOwner.set(instance.ownerKey, keys)
+}`
+          const discardNew = `function disposeDomCollection(runtime: DomViewRuntime, key: string): void {
+  const instance = runtime.collections.get(key)
+  if (!instance) return
+  instance.unsubscribe?.()
+  runtime.collections.delete(key)
+  const keys = runtime.collectionKeysByOwner.get(instance.ownerKey)
+  keys?.delete(key)
+  if (keys?.size === 0) runtime.collectionKeysByOwner.delete(instance.ownerKey)
+}
+
+function discardDomCollections(runtime: DomViewRuntime, ownerKey: string): void {
+  const keys = runtime.collectionKeysByOwner.get(ownerKey)
+  if (!keys) return
+  for (const key of [...keys]) disposeDomCollection(runtime, key)
+}
+
+function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {
+  disposeDomCollection(runtime, instance.key)
+  runtime.collections.set(instance.key, instance)
+  const keys = runtime.collectionKeysByOwner.get(instance.ownerKey) ?? new Set<string>()
+  keys.add(instance.key)
+  runtime.collectionKeysByOwner.set(instance.ownerKey, keys)
+}
+
+function collectionEntries(node: KeyedCollectionViewNode, untrackedSource = false): readonly KeyedCollectionEntry[] {
+  if (!untrackedSource || !node.readItems) return keyedCollectionEntries(node)
+  const items = collectStateReads(() => node.readItems!(), () => undefined)
+  return keyedCollectionEntries(node, items)
+}
+
+function collectionSourceIdentity(node: KeyedCollectionViewNode): unknown {
+  const source = isStateRef(node.source)
+    ? collectStateReads(() => (node.source as StateRef<unknown>).value, () => undefined)
+    : node.source
+  return reactiveIdentity(source)
+}
+
+function subscribeDomCollection(instance: DomCollectionInstance, context: DomRenderContext, runtime: DomViewRuntime): void {
+  if (!isStateRef(instance.node.source) || !instance.node.compiled?.evaluateKey) return
+  const source = instance.node.source as StateRef<unknown>
+  instance.unsubscribe = subscribeState(source, (transaction, batch) => {
+    if (runtime.collections.get(instance.key) !== instance) return
+    instance.pendingTransaction = transaction
+    instance.pendingMutations.push(...batch.mutations)
+    if (instance.scheduled) return
+    instance.scheduled = true
+    queueMicrotask(() => {
+      instance.scheduled = false
+      if (runtime.collections.get(instance.key) !== instance) return
+      const pending = instance.pendingMutations.splice(0)
+      const renderTransaction = instance.pendingTransaction
+      instance.pendingTransaction = undefined
+      const parent = instance.order[0]?.element.parentNode
+      const previousTransaction = context.activeTransaction
+      context.activeTransaction = renderTransaction
+      let patched = false
+      try {
+        if (parent) patched = withRenderTransaction(renderTransaction, () => patchPersistentCollection(instance, instance.node, parent, pending, context))
+      } finally {
+        context.activeTransaction = previousTransaction
+      }
+      if (patched) {
+        flushLayoutMotion(context)
+        return
+      }
+      runtime.invalidateBoundary?.(instance.ownerKey, renderTransaction, pending)
+    })
+  })
+}`
+          if (!dom.includes(discardOld)) throw new Error('DOM collection registration marker missing')
+          dom = dom.replace(discardOld, discardNew)
+          dom = dom.replace('  const entries = keyedCollectionEntries(node)\n  // An empty runtime-inferred collection', '  const entries = collectionEntries(node, true)\n  // An empty runtime-inferred collection')
+          dom = dom.replace(`  registerDomCollection(runtime, {
+    key,
+    ownerKey,
+    node,
+    sourceIdentity: reactiveIdentity(node.source),
+    rows,
+    order,
+  })`, `  const instance: DomCollectionInstance = {
+    key,
+    ownerKey,
+    node,
+    sourceIdentity: collectionSourceIdentity(node),
+    rows,
+    order,
+    pendingMutations: [],
+    scheduled: false,
+  }
+  registerDomCollection(runtime, instance)
+  subscribeDomCollection(instance, context, runtime)`)
+          dom = dom.replace('  const nextSource = reactiveIdentity(node.source)', '  const nextSource = collectionSourceIdentity(node)')
+          dom = dom.replace('  instance.sourceIdentity = reactiveIdentity(node.source)', '  instance.sourceIdentity = collectionSourceIdentity(node)')
+          const updateEnd = `    updateBoundary = (boundary: DomViewBoundary): void => {`
+          if (!dom.includes(updateEnd)) throw new Error('updateBoundary marker missing')
+          const nextUpdate = `
+    update = () => {`
+          const updateBoundaryEnd = dom.indexOf(nextUpdate, dom.indexOf(updateEnd))
+          if (updateBoundaryEnd < 0) throw new Error('updateBoundary end marker missing')
+          const invalidate = `
+
+    viewRuntime.invalidateBoundary = (key, transaction, mutations) => {
+      const boundary = viewRuntime.boundaries.get(key)
+      if (!boundary) {
+        requestRootUpdate(transaction, true)
+        return
+      }
+      boundary.pendingTransaction = transaction
+      boundary.pendingMutations.push(...mutations)
+      if (boundary.scheduled || stopped) return
+      boundary.scheduled = true
+      queueMicrotask(() => updateBoundary(boundary))
+    }
+`
+          dom = dom.slice(0, updateBoundaryEnd) + invalidate + dom.slice(updateBoundaryEnd)
+          dom = dom.replace('      viewRuntime.collections.clear()\n      viewRuntime.collectionKeysByOwner.clear()', '      for (const key of [...viewRuntime.collections.keys()]) cleanup(() => disposeDomCollection(viewRuntime, key))\n      viewRuntime.collections.clear()\n      viewRuntime.collectionKeysByOwner.clear()')
+          fs.writeFileSync(domPath, dom)
+
+          // Update compiler ownership regressions to explicit, compiler-proven keys.
+          const testPath = 'tests/compiler-package.test.mjs'
           let tests = fs.readFileSync(testPath, 'utf8')
-          tests += `\n\ntest("@vune-ui/web isolates a compiler-owned State ForEach from its parent View", async () => {\n  const dom = new JSDOM("<div id=app></div>")\n  const container = dom.window.document.querySelector("#app")\n  assert.ok(container)\n  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])\n  let parentRuns = 0\n  let rowRuns = 0\n  const content = item => {\n    rowRuns += 1\n    return Element("span", { "data-row": item.id }, item.value)\n  }\n  const App = defineView("CompiledStateOwnedForEachApp", {\n    initializers: [initializer("CompiledStateOwnedForEachApp()", args => args.length === 0)],\n    body: () => {\n      parentRuns += 1\n      return Element("section", null, ForEach.viewType.createNodeCompiled(0, [items, content]))\n    },\n  })\n\n  const unmount = mount(App(), container)\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 3)\n  rowRuns = 0\n  items.value[1] = { id: "b", value: "B1" }\n  await Promise.resolve()\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 1)\n  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B1")\n  unmount()\n  dom.window.close()\n})\n`
+          tests = tests.replace(/ForEach\(items\.value, item => Element\("span", null, item\.value\)\)/g, 'ForEach(items.value, item => item.id, item => Element("span", null, item.value))')
+          tests = tests.replace(/createNodeCompiled\\\(0, \\\[items, compiledCollectionContent/g, 'createNodeCompiled\\(1, \\[items, item => item\\.id, compiledCollectionContent')
+          tests = tests.replace(/createNodeCompiled\\\(0, \\\[items\\\.value, compiledCollectionContent/g, 'createNodeCompiled\\(1, \\[items\\.value, item => item\\.id, compiledCollectionContent')
+          tests = tests.replace(/ForEach\(items\.value, item => Element\("span", null, item\.value\)\)/g, 'ForEach(items.value, item => item.id, item => Element("span", null, item.value))')
+          tests += `\n\ntest("compiler keeps implicit-key State collections on the conservative parent-owned path", () => {\n  const source = \`import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"\nconst items = State([{ id: "a", value: "A" }])\nexport const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })\`\n  const output = transformVuneSource(source, "ImplicitStateCollection.vune.ts")\n  assert.match(output, /ForEach\\.viewType\\.createNodeCompiled\\(0, \\[items\\.value, compiledCollectionContent/)\n})\n`
           fs.writeFileSync(testPath, tests)
+
+          const webTestPath = 'tests/web-package.test.mjs'
+          let webTests = fs.readFileSync(webTestPath, 'utf8')
+          webTests += `\n\ntest("@vune-ui/web lets a compiled keyed collection own its State subscription", async () => {\n  const dom = new JSDOM("<div id=app></div>")\n  const container = dom.window.document.querySelector("#app")\n  assert.ok(container)\n  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])\n  let parentRuns = 0\n  let rowRuns = 0\n  let keyRuns = 0\n  const content = compiledCollectionContent(item => { rowRuns += 1; return Element("span", { "data-row": item.id }, item.value) }, {\n    kind: "flat-text-host",\n    indexIndependent: true,\n    evaluateKey: item => { keyRuns += 1; return item.id },\n    evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },\n  })\n  const App = defineView("OwnedCompiledCollectionApp", {\n    initializers: [initializer("OwnedCompiledCollectionApp()", args => args.length === 0)],\n    body: () => { parentRuns += 1; return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])) },\n  })\n  const unmount = mount(App(), container)\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 3)\n  rowRuns = 0\n  keyRuns = 0\n  const before = container.querySelector("[data-row=b]")\n  items.value[1] = { id: "b", value: "B1" }\n  await Promise.resolve(); await Promise.resolve()\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 1)\n  assert.strictEqual(container.querySelector("[data-row=b]"), before)\n  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B1")\n  assert.ok(keyRuns >= 1)\n  unmount()\n  dom.window.close()\n})\n`
+          fs.writeFileSync(webTestPath, webTests)
           NODE
+          node /tmp/patch-collection.mjs
       - run: pnpm run build
-      - run: node --test --test-name-pattern='ForEach|collection' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
-      - name: Commit validated deferred snapshots
+      - run: node --test --test-name-pattern='collection row plans|State collections owned|aliased State constructors|shadowing local value|implicit-key State' tests/compiler-package.test.mjs
+      - run: node --test --test-name-pattern='ForEach|collection own' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
+      - name: Commit validated collection ownership
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/core/src/graph/arrays.ts packages/core/src/graph/types.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts tests/web-package.test.mjs
-          git commit -m 'Defer State collection snapshots to execution'
+          git add packages/core/src/graph/arrays.ts packages/core/src/graph/types.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/compiler/src/collection-specialization.ts packages/web/src/dom.ts tests/compiler-package.test.mjs tests/web-package.test.mjs
+          git commit -m 'Isolate compiler-proven keyed collection State'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
