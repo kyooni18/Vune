@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-collection-owned-state:
+  validate-row-local-collection:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,47 +24,14 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Escape staged compiler template literals
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('.github/collection-runtime-finalize.mjs')
-          source = path.read_text()
-          for name in [
-              'plan.itemName', 'plan.indexName', 'compiled.content.getText(sourceFile)',
-              'plan.indexIndependent', 'parameters', 'plan.typeSource', 'plan.propsSource', 'plan.textSource',
-              'rowPlan.itemName', 'rowPlan.indexName', 'keyPlan.source', 'rowPlan.indexIndependent',
-              'compiledKey', 'rowPlan.typeSource', 'rowPlan.propsSource', 'rowPlan.textSource',
-          ]:
-              source = source.replace('${' + name + '}', r'\${' + name + '}')
-          path.write_text(source)
-          PY
-      - run: node .github/collection-runtime-finalize.mjs
-      - name: Preserve key plan and import Web helper
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs')
-          const nodesPath = 'packages/core/src/graph/nodes.ts'
-          let nodes = fs.readFileSync(nodesPath, 'utf8')
-          const marker = '    indexIndependent: plan.indexIndependent === true,\n    evaluate: plan.evaluate,\n'
-          if (!nodes.includes(marker)) throw new Error('compiled collection plan marker missing')
-          nodes = nodes.replace(marker, '    indexIndependent: plan.indexIndependent === true,\n    ...(typeof plan.evaluateKey === "function" ? { evaluateKey: plan.evaluateKey } : {}),\n    evaluate: plan.evaluate,\n')
-          fs.writeFileSync(nodesPath, nodes)
-
-          const testPath = 'tests/web-package.test.mjs'
-          let test = fs.readFileSync(testPath, 'utf8')
-          const importMarker = '  compiledTemplate,\n  defineCompiledTemplate,'
-          if (!test.includes(importMarker)) throw new Error('Web core import marker missing')
-          test = test.replace(importMarker, '  compiledTemplate,\n  compiledCollectionContent,\n  defineCompiledTemplate,')
-          fs.writeFileSync(testPath, test)
-          NODE
+      - run: node .github/collection-row-local.mjs
       - run: pnpm run build
-      - run: node --test --test-name-pattern='collection row plans|keyed State collections|keyed collection ownership|shadowing local value|implicit-key State' tests/compiler-package.test.mjs
-      - run: node --test --test-name-pattern='ForEach|collection own' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
-      - name: Commit validated collection ownership
+      - run: node --test --test-name-pattern='compiled keyed collection own|ForEach host rows persistently|batches in-place ForEach' tests/web-package.test.mjs
+      - run: node --test tests/web-package.test.mjs
+      - name: Commit validated row-local path
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/core/src/graph/arrays.ts packages/core/src/graph/types.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts packages/compiler/src/collection-specialization.ts packages/web/src/dom.ts tests/compiler-package.test.mjs tests/web-package.test.mjs
-          git commit -m 'Isolate compiler-proven keyed collection State'
+          git add packages/web/src/dom.ts tests/web-package.test.mjs
+          git commit -m 'Patch compiler-owned collection rows locally'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
