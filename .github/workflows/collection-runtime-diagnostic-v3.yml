@@ -1,0 +1,140 @@
+name: Collection runtime diagnostic v3
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: contains(github.event.head_commit.message, 'run collection runtime diagnostic v3')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Run diagnostic build and core tests
+        id: diagnostic
+        shell: bash
+        run: |
+          set +e
+          pnpm install --frozen-lockfile > /tmp/install.log 2>&1
+          install_status=$?
+          pnpm run build > /tmp/build.log 2>&1
+          build_status=$?
+          node --test tests/core.test.mjs > /tmp/core.log 2>&1
+          core_status=$?
+          printf 'install=%s\nbuild=%s\ncore=%s\n' "$install_status" "$build_status" "$core_status" > /tmp/status.txt
+          printf 'install_status=%s\n' "$install_status" >> "$GITHUB_OUTPUT"
+          printf 'build_status=%s\n' "$build_status" >> "$GITHUB_OUTPUT"
+          printf 'core_status=%s\n' "$core_status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Build readable PDF diagnostic
+        shell: bash
+        env:
+          INSTALL_STATUS: ${{ steps.diagnostic.outputs.install_status }}
+          BUILD_STATUS: ${{ steps.diagnostic.outputs.build_status }}
+          CORE_STATUS: ${{ steps.diagnostic.outputs.core_status }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          def clean(text):
+              return ''.join(ch if ch == '\n' or 32 <= ord(ch) < 127 else '?' for ch in text)
+
+          sections = [
+              f"Collection runtime diagnostic v3\nSHA: {os.environ.get('GITHUB_SHA', '')}\ninstall={os.environ.get('INSTALL_STATUS')} build={os.environ.get('BUILD_STATUS')} core={os.environ.get('CORE_STATUS')}",
+              "INSTALL LOG\n" + clean(Path('/tmp/install.log').read_text(errors='replace')),
+              "BUILD LOG\n" + clean(Path('/tmp/build.log').read_text(errors='replace')),
+              "CORE LOG\n" + clean(Path('/tmp/core.log').read_text(errors='replace')),
+          ]
+          lines = []
+          for section in sections:
+              for raw in section.splitlines():
+                  while len(raw) > 112:
+                      lines.append(raw[:112])
+                      raw = raw[112:]
+                  lines.append(raw)
+              lines.extend(['', ''])
+          lines = lines[-900:]
+          chunks = [lines[i:i+64] for i in range(0, len(lines), 64)] or [['No output']]
+
+          objects = []
+          def add(data):
+              objects.append(data if isinstance(data, bytes) else data.encode('latin-1', 'replace'))
+              return len(objects)
+
+          catalog = add(b'')
+          pages_obj = add(b'')
+          font_obj = add('<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>')
+          page_ids = []
+          for chunk in chunks:
+              ops = ['BT', '/F1 7 Tf', '9 TL', '32 810 Td']
+              for line in chunk:
+                  esc = line.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                  ops.append(f'({esc}) Tj')
+                  ops.append('T*')
+              ops.append('ET')
+              stream = '\n'.join(ops).encode('latin-1', 'replace')
+              stream_obj = add(b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream')
+              page_obj = add(b'')
+              page_ids.append(page_obj)
+              objects[page_obj-1] = f'<< /Type /Page /Parent {pages_obj} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 {font_obj} 0 R >> >> /Contents {stream_obj} 0 R >>'.encode()
+
+          objects[catalog-1] = f'<< /Type /Catalog /Pages {pages_obj} 0 R >>'.encode()
+          kids = ' '.join(f'{pid} 0 R' for pid in page_ids)
+          objects[pages_obj-1] = f'<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>'.encode()
+
+          out = bytearray(b'%PDF-1.4\n')
+          offsets = [0]
+          for idx, obj in enumerate(objects, 1):
+              offsets.append(len(out))
+              out.extend(f'{idx} 0 obj\n'.encode())
+              out.extend(obj)
+              out.extend(b'\nendobj\n')
+          xref = len(out)
+          out.extend(f'xref\n0 {len(objects)+1}\n'.encode())
+          out.extend(b'0000000000 65535 f \n')
+          for off in offsets[1:]:
+              out.extend(f'{off:010d} 00000 n \n'.encode())
+          out.extend(f'trailer\n<< /Size {len(objects)+1} /Root {catalog} 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode())
+          Path('.github/collection-runtime-diagnostic.pdf').write_bytes(out)
+          Path('.github/collection-runtime-diagnostic.txt').write_text(Path('/tmp/status.txt').read_text())
+          PY
+
+      - name: Commit diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/collection-runtime-diagnostic.pdf .github/collection-runtime-diagnostic.txt
+          git commit -m 'chore: capture collection runtime diagnostic [skip ci]'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
+
+      - name: Fail when diagnostic found a problem
+        env:
+          INSTALL_STATUS: ${{ steps.diagnostic.outputs.install_status }}
+          BUILD_STATUS: ${{ steps.diagnostic.outputs.build_status }}
+          CORE_STATUS: ${{ steps.diagnostic.outputs.core_status }}
+        run: |
+          test "$INSTALL_STATUS" = 0
+          test "$BUILD_STATUS" = 0
+          test "$CORE_STATUS" = 0
