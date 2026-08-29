@@ -5,12 +5,8 @@ on:
     branches:
       - codex/collection-runtime-finalize-20260830
 
-permissions:
-  contents: write
-
 jobs:
-  validate-structural-collection:
-    if: github.actor != 'github-actions[bot]'
+  benchmark-collection-runtime:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -24,13 +20,5 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node .github/collection-structural.mjs
       - run: pnpm run build
-      - run: node --test --test-name-pattern='push pop and reverse|compiled keyed collection own|ForEach host rows persistently|batches in-place ForEach' tests/web-package.test.mjs
-      - name: Commit validated structural fast paths
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/web/src/dom.ts tests/web-package.test.mjs
-          git commit -m 'Patch compiled collection structure from mutation journals'
-          git push origin HEAD:codex/collection-runtime-finalize-20260830
+      - run: node benchmarks/collection-runtime.mjs
