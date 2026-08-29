@@ -1078,3 +1078,37 @@ test("raw HTML supports spread attributes, comments, void elements, custom eleme
   const invalid = createVuneLanguageService().diagnose("  <button {disabled}>Save</button>")
   assert.deepEqual(invalid, [{ severity: "error", code: "VUNE_SYNTAX", message: "Raw HTML attribute expressions must use {...value}", line: 1, column: 11 }])
 })
+
+test("compiler emits direct collection row plans only for proven flat host rows", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))) })`
+  const output = transformVuneSource(source, "CompiledCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent\(item => Element\("span"/)
+  assert.match(output, /kind: "flat-text-host", indexIndependent: true/)
+  assert.match(output, /evaluate: \(item\) => \(\{ type: "span", props: \{ title: item\.value \}, text: item\.value \}\)/)
+  assert.match(output, /import \{[^}]*compiledCollectionContent[^}]*\} from "@vune-ui\/core"/)
+  assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler keeps index-sensitive collection plans conservative", () => {
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, index + ":" + item.value))) })`
+  const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent/)
+  assert.match(output, /indexIndependent: false/)
+})
+
+test("compiler refuses effectful or structurally complex collection rows", () => {
+  const effectful = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+const format = value => value.toUpperCase()
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: format(item.value) }, item.value))) })`
+  assert.doesNotMatch(transformVuneSource(effectful, "EffectfulCollection.vune.ts"), /compiledCollectionContent/)
+
+  const nested = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })`
+  assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
+})

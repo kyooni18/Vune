@@ -23,6 +23,7 @@ import * as Core from "@vune-ui/core"
 import { resolveSemanticCall, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerImplicitMemberShorthand, lowerNamedAnimationFactoryCalls, lowerShorthand } from "./shorthand.js"
 import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"
+import { lowerCompiledCollections } from "./collection-specialization.js"
 
 // Nested named calls are uncommon in ordinary argument expressions. Keep the
 // recursive lowering path behind a cheap lexical hint so every positional
@@ -1444,7 +1445,7 @@ function lowerTopLevelState(source: string): string {
 }
 
 function ensureImports(source: string): string {
-  const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate"]
+  const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", "compiledCollectionContent"]
     .filter(name => new RegExp(`\\b${name}(?:<[^()\\n]*>)?\\s*\\(`).test(source) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
   let result = source
   if (required.length === 0) return result
@@ -1705,7 +1706,8 @@ export function transformVuneSource(source: string, fileName = "vune-source.ts")
   const withStaticResults = foldStaticResults(lowered)
   const withStaticStructCalls = lowerStaticStructCalls(withStaticResults, declarations)
   const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)
-  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)
+  const withCompiledCollections = lowerCompiledCollections(withSemanticSpecializations)
+  const withCompiledTemplates = lowerCompiledViewTemplates(withCompiledCollections)
   // Hoisting only needs the imports authored/retained by the source. Injecting
   // compiler helper imports first makes the final static pass parse a larger
   // module and can only add irrelevant bindings to its candidate set.
