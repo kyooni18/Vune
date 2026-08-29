@@ -46,6 +46,13 @@ replace(
 )
 
 replace(
+`      applyDomProps(element, plan.props, context)
+      domContentContainer(element)?.appendChild(textNode)`,
+`      patchDomProps(element, plan.props, context)
+      domContentContainer(element)?.appendChild(textNode)`,
+)
+
+replace(
 `      instance.order.push(row)
       instance.rows.set(row.entryKey, row)
       appendCollectionRowToItemIndex(instance, row)`,
