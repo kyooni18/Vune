@@ -1,4 +1,4 @@
-name: Collection runtime finalize
+name: Collection runtime Web diagnostic
 
 on:
   push:
@@ -9,10 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  validate-and-commit:
-    if: contains(github.event.head_commit.message, 'run collection runtime validation')
+  diagnose:
+    if: contains(github.event.head_commit.message, 'diagnose collection web failure')
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,95 +25,28 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-
-      - name: Benchmark checkpoint
-        run: |
-          set -euo pipefail
-          mkdir -p validation-output
-          git worktree add --detach /tmp/vune-checkpoint 71010c2b1c45ff5994eb6561d97e5e406e249d39
-          (
-            cd /tmp/vune-checkpoint
-            pnpm install --frozen-lockfile
-            pnpm run build
-            node benchmarks/collection-runtime.mjs > "$GITHUB_WORKSPACE/validation-output/checkpoint-benchmark.json"
-          )
-          git worktree remove --force /tmp/vune-checkpoint
-          cat validation-output/checkpoint-benchmark.json
-
       - name: Apply verified product patch
         run: |
           set -euo pipefail
           node .github/collection-runtime-apply.mjs
           git diff --cached --check
-
-      - name: Install current dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build workspace
-        run: pnpm run build
-
-      - name: State core tests
-        run: node --test tests/core.test.mjs
-
-      - name: Collection-specific Web tests
-        run: >-
-          node --test
-          --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
-          tests/web-package.test.mjs
-
-      - name: Compiler tests
-        run: node --test tests/compiler-package.test.mjs
-
-      - name: React and Vue collection adapter tests
-        run: >-
-          node --test
-          --test-name-pattern='compiler-planned State collections|collection fallback keeps source'
-          tests/react-client.test.mjs tests/vue-live.test.mjs
-
-      - name: Full Web package tests
-        run: node --test tests/web-package.test.mjs
-
-      - name: Benchmark optimized branch
+      - name: Install and build
         run: |
           set -euo pipefail
-          node benchmarks/collection-runtime.mjs > validation-output/current-benchmark.json
-          cat validation-output/current-benchmark.json
-
-      - name: Full test suite
-        run: pnpm test
-
-      - name: Remove temporary diagnostics
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Capture collection-specific Web failure
+        shell: bash
         run: |
-          set -euo pipefail
-          rm -rf validation-output
-          git rm -f --ignore-unmatch \
-            .github/collection-key-index.mjs \
-            .github/collection-row-local.mjs \
-            .github/collection-runtime-apply.mjs \
-            .github/collection-runtime-finalize.mjs \
-            .github/collection-state-hotpath.mjs \
-            .github/collection-structural.mjs \
-            .github/collection-runtime-finalize.patch.gz.b64.* \
-            .github/collection-runtime-validation.md \
-            .github/workflows/collection-runtime-finalize.yml
-          git rm -r -f --ignore-unmatch .github/collection-runtime-patch
-          if find .github -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
-            echo 'temporary collection diagnostics remain under .github' >&2
-            find .github -maxdepth 1 -name 'collection-*' -print >&2
-            exit 1
-          fi
-          if find .github/workflows -maxdepth 1 -name 'collection-*' -print -quit | grep -q .; then
-            echo 'temporary collection workflows remain' >&2
-            find .github/workflows -maxdepth 1 -name 'collection-*' -print >&2
-            exit 1
-          fi
-          git diff --cached --check
-          git status --short
-
-      - name: Commit validated product changes
-        run: |
-          set -euo pipefail
+          set +e
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs 2>&1 | tee .github/collection-web-failure.log
+          status=${PIPESTATUS[0]}
+          printf '\nexit_status=%s\n' "$status" >> .github/collection-web-failure.log
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m 'Optimize keyed collection runtime ownership'
+          git add .github/collection-web-failure.log
+          git commit -m 'chore: record collection web failure'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
+          exit "$status"
