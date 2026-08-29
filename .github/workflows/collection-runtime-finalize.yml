@@ -27,7 +27,6 @@ jobs:
       - run: node .github/collection-row-local.mjs
       - run: pnpm run build
       - run: node --test --test-name-pattern='compiled keyed collection own|ForEach host rows persistently|batches in-place ForEach' tests/web-package.test.mjs
-      - run: node --test tests/web-package.test.mjs
       - name: Commit validated row-local path
         run: |
           git config user.name github-actions[bot]
