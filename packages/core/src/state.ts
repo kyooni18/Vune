@@ -15,7 +15,27 @@ export interface BindingRef<T> {
   readonly [bindingBrand]: true
 }
 export type Value<T> = T | StateRef<T> | BindingRef<T> | (() => T)
-type Listener = (transaction: Transaction) => void
+
+export interface StateMutation {
+  readonly kind: "replace" | "set" | "delete" | "define" | "array" | "invalidate"
+  /** Raw reactive object that received the mutation, when one exists. */
+  readonly target?: object
+  readonly property?: PropertyKey
+  readonly method?: string
+  readonly previous?: unknown
+  readonly value?: unknown
+  readonly arguments?: readonly unknown[]
+}
+
+export interface StateMutationBatch {
+  /** State version after this logical notification. */
+  readonly version: number
+  /** Mutations coalesced by the current State batch. */
+  readonly mutations: readonly StateMutation[]
+}
+
+export type StateListener = (transaction: Transaction, batch: StateMutationBatch) => void
+type Listener = StateListener
 
 type OwnershipChange = "none" | "add" | "reconcile"
 
@@ -28,6 +48,7 @@ interface StateRecord<T> {
   batchDepth: number
   pendingNotification: boolean
   pendingReconcile: boolean
+  pendingMutations: StateMutation[]
   observedMutationClock: number
 }
 
@@ -84,6 +105,11 @@ function unwrap<T>(value: T): T {
   return typeof value === "object" && value !== null ? (proxyRaws.get(value as object) ?? value) as T : value
 }
 
+/** Stable raw identity used by fine-grained render executors and diagnostics. */
+export function reactiveIdentity<T>(value: T): T {
+  return unwrap(value)
+}
+
 function ownerFor(raw: object): ReactiveOwner {
   const existing = owners.get(raw)
   if (existing) return existing
@@ -92,12 +118,29 @@ function ownerFor(raw: object): ReactiveOwner {
   return owner
 }
 
+function snapshotMutation(mutation: StateMutation): StateMutation {
+  const arguments_ = mutation.arguments
+    ? Object.freeze(mutation.arguments.map(argument => unwrap(argument)))
+    : undefined
+  return Object.freeze({
+    ...mutation,
+    ...(mutation.previous === undefined ? {} : { previous: unwrap(mutation.previous) }),
+    ...(mutation.value === undefined ? {} : { value: unwrap(mutation.value) }),
+    ...(arguments_ ? { arguments: arguments_ } : {}),
+  })
+}
+
 function dispatchNotification(record: StateRecord<unknown>): void {
   record.version += 1
+  const mutations = Object.freeze(record.pendingMutations.splice(0))
+  const batch: StateMutationBatch = Object.freeze({
+    version: record.version,
+    mutations: mutations.length > 0 ? mutations : Object.freeze([snapshotMutation({ kind: "invalidate" })]),
+  })
   let failed = false
   let failure: unknown
   for (const listener of [...record.listeners]) {
-    try { listener(record.transaction) } catch (error) {
+    try { listener(record.transaction, batch) } catch (error) {
       if (!failed) { failed = true; failure = error }
     }
   }
@@ -106,8 +149,9 @@ function dispatchNotification(record: StateRecord<unknown>): void {
   if (failed) throw failure
 }
 
-function notify(record: StateRecord<unknown>): void {
+function notify(record: StateRecord<unknown>, mutation: StateMutation = { kind: "invalidate" }): void {
   record.transaction = snapshotTransaction(currentTransaction())
+  record.pendingMutations.push(snapshotMutation(mutation))
   if (record.batchDepth > 0) {
     record.pendingNotification = true
     return
@@ -207,14 +251,19 @@ function updateOwnership(record: StateRecord<unknown>, change: OwnershipChange, 
   requestReconcile(record)
 }
 
-function notifyOwner(owner: ReactiveOwner, change: OwnershipChange = "reconcile", addedValue?: unknown): void {
+function notifyOwner(
+  owner: ReactiveOwner,
+  change: OwnershipChange = "reconcile",
+  addedValue?: unknown,
+  mutation: StateMutation = { kind: "invalidate", target: owner.raw },
+): void {
   reactiveMutationClock += 1
   const affected = [...owner.records]
   for (const record of affected) updateOwnership(record, change, addedValue)
   let failed = false
   let failure: unknown
   for (const record of affected) {
-    try { notify(record) } catch (error) {
+    try { notify(record, mutation) } catch (error) {
       if (!failed) { failed = true; failure = error }
     }
   }
@@ -224,7 +273,11 @@ function notifyOwner(owner: ReactiveOwner, change: OwnershipChange = "reconcile"
   if (failed) throw failure
 }
 
-function notifyOwnerAdditions(owner: ReactiveOwner, additions: readonly unknown[]): void {
+function notifyOwnerAdditions(
+  owner: ReactiveOwner,
+  additions: readonly unknown[],
+  mutation: StateMutation = { kind: "invalidate", target: owner.raw },
+): void {
   reactiveMutationClock += 1
   const affected = [...owner.records]
   for (const record of affected) {
@@ -236,7 +289,7 @@ function notifyOwnerAdditions(owner: ReactiveOwner, additions: readonly unknown[
   let failed = false
   let failure: unknown
   for (const record of affected) {
-    try { notify(record) } catch (error) {
+    try { notify(record, mutation) } catch (error) {
       if (!failed) { failed = true; failure = error }
     }
   }
@@ -310,16 +363,22 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
                 : !sameArraySnapshot(previous ?? [], actual)
 
             if (changed) {
+              const mutation: StateMutation = {
+                kind: "array",
+                target: actual,
+                method: String(property),
+                arguments: mutatorArguments,
+              }
               if (property === "reverse" || property === "sort") {
-                notifyOwner(owner, "none")
+                notifyOwner(owner, "none", undefined, mutation)
               } else if (property === "push" || property === "unshift") {
                 const additions = mutatorArguments.filter(value => reactiveContainer(unwrap(value)))
-                if (additions.length > 0) notifyOwnerAdditions(owner, additions)
-                else notifyOwner(owner, "none")
+                if (additions.length > 0) notifyOwnerAdditions(owner, additions, mutation)
+                else notifyOwner(owner, "none", undefined, mutation)
               } else if ((property === "pop" || property === "shift") && !reactiveContainer(unwrap(result))) {
-                notifyOwner(owner, "none")
+                notifyOwner(owner, "none", undefined, mutation)
               } else {
-                notifyOwner(owner, "reconcile")
+                notifyOwner(owner, "reconcile", undefined, mutation)
               }
             }
 
@@ -363,8 +422,15 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
       const change = descriptor && "value" in descriptor
         ? ownershipChange(descriptor.value, normalized)
         : ownershipChange(undefined, normalized, false)
+      const previous = descriptor && "value" in descriptor ? unwrap(descriptor.value) : undefined
       const updated = Reflect.set(target, property, normalized, target)
-      if (updated && changed) notifyOwner(owner, change, change === "add" ? normalized : undefined)
+      if (updated && changed) notifyOwner(owner, change, change === "add" ? normalized : undefined, {
+        kind: "set",
+        target,
+        property,
+        previous,
+        value: normalized,
+      })
       return updated
     },
     deleteProperty(target, property) {
@@ -373,7 +439,12 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
       const deleted = Reflect.deleteProperty(target, property)
       if (deleted && existed) {
         const change = descriptor && "value" in descriptor && reactiveContainer(unwrap(descriptor.value)) ? "reconcile" : "none"
-        notifyOwner(owner, change)
+        notifyOwner(owner, change, undefined, {
+          kind: "delete",
+          target,
+          property,
+          previous: descriptor && "value" in descriptor ? descriptor.value : undefined,
+        })
       }
       return deleted
     },
@@ -386,20 +457,32 @@ function wrap<T>(value: T, record: StateRecord<unknown>): T {
         const previousValue = previous && "value" in previous ? previous.value : undefined
         const currentValue = current && "value" in current ? current.value : undefined
         const change = ownershipChange(previousValue, currentValue, Boolean(previous && "value" in previous))
-        notifyOwner(owner, change, change === "add" ? currentValue : undefined)
+        notifyOwner(owner, change, change === "add" ? currentValue : undefined, {
+          kind: "define",
+          target,
+          property,
+          previous: previousValue,
+          value: currentValue,
+        })
       }
       return defined
     },
     setPrototypeOf(target, prototype) {
       const previous = Reflect.getPrototypeOf(target)
       const updated = Reflect.setPrototypeOf(target, prototype)
-      if (updated && previous !== prototype) notifyOwner(owner, "reconcile")
+      if (updated && previous !== prototype) notifyOwner(owner, "reconcile", undefined, {
+        kind: "invalidate",
+        target,
+      })
       return updated
     },
     preventExtensions(target) {
       const wasExtensible = Reflect.isExtensible(target)
       const updated = Reflect.preventExtensions(target)
-      if (updated && wasExtensible) notifyOwner(owner, "reconcile")
+      if (updated && wasExtensible) notifyOwner(owner, "reconcile", undefined, {
+        kind: "invalidate",
+        target,
+      })
       return updated
     },
   })
@@ -419,6 +502,7 @@ export function State<T>(initial: T): StateRef<T> {
     batchDepth: 0,
     pendingNotification: false,
     pendingReconcile: false,
+    pendingMutations: [],
     observedMutationClock: reactiveMutationClock,
   }
   record.current = wrap(initial, record as StateRecord<unknown>)
@@ -427,12 +511,13 @@ export function State<T>(initial: T): StateRef<T> {
     enumerable: true,
     get() { activeCollector?.(state as StateRef<unknown>); return record.current },
     set(next: T) {
+      const previous = unwrap(record.current)
       const rawNext = unwrap(next)
-      if (Object.is(unwrap(record.current), rawNext)) return
+      if (Object.is(previous, rawNext)) return
       detach(record as StateRecord<unknown>)
       record.current = wrap(rawNext, record as StateRecord<unknown>) as T
       if (record.listeners.size) reconcile(record as StateRecord<unknown>)
-      notify(record as StateRecord<unknown>)
+      notify(record as StateRecord<unknown>, { kind: "replace", previous, value: rawNext })
     },
   })
   return state
@@ -460,6 +545,7 @@ export function subscribeState(state: StateRef<unknown>, listener: Listener): ()
     if (!record.listeners.size) {
       record.pendingNotification = false
       record.pendingReconcile = false
+      record.pendingMutations.length = 0
       detach(record)
       record.observedMutationClock = reactiveMutationClock
     }

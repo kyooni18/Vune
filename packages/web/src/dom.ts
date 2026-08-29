@@ -3,6 +3,9 @@ import {
   collectStateReads,
   edgeInsetsFromCss,
   frameStyle,
+  keyedCollectionChildKey,
+  keyedCollectionEntries,
+  reactiveIdentity,
   renderViewNode,
   renderViewNodeAt,
   subscribeState,
@@ -13,9 +16,12 @@ import {
   type CompiledTemplateDescriptor,
   type CompiledTemplateValue,
   type GeometryProxy,
+  type KeyedCollectionEntry,
+  type KeyedCollectionViewNode,
   type LazyViewNode,
   type LazyViewRange,
   type StateRef,
+  type StateMutation,
   type Transaction,
   Animation,
   type Transition,
@@ -51,6 +57,7 @@ interface DomViewBoundary {
   outerModifiers: ViewModifierNode[]
   parentKey?: string
   pendingTransaction?: Transaction
+  readonly pendingMutations: StateMutation[]
   scheduled: boolean
   mounted: boolean
   localSafe: boolean
@@ -70,6 +77,27 @@ interface DomCompiledTemplateInstance {
 interface DomCompiledTemplateBinding {
   readonly key: string
   readonly index: number
+}
+
+interface DomCollectionRow {
+  readonly entryKey: string
+  readonly key: string | number
+  readonly item: unknown
+  readonly index: number
+  readonly type: string
+  readonly props: Record<string, unknown> | null
+  readonly textValue: string
+  readonly element: Element
+  readonly textNode: Text
+}
+
+interface DomCollectionInstance {
+  readonly key: string
+  readonly ownerKey: string
+  node: KeyedCollectionViewNode
+  sourceIdentity: unknown
+  rows: Map<string, DomCollectionRow>
+  order: DomCollectionRow[]
 }
 
 interface DomAnimationDomain {
@@ -110,6 +138,8 @@ interface DomViewRuntime {
   readonly boundaries: Map<string, DomViewBoundary>
   readonly nodeKeys: WeakMap<Node, Set<string>>
   readonly reuseCandidates: WeakMap<Node, Node>
+  readonly collections: Map<string, DomCollectionInstance>
+  readonly collectionKeysByOwner: Map<string, Set<string>>
   /** Baseline props for compiler-template identity carriers. */
   readonly reuseCandidateBaseProps: WeakMap<Node, Record<string, unknown> | null>
   readonly compiledTemplates: Map<string, DomCompiledTemplateInstance>
@@ -132,6 +162,7 @@ interface DomViewRuntime {
   readonly rootNextChildren: Set<string>
   forceAll: boolean
   replayingModifiers: boolean
+  suppressCollectionDirect: boolean
   boundaryRootKey?: string
   materializeView?: (
     node: ViewHostNode,
@@ -1573,6 +1604,286 @@ function flatKeyedHostPlan(value: ViewGraphValue): FlatKeyedHostPlan | undefined
   return { rootType: type, rootProps: props, rows }
 }
 
+interface FlatKeyedCollectionBoundaryPlan {
+  readonly rootType: string
+  readonly rootProps: Record<string, unknown> | null
+  readonly collection: KeyedCollectionViewNode
+}
+
+function flatKeyedCollectionBoundaryPlan(value: ViewGraphValue): FlatKeyedCollectionBoundaryPlan | undefined {
+  if (ownGraphKind(value) !== "element") return undefined
+  const type = ownGraphDataValue(value, "type")
+  const propsValue = ownGraphDataValue(value, "props")
+  const props = propsValue === null ? null : propsValue && typeof propsValue === "object"
+    ? propsValue as Record<string, unknown>
+    : undefined
+  if (!ordinaryDirectHostTag(type) || props === undefined || !directKeyedPatchPropsSafe(props)) return undefined
+  const children = safeGraphArrayValues(ownGraphDataValue(value, "children"))
+  if (!children || children.length !== 1 || ownGraphKind(children[0]) !== "collection") return undefined
+  return { rootType: type, rootProps: props, collection: children[0] as KeyedCollectionViewNode }
+}
+
+function directCollectionHostRow(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): FlatKeyedHostRow | undefined {
+  const expectedKey = keyedCollectionChildKey(entry.key, 0)
+  if (node.compiled?.kind === "flat-text-host") {
+    const evaluated = node.compiled.evaluate(entry.item, entry.index)
+    if (!evaluated || typeof evaluated !== "object" || !ordinaryDirectHostTag(evaluated.type)
+      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined
+    const text = compiledTextSlotValue(evaluated.text)
+    if (!text.ok) return undefined
+    return { key: expectedKey, type: evaluated.type, props: evaluated.props, text: text.value }
+  }
+  const row = flatKeyedHostRow(node.content(entry.item, entry.index, entry.key))
+  return row?.key === expectedKey ? row : undefined
+}
+
+function discardDomCollections(runtime: DomViewRuntime, ownerKey: string): void {
+  const keys = runtime.collectionKeysByOwner.get(ownerKey)
+  if (!keys) return
+  for (const key of keys) runtime.collections.delete(key)
+  runtime.collectionKeysByOwner.delete(ownerKey)
+}
+
+function registerDomCollection(runtime: DomViewRuntime, instance: DomCollectionInstance): void {
+  runtime.collections.set(instance.key, instance)
+  const keys = runtime.collectionKeysByOwner.get(instance.ownerKey) ?? new Set<string>()
+  keys.add(instance.key)
+  runtime.collectionKeysByOwner.set(instance.ownerKey, keys)
+}
+
+function materializeDirectCollection(
+  node: KeyedCollectionViewNode,
+  identity: readonly (string | number)[],
+  ownerKey: string,
+  context: DomRenderContext,
+  runtime: DomViewRuntime,
+): Node | undefined {
+  const entries = keyedCollectionEntries(node)
+  // An empty runtime-inferred collection has no row shape to prove. Compiler
+  // metadata can safely retain an empty executor and accept later appends.
+  if (entries.length === 0 && !node.compiled) return undefined
+  const plans = new Array<FlatKeyedHostRow>(entries.length)
+  for (let index = 0; index < entries.length; index += 1) {
+    const row = directCollectionHostRow(node, entries[index])
+    if (!row) return undefined
+    plans[index] = row
+  }
+
+  const key = viewIdentityKey([...identity, "collection-executor"])
+  const fragment = context.document.createDocumentFragment()
+  const rows = new Map<string, DomCollectionRow>()
+  const order = new Array<DomCollectionRow>(entries.length)
+  context.hasDomKeys = true
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    const plan = plans[index]
+    const element = createTaggedElement(context, plan.type)
+    const textNode = context.document.createTextNode(plan.text)
+    element.appendChild(textNode)
+    context.domKeys.set(element, plan.key)
+    applyDomProps(element, plan.props, context)
+    fragment.appendChild(element)
+    const row: DomCollectionRow = {
+      entryKey: entry.key,
+      key: plan.key,
+      item: entry.item,
+      index: entry.index,
+      type: plan.type,
+      props: plan.props,
+      textValue: plan.text,
+      element,
+      textNode,
+    }
+    rows.set(entry.key, row)
+    order[index] = row
+  }
+  registerDomCollection(runtime, {
+    key,
+    ownerKey,
+    node,
+    sourceIdentity: reactiveIdentity(node.source),
+    rows,
+    order,
+  })
+  return fragment
+}
+
+function collectionMutationEffects(
+  instance: DomCollectionInstance,
+  node: KeyedCollectionViewNode,
+  mutations: readonly StateMutation[],
+): { readonly forceAll: boolean; readonly touched: ReadonlySet<string> } {
+  const touched = new Set<string>()
+  if (mutations.length === 0) return { forceAll: true, touched }
+
+  const previousSource = instance.sourceIdentity
+  const nextSource = reactiveIdentity(node.source)
+  const itemKeys = new Map<object, Set<string>>()
+  for (const row of instance.order) {
+    const identity = reactiveIdentity(row.item)
+    if (!identity || typeof identity !== "object") continue
+    const keys = itemKeys.get(identity) ?? new Set<string>()
+    keys.add(row.entryKey)
+    itemKeys.set(identity, keys)
+  }
+
+  let forceAll = false
+  for (const mutation of mutations) {
+    const target = mutation.target ? reactiveIdentity(mutation.target) : undefined
+    const previous = reactiveIdentity(mutation.previous)
+    const value = reactiveIdentity(mutation.value)
+    if (mutation.kind === "replace"
+      && (Object.is(previous, previousSource) || Object.is(value, nextSource))) continue
+    if (target && (Object.is(target, previousSource) || Object.is(target, nextSource))) continue
+    if (target && typeof target === "object") {
+      const keys = itemKeys.get(target)
+      if (keys) {
+        keys.forEach(key => touched.add(key))
+        continue
+      }
+    }
+    forceAll = true
+  }
+  return { forceAll, touched }
+}
+
+function sameCollectionItem(left: unknown, right: unknown): boolean {
+  return Object.is(reactiveIdentity(left), reactiveIdentity(right))
+}
+
+function patchPersistentCollection(
+  instance: DomCollectionInstance,
+  node: KeyedCollectionViewNode,
+  parent: Node,
+  mutations: readonly StateMutation[],
+  context: DomRenderContext,
+): boolean {
+  const currentChildren = [...parent.childNodes]
+  if (currentChildren.length !== instance.order.length) return false
+  const knownElements = new Set(instance.order.map(row => row.element))
+  if (currentChildren.some(child => child.nodeType !== 1 || !knownElements.has(child as Element))) return false
+  const oldIndex = new Map<Element, number>()
+  currentChildren.forEach((child, index) => oldIndex.set(child as Element, index))
+
+  const entries = keyedCollectionEntries(node)
+  const effects = collectionMutationEffects(instance, node, mutations)
+  const indexIndependent = node.compiled?.indexIndependent ?? node.indexIndependent
+  const desiredActualKeys = new Set<string | number>()
+  const planned = new Array<{
+    readonly entry: KeyedCollectionEntry
+    readonly plan: FlatKeyedHostRow
+    readonly previous?: DomCollectionRow
+    readonly reuse: boolean
+    readonly evaluated: boolean
+  }>(entries.length)
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    const previous = instance.rows.get(entry.key)
+    const evaluated = effects.forceAll || !previous
+      || !sameCollectionItem(previous.item, entry.item)
+      || (!indexIndependent && previous.index !== entry.index)
+      || effects.touched.has(entry.key)
+    const plan = evaluated
+      ? directCollectionHostRow(node, entry)
+      : previous && { key: previous.key, type: previous.type, props: previous.props, text: previous.textValue }
+    if (!plan || desiredActualKeys.has(plan.key)) return false
+    desiredActualKeys.add(plan.key)
+    const content = previous ? domContentContainer(previous.element) : undefined
+    const reuse = Boolean(previous
+      && previous.element.parentNode === parent
+      && previous.element.namespaceURI === HTML_NS
+      && previous.element.localName.toLowerCase() === plan.type.toLowerCase()
+      && content?.childNodes.length === 1
+      && content.firstChild === previous.textNode
+      && previous.textNode.nodeType === 3)
+    planned[index] = { entry, plan, previous, reuse, evaluated }
+  }
+
+  const reusedElements = new Set(planned.flatMap(item => item.reuse && item.previous ? [item.previous.element] : []))
+  const stale = instance.order.flatMap(row => reusedElements.has(row.element) ? [] : [row.element])
+  context.hasDomKeys = true
+  context.keyedParents.add(parent)
+  removeNodeBatch(parent, stale, context)
+
+  const nextRows = new Map<string, DomCollectionRow>()
+  const order = new Array<DomCollectionRow>(planned.length)
+  const desired = new Array<Element>(planned.length)
+  const existingDesired: Element[] = []
+  const existingIndices: number[] = []
+  for (let index = 0; index < planned.length; index += 1) {
+    const item = planned[index]
+    let element: Element
+    let textNode: Text
+    if (item.reuse && item.previous) {
+      element = item.previous.element
+      textNode = item.previous.textNode
+      existingDesired.push(element)
+      existingIndices.push(oldIndex.get(element)!)
+    } else {
+      element = createTaggedElement(context, item.plan.type)
+      textNode = context.document.createTextNode(item.plan.text)
+      element.appendChild(textNode)
+    }
+    context.domKeys.set(element, item.plan.key)
+    if (item.evaluated || !item.reuse) {
+      patchDomProps(element, item.plan.props, context)
+      if (textNode.nodeValue !== item.plan.text) textNode.nodeValue = item.plan.text
+    }
+    const row: DomCollectionRow = {
+      entryKey: item.entry.key,
+      key: item.plan.key,
+      item: item.entry.item,
+      index: item.entry.index,
+      type: item.plan.type,
+      props: item.plan.props,
+      textValue: item.plan.text,
+      element,
+      textNode,
+    }
+    nextRows.set(item.entry.key, row)
+    order[index] = row
+    desired[index] = element
+  }
+
+  reorderKnownKeyedChildren(parent, existingDesired, existingIndices)
+  let anchor: Node | null = null
+  for (let index = desired.length - 1; index >= 0; index -= 1) {
+    const element = desired[index]
+    if (element.parentNode !== parent) parent.insertBefore(element, anchor)
+    anchor = element
+  }
+  instance.node = node
+  instance.sourceIdentity = reactiveIdentity(node.source)
+  instance.rows = nextRows
+  instance.order = order
+  return true
+}
+
+function patchKeyedCollectionBoundary(
+  boundary: DomViewBoundary,
+  value: ViewGraphValue,
+  context: DomRenderContext,
+  runtime: DomViewRuntime,
+): boolean {
+  if (context.hydrating || context.activeTransaction?.animation || boundary.children.size > 0
+    || boundary.outerModifiers.length > 0 || boundary.currentNodes.length !== 1) return false
+  const plan = flatKeyedCollectionBoundaryPlan(value)
+  const root = boundary.currentNodes[0]
+  if (!plan || root?.nodeType !== 1) return false
+  const rootElement = root as Element
+  if (rootElement.namespaceURI !== HTML_NS || rootElement.localName.toLowerCase() !== plan.rootType.toLowerCase()) return false
+  const instanceKeys = runtime.collectionKeysByOwner.get(boundary.key)
+  if (!instanceKeys || instanceKeys.size !== 1) return false
+  const instanceKey = instanceKeys.values().next().value as string | undefined
+  const instance = instanceKey ? runtime.collections.get(instanceKey) : undefined
+  if (!instance) return false
+  const parent = domContentContainer(rootElement)
+  if (!patchPersistentCollection(instance, plan.collection, parent, boundary.pendingMutations, context)) return false
+  patchDomProps(rootElement, plan.rootProps, context)
+  return true
+}
+
 function reorderKnownKeyedChildren(parent: Node, desired: readonly Node[], indices: readonly number[]): void {
   let alreadyOrdered = true
   let strictlyDescending = true
@@ -1974,6 +2285,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         nextNodes: [],
         outerModifiers: [],
         parentKey,
+        pendingMutations: [],
         scheduled: false,
         mounted: false,
         localSafe: true,
@@ -2032,8 +2344,22 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
           if (force && previousOuterModifiers.length === 0 && boundary.children.size === 0
             && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {
             const graph = node.render(resolvedProps)
-            if (patchFlatKeyedHostBoundary(boundary, graph, context)) return reusableBoundaryOutput(boundary, context)
-            return renderViewNodeAt(graph, renderer, [...identity, "body"])
+            if (patchKeyedCollectionBoundary(boundary, graph, context, runtime)
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {
+              boundary.pendingMutations.length = 0
+              return reusableBoundaryOutput(boundary, context)
+            }
+            // A previously proven collection may leave its capability set.
+            // Drop the executor before the generic renderer takes ownership;
+            // collection() is suppressed during this candidate pass so it
+            // cannot retain detached nodes produced for reconciliation.
+            discardDomCollections(runtime, boundary.key)
+            runtime.suppressCollectionDirect = true
+            try {
+              return renderViewNodeAt(graph, renderer, [...identity, "body"])
+            } finally {
+              runtime.suppressCollectionDirect = false
+            }
           }
           return render(resolvedProps)
         },
@@ -2045,6 +2371,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     boundary.dependencies = dependencies
     boundary.scheduled = false
     boundary.pendingTransaction = undefined
+    boundary.pendingMutations.length = 0
     markBoundaryOutput(output, key, runtime)
 
     if (force && previousOuterModifiers.length > 0) {
@@ -2163,6 +2490,19 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         roots.forEach((root, index) => runtime.compiledTemplateRoots.set(root, { key, index }))
       }
       return output
+    },
+    collection(node, renderEntry, identity) {
+      const ownerKey = runtime?.stack.at(-1)
+      const owner = ownerKey ? runtime?.boundaries.get(ownerKey) : undefined
+      if (runtime && ownerKey && owner && !runtime.suppressCollectionDirect
+        && !context.hydrating && !context.stagingProps && !context.stagingEvents
+        && !owner.mounted && owner.currentNodes.length === 0) {
+        const direct = materializeDirectCollection(node, identity, ownerKey, context, runtime)
+        if (direct) return direct
+      }
+      const fragment = context.document.createDocumentFragment()
+      for (const entry of keyedCollectionEntries(node)) appendDomChild(fragment, renderEntry(entry), context)
+      return fragment
     },
     lazy(node, render, identity, renderItem) {
       markUnsafeViewAncestors(context)
@@ -2326,6 +2666,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       compiledTemplateTextSlots: new WeakMap(),
       compiledTemplateViewSlots: new WeakMap(),
       compiledTemplatePatches: new WeakMap(),
+      collections: new Map(),
+      collectionKeysByOwner: new Map(),
       motionStates: new WeakMap(),
       transitionStates: new WeakMap(),
       enteredTransitions: new WeakSet(),
@@ -2338,6 +2680,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       rootNextChildren: new Set(),
       forceAll: false,
       replayingModifiers: false,
+      suppressCollectionDirect: false,
     }
     domViewRuntimes.set(context, viewRuntime)
     const renderer = createDomRenderer(context)
@@ -2365,6 +2708,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       for (const child of [...boundary.children]) disposeBoundary(child, preserveState || isPreservedStateKey(child))
       boundary.subscriptions.forEach(unsubscribe => unsubscribe())
       boundary.subscriptions.clear()
+      boundary.pendingMutations.length = 0
+      discardDomCollections(viewRuntime, key)
       boundary.scheduled = false
       boundary.currentNodes = []
       viewRuntime.boundaries.delete(key)
@@ -2430,8 +2775,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
       for (const dependency of boundary.dependencies) {
         if (boundary.subscriptions.has(dependency)) continue
-        boundary.subscriptions.set(dependency, subscribeState(dependency, transaction => {
+        boundary.subscriptions.set(dependency, subscribeState(dependency, (transaction, batch) => {
           boundary.pendingTransaction = transaction
+          boundary.pendingMutations.push(...batch.mutations)
           if (boundary.scheduled || stopped) return
           boundary.scheduled = true
           if (!boundary.mounted || boundary.currentNodes.length === 0) {
@@ -2815,6 +3161,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
       boundary.scheduled = false
       boundary.pendingTransaction = undefined
+      boundary.pendingMutations.length = 0
       return true
     }
 
@@ -3024,6 +3371,8 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
         boundary.subscriptions.clear()
       }
       viewRuntime.boundaries.clear()
+      viewRuntime.collections.clear()
+      viewRuntime.collectionKeysByOwner.clear()
       viewRuntime.layoutSnapshots.clear()
       for (const playback of [...viewRuntime.exitTransitions.values()]) cleanup(playback.cancel)
       viewRuntime.exitTransitions.clear()
