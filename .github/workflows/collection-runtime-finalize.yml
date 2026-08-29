@@ -1,4 +1,4 @@
-name: Collection runtime Web diagnostic
+name: Collection runtime baseline diagnostic
 
 on:
   push:
@@ -6,17 +6,17 @@ on:
       - codex/collection-runtime-finalize-20260830
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  diagnose:
-    if: contains(github.event.head_commit.message, 'capture collection web assertion')
+  baseline-web:
+    if: contains(github.event.head_commit.message, 'check collection web baseline')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: codex/collection-runtime-finalize-20260830
+          ref: 71010c2b1c45ff5994eb6561d97e5e406e249d39
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
@@ -25,23 +25,13 @@ jobs:
         with:
           node-version: 22.13.0
           cache: pnpm
-      - name: Install and build committed product changes
+      - name: Install and build checkpoint
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm run build
-      - name: Capture collection-specific Web assertion
-        shell: bash
+      - name: Run checkpoint collection-specific Web tests
         run: |
-          set +e
           node --test \
-            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
-            tests/web-package.test.mjs 2>&1 | tee .github/collection-web-failure.txt
-          status=${PIPESTATUS[0]}
-          printf '\nexit_status=%s\n' "$status" >> .github/collection-web-failure.txt
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -f .github/collection-web-failure.txt
-          git commit -m 'chore: record collection web assertion'
-          git push origin HEAD:codex/collection-runtime-finalize-20260830
-          exit "$status"
+            --test-name-pattern='flat keyed host rows|eventful compiled collection' \
+            tests/web-package.test.mjs
