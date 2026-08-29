@@ -10,20 +10,20 @@ diff --git a/packages/web/src/dom.ts b/packages/web/src/dom.ts
        motionStates: new WeakMap(),
        transitionStates: new WeakMap(),
        enteredTransitions: new WeakSet(),
-@@ -2674,6 +2676,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
+@@ -2674,4 +2676,5 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
        rootNextChildren: new Set(),
        forceAll: false,
        replayingModifiers: false,
 +      suppressCollectionDirect: false,
      }
-@@ -2698,8 +2701,6 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
+@@ -2698,6 +2701,4 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
      const preservedStatePrefixes = () => [...context.preservedLazyStatePrefixes.values()].flatMap(prefixes => [...prefixes])
      const isPreservedStateKey = (key: string): boolean => preservedStatePrefixes().some(prefix => key === prefix || key.startsWith(`${prefix}|`))
      const disposeBoundary = (key: string, preserveState = false): void => {
 -      collections: new Map(),
 -      collectionKeysByOwner: new Map(),
        const boundary = viewRuntime.boundaries.get(key)
-@@ -2714,7 +2715,6 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
+@@ -2714,5 +2715,4 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
        if (!preserveState) context.states.delete(key)
      }
      const beginViewPass = (boundaryRootKey?: string): void => {
