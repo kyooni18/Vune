@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-state-collection-boundary:
+  validate-deferred-collection-snapshots:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,52 +24,118 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Fix and lock State collection ownership
+      - name: Defer State-backed collection snapshots
         run: |
+          cat > packages/core/src/graph/arrays.ts <<'EOF'
+          const dataOnlySnapshots = new WeakSet<object>()
+
+          /** Check array identity without leaking revoked Proxy errors. */
+          export function arrayCheck(value: unknown): boolean | undefined {
+            try {
+              return Array.isArray(value)
+            } catch {
+              return undefined
+            }
+          }
+
+          /**
+           * Strict descriptor-only snapshot used at collection boundaries. Indexed
+           * accessors are rejected instead of executed, and the resulting frozen
+           * snapshot is branded internally so graph constructors can reuse it.
+           */
+          export function snapshotDataArrayValues(value: unknown): readonly unknown[] | undefined {
+            if (arrayCheck(value) !== true) return undefined
+            const values = value as readonly unknown[]
+            try {
+              const length = Object.getOwnPropertyDescriptor(values, "length")
+              if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return undefined
+              const snapshot = new Array<unknown>(length.value)
+              for (let index = 0; index < length.value; index += 1) {
+                const descriptor = Object.getOwnPropertyDescriptor(values, String(index))
+                if (!descriptor) continue
+                if (!("value" in descriptor)) return undefined
+                snapshot[index] = descriptor.value
+              }
+              Object.freeze(snapshot)
+              dataOnlySnapshots.add(snapshot)
+              return snapshot
+            } catch {
+              return undefined
+            }
+          }
+
+          /** Snapshot array indices without invoking iterators or indexed accessors. */
+          export function snapshotArrayValues(value: readonly unknown[]): readonly unknown[] {
+            try {
+              if (dataOnlySnapshots.has(value as object)) return value
+              const length = Object.getOwnPropertyDescriptor(value, "length")
+              if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0) return Object.freeze([])
+              const snapshot = new Array<unknown>(length.value)
+              for (let index = 0; index < length.value; index += 1) {
+                const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+                snapshot[index] = descriptor && "value" in descriptor ? descriptor.value : undefined
+              }
+              return Object.freeze(snapshot)
+            } catch {
+              return Object.freeze([])
+            }
+          }
+          EOF
+
           node <<'NODE'
           const fs = require('node:fs')
-          const path = 'packages/compiler/src/collection-specialization.ts'
-          let source = fs.readFileSync(path, 'utf8')
-          const typo = 'index.dotDotToken'
-          if (!source.includes(typo)) throw new Error('expected State collection patch typo marker missing')
-          source = source.replace(typo, 'index.dotDotDotToken')
-          fs.writeFileSync(path, source)
+
+          const typesPath = 'packages/core/src/graph/types.ts'
+          let types = fs.readFileSync(typesPath, 'utf8')
+          const itemsMarker = '  readonly items: readonly unknown[]\n  /** Original collection identity before the descriptor-only snapshot. */\n'
+          if (!types.includes(itemsMarker)) throw new Error('collection items type marker missing')
+          types = types.replace(itemsMarker, '  readonly items: readonly unknown[]\n  /** Deferred strict snapshot for a State-backed source. */\n  readonly readItems?: () => readonly unknown[]\n  /** Original collection identity before the descriptor-only snapshot. */\n')
+          fs.writeFileSync(typesPath, types)
+
+          const nodesPath = 'packages/core/src/graph/nodes.ts'
+          let nodes = fs.readFileSync(nodesPath, 'utf8')
+          const entriesStart = 'export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {\n  const occurrences = new Map<string, number>()\n  const entries = new Array<KeyedCollectionEntry>(node.items.length)\n  for (let index = 0; index < node.items.length; index += 1) {\n    const item = node.items[index]\n'
+          if (!nodes.includes(entriesStart)) throw new Error('keyedCollectionEntries marker missing')
+          nodes = nodes.replace(entriesStart, 'export function keyedCollectionEntries(node: KeyedCollectionViewNode): readonly KeyedCollectionEntry[] {\n  const items = node.readItems?.() ?? node.items\n  const occurrences = new Map<string, number>()\n  const entries = new Array<KeyedCollectionEntry>(items.length)\n  for (let index = 0; index < items.length; index += 1) {\n    const item = items[index]\n')
+          const optionMarker = '    readonly indexIndependent?: boolean\n    readonly compiled?: CompiledCollectionPlan\n    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]\n'
+          if (!nodes.includes(optionMarker)) throw new Error('keyedCollectionView options marker missing')
+          nodes = nodes.replace(optionMarker, '    readonly indexIndependent?: boolean\n    readonly compiled?: CompiledCollectionPlan\n    readonly readItems?: KeyedCollectionViewNode["readItems"]\n    readonly onDuplicateKey?: KeyedCollectionViewNode["onDuplicateKey"]\n')
+          const nodeMarker = '    content,\n    indexIndependent: options.indexIndependent === true,\n    ...(options.compiled ? { compiled: options.compiled } : {}),\n'
+          if (!nodes.includes(nodeMarker)) throw new Error('keyedCollectionView node marker missing')
+          nodes = nodes.replace(nodeMarker, '    content,\n    indexIndependent: options.indexIndependent === true,\n    ...(options.compiled ? { compiled: options.compiled } : {}),\n    ...(options.readItems ? { readItems: options.readItems } : {}),\n')
+          fs.writeFileSync(nodesPath, nodes)
+
+          const viewsPath = 'packages/core/src/views.ts'
+          let views = fs.readFileSync(viewsPath, 'utf8')
+          views = views.replace('import { arrayCheck } from "./graph/arrays.js"', 'import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"')
+          const snapshotStart = views.indexOf('function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {')
+          const requireStart = views.indexOf('function requireCollectionItems(value: unknown): readonly unknown[] {', snapshotStart)
+          if (snapshotStart < 0 || requireStart < 0) throw new Error('collection snapshot helper markers missing')
+          views = views.slice(0, snapshotStart)
+            + 'function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined {\n  return snapshotDataArrayValues(value)\n}\n\n'
+            + views.slice(requireStart)
+          const requireEnd = '  return snapshot\n}\n\ninterface ForEachProps<Item> {'
+          if (!views.includes(requireEnd)) throw new Error('requireCollectionItems end marker missing')
+          views = views.replace(requireEnd, '  return snapshot\n}\n\nconst emptyCollectionItems = Object.freeze([]) as readonly unknown[]\n\ninterface ForEachProps<Item> {')
+          const bodyStart = '  ({ items, key, content }) => {\n    const source = isStateRef(items) ? items.value : items\n    const collection = requireCollectionItems(source)\n    const selector = key as CollectionKeySelector<unknown> | undefined\n'
+          if (!views.includes(bodyStart)) throw new Error('ForEach body marker missing')
+          views = views.replace(bodyStart, '  ({ items, key, content }) => {\n    const stateSource = isStateRef(items) ? items as StateRef<readonly unknown[]> : undefined\n    const source = stateSource ? stateSource.value : items\n    if (arrayCheck(source) !== true) throw new TypeError("ForEach items must be a data-only array")\n    const collection = stateSource ? emptyCollectionItems : requireCollectionItems(source)\n    const selector = key as CollectionKeySelector<unknown> | undefined\n')
+          const optionsMarker = '      {\n        indexIndependent: false,\n        compiled: compiledCollectionPlanOf(content),\n        onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),\n'
+          if (!views.includes(optionsMarker)) throw new Error('ForEach options marker missing')
+          views = views.replace(optionsMarker, '      {\n        indexIndependent: false,\n        compiled: compiledCollectionPlanOf(content),\n        ...(stateSource ? { readItems: () => requireCollectionItems(stateSource.value) } : {}),\n        onDuplicateKey: display => warnForEachIdentity(`ForEach contains duplicate key "${display}"; state identity is ambiguous.`),\n')
+          fs.writeFileSync(viewsPath, views)
+
+          const testPath = 'tests/web-package.test.mjs'
+          let tests = fs.readFileSync(testPath, 'utf8')
+          tests += `\n\ntest("@vune-ui/web isolates a State-backed ForEach from its parent View", async () => {\n  const dom = new JSDOM("<div id=app></div>")\n  const container = dom.window.document.querySelector("#app")\n  assert.ok(container)\n  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])\n  let parentRuns = 0\n  let rowRuns = 0\n  const App = defineView("StateOwnedForEachApp", {\n    initializers: [initializer("StateOwnedForEachApp()", args => args.length === 0)],\n    body: () => {\n      parentRuns += 1\n      return Element("section", null, ForEach(items, item => {\n        rowRuns += 1\n        return Element("span", { "data-row": item.id }, item.value)\n      }))\n    },\n  })\n\n  const unmount = mount(App(), container)\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 3)\n  rowRuns = 0\n  items.value[1] = { id: "b", value: "B1" }\n  await Promise.resolve()\n  assert.equal(parentRuns, 1)\n  assert.equal(rowRuns, 1)\n  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B1")\n  unmount()\n  dom.window.close()\n})\n`
+          fs.writeFileSync(testPath, tests)
           NODE
-          cat >> tests/compiler-package.test.mjs <<'EOF'
-
-          test("compiler keeps proven top-level State collections owned by the ForEach boundary", () => {
-            const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = State([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
-            const output = transformVuneSource(source, "StateOwnedCollection.vune.ts")
-            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
-            assert.doesNotMatch(output, /createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
-          })
-
-          test("compiler recognizes aliased State constructors for collection ownership", () => {
-            const source = `import { State as S, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = S([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
-            const output = transformVuneSource(source, "AliasedStateCollection.vune.ts")
-            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
-          })
-
-          test("compiler does not rewrite a shadowing local value as a StateRef collection", () => {
-            const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = State([{ id: "outer", value: "Outer" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => { const items = { value: [{ id: "local", value: "Local" }] }; return Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) } })`
-            const output = transformVuneSource(source, "ShadowedStateCollection.vune.ts")
-            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
-            assert.doesNotMatch(output, /createNodeCompiled\(0, \[items, compiledCollectionContent/)
-          })
-          EOF
       - run: pnpm run build
-      - run: node --test --test-name-pattern='collection row plans|collection plans conservative|collection rows|State collections owned|aliased State constructors|shadowing local value' tests/compiler-package.test.mjs
-      - run: node --test --test-name-pattern='ForEach' tests/web-package.test.mjs
-      - name: Commit validated ownership pass
+      - run: node --test --test-name-pattern='ForEach|collection' tests/core.test.mjs tests/web-package.test.mjs tests/react-package.test.mjs tests/vue-package.test.mjs tests/renderer-conformance.test.mjs
+      - name: Commit validated deferred snapshots
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/compiler/src/collection-specialization.ts tests/compiler-package.test.mjs
-          git commit -m 'Keep State collections inside ForEach boundaries'
+          git add packages/core/src/graph/arrays.ts packages/core/src/graph/types.ts packages/core/src/graph/nodes.ts packages/core/src/views.ts tests/web-package.test.mjs
+          git commit -m 'Defer State collection snapshots to execution'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
