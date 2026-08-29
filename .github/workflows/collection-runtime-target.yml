@@ -1,0 +1,145 @@
+name: Collection runtime target lock
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  target:
+    if: contains(github.event.head_commit.message, 'lock collection target fix')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - name: Install and build current source
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Test current target and apply narrow recovery only on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
+          if node --test --test-name-pattern="$pattern" tests/web-package.test.mjs > /tmp/collection-target-before.log 2>&1; then
+            cat /tmp/collection-target-before.log
+            printf 'current-target=pass\n' > .github/collection-target-pass.txt
+            exit 0
+          fi
+          cat /tmp/collection-target-before.log
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/web/src/dom.ts')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '''      const canTrackCollection = Boolean(runtime && ownerKey && owner
+                && !context.hydrating && !context.stagingProps && !context.stagingEvents)''',
+                  '''      const canTrackCollection = Boolean(runtime && ownerKey && owner && !context.hydrating)
+              const canMaterializeCollection = canTrackCollection
+                && !context.stagingProps && !context.stagingEvents''',
+              ),
+              (
+                  '''        if (!runtime.suppressCollectionDirect && !owner.mounted && owner.currentNodes.length === 0) {''',
+                  '''        if (canMaterializeCollection && !runtime.suppressCollectionDirect
+          && !owner.mounted && owner.currentNodes.length === 0) {''',
+              ),
+              (
+                  '''          if (force && previousOuterModifiers.length === 0 && boundary.children.size === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+                  '''          if (previousOuterModifiers.length === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+              ),
+              (
+                  '''          if (boundary.mounted && previousOuterModifiers.length === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+                  '''          if (previousOuterModifiers.length === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+              ),
+              (
+                  '''            if (patchKeyedCollectionBoundary(boundary, graph, context, runtime)
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {''',
+                  '''            if ((boundary.children.size === 0
+              && patchKeyedCollectionBoundary(boundary, graph, context, runtime))
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {''',
+              ),
+          ]
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+
+          old = '''  if (node.compiled?.kind === "flat-text-host") {
+    const evaluated = node.compiled.evaluate(entry.item, entry.index)
+    if (!evaluated || typeof evaluated !== "object" || !ordinaryDirectHostTag(evaluated.type)
+      || !directCompiledCollectionPropsSafe(evaluated.props)) return undefined
+    const text = compiledTextSlotValue(evaluated.text)
+    if (!text.ok) return undefined
+    return { key: expectedKey, type: evaluated.type, props: evaluated.props, text: text.value }
+  }'''
+          new = '''  if (node.compiled?.kind === "flat-text-host") {
+    const evaluated = node.compiled.evaluate(entry.item, entry.index)
+    if (evaluated && typeof evaluated === "object" && ordinaryDirectHostTag(evaluated.type)
+      && directCompiledCollectionPropsSafe(evaluated.props)) {
+      const text = compiledTextSlotValue(evaluated.text)
+      if (text.ok) return { key: expectedKey, type: evaluated.type, props: evaluated.props, text: text.value }
+    }
+    // Keep the compiler descriptor proof-only. Unsafe descriptors fall back
+    // through the original row graph and the generic flat-host validator.
+  }'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('compiled collection fallback pattern not found')
+
+          path.write_text(text)
+          PY
+          git diff --check
+          pnpm run build
+          if node --test --test-name-pattern="$pattern" tests/web-package.test.mjs > /tmp/collection-target-after.log 2>&1; then
+            cat /tmp/collection-target-after.log
+            printf 'recovered-target=pass\n' > .github/collection-target-pass.txt
+          else
+            cat /tmp/collection-target-after.log
+            {
+              echo 'BEFORE'
+              cat /tmp/collection-target-before.log
+              echo
+              echo 'AFTER'
+              cat /tmp/collection-target-after.log
+              echo
+              echo 'PATCH'
+              git diff -- packages/web/src/dom.ts
+            } > .github/collection-target-failure.txt
+            git restore packages/web/src/dom.ts
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add -f .github/collection-target-failure.txt
+            git commit -m 'chore: record collection target failure'
+            git push origin HEAD:codex/collection-runtime-finalize-20260830
+            exit 1
+          fi
+      - name: Commit target-green source state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/web/src/dom.ts .github/collection-target-pass.txt
+          git commit -m 'fix(web): lock green collection runtime target'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
