@@ -21,7 +21,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Make generic ForEach conservative
-        run: node -e "const fs=require('fs');const p='packages/core/src/views.ts';let s=fs.readFileSync(p,'utf8');s=s.replace('indexIndependent: content.length < 2,','indexIndependent: false,');fs.writeFileSync(p,s)"
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'packages/core/src/views.ts'
+          let source = fs.readFileSync(path, 'utf8')
+          source = source.replace('indexIndependent: content.length < 2,', 'indexIndependent: false,')
+          fs.writeFileSync(path, source)
+          NODE
       - run: pnpm run build
       - name: Trace callback callers
         run: |
@@ -49,5 +56,6 @@ jobs:
           items.value = changed
           await Promise.resolve(); await Promise.resolve()
           console.log('[fixture] single', rowRuns)
-          unmount(); dom.window.close()
+          unmount()
+          dom.window.close()
           NODE
