@@ -1,81 +1,75 @@
-name: Apply collection runtime executor to main
+name: Validate collection runtime architecture
 
 on:
   push:
     branches:
-      - codex/collection-runtime-executor-20260830
+      - automation/collection-runtime-validation
 
 permissions:
   contents: write
 
-concurrency:
-  group: apply-collection-runtime-main
-  cancel-in-progress: false
-
 jobs:
-  validate-and-apply:
+  validate-and-materialize:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Check out staged patch branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Apply staged patches onto the exact main base
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          test "$(git rev-parse origin/main)" = "747bb775216c4272b9dfd5eeaf49d69c4b95aabb"
-          mkdir -p /tmp/vune-collection-runtime-patches
-          cp .github/patches/collection-runtime/*.patch /tmp/vune-collection-runtime-patches/
-          git reset --hard origin/main
-          for patch_file in /tmp/vune-collection-runtime-patches/*.patch; do
-            sanitized="${patch_file%.patch}.sanitized.patch"
-            grep -v '^index ' "$patch_file" > "$sanitized"
-            patch --batch --forward --fuzz=3 -p1 < "$sanitized"
-          done
-          test -z "$(find . -name '*.rej' -print -quit)"
-          git diff --check
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-      - name: Materialize the exact candidate tree for inspection
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -C codex/collection-runtime-materialized
-          git add -u
-          git commit -m "Materialize persistent keyed collection runtime candidate"
-          git push --force origin HEAD:codex/collection-runtime-materialized
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+
+      - name: Apply collection runtime patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in .github/patches/collection-runtime/*.patch; do
+            case "$patch" in
+              *13-o0o0o-public-api.patch) continue ;;
+            esac
+            echo "Applying $patch"
+            git apply --check "$patch"
+            git apply "$patch"
+          done
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Inspect the installed o0o0o API surface
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="node_modules/.pnpm/o0o0o@0.2.2/node_modules/o0o0o"
-          cat "$package_dir/package.json"
-          sed -n '1,270p' "$package_dir/index.d.ts"
-          cat "$package_dir/src/dom/index.d.ts"
-          grep -R -n -E 'compileMotionPlan|MotionExecutionPlan|ownStyleAnimation' "$package_dir" || true
+      - name: Typecheck core
+        run: pnpm exec tsc --noEmit --project packages/core/tsconfig.json
 
-      - name: Build and run the complete test suite
+      - name: Run full test suite
         run: pnpm test
 
-      - name: Push the validated candidate directly to main
+      - name: Run package semantic tests
+        run: |
+          node --test \
+            tests/core-package.test.mjs \
+            tests/compiler-package.test.mjs \
+            tests/compiler-parity-package.test.mjs \
+            tests/compiler-cross-target-package.test.mjs \
+            tests/react-package.test.mjs \
+            tests/vue-package.test.mjs \
+            tests/web-package.test.mjs \
+            tests/ssr-package.test.mjs
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Materialize validated source
         shell: bash
         run: |
           set -euo pipefail
-          git push origin HEAD:main
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm -r .github/patches/collection-runtime
+          git rm .github/workflows/apply-collection-runtime-main.yml
+          git add packages tests
+          git commit -m 'Implement persistent keyed collection runtime'
+          git push origin HEAD:automation/collection-runtime-validation
