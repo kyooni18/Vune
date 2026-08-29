@@ -25,14 +25,11 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Apply collection runtime patches
+      - name: Apply runtime and public API patches
         shell: bash
         run: |
           set -euo pipefail
           for patch_file in .github/patches/collection-runtime/*.patch; do
-            case "$patch_file" in
-              *13-o0o0o-public-api.patch) continue ;;
-            esac
             echo "Applying $patch_file"
             set +e
             patch -p1 --batch --forward --fuzz=3 < "$patch_file"
