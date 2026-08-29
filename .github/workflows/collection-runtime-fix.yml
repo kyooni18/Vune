@@ -1,0 +1,93 @@
+name: Collection runtime targeted fix
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-test:
+    if: contains(github.event.head_commit.message, 'restore collection boundary hot paths')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - name: Apply narrow runtime fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/web/src/dom.ts')
+          text = path.read_text()
+
+          old = '''      const canTrackCollection = Boolean(runtime && ownerKey && owner
+                && !context.hydrating && !context.stagingProps && !context.stagingEvents)'''
+          new = '''      const canTrackCollection = Boolean(runtime && ownerKey && owner && !context.hydrating)
+              const canMaterializeCollection = canTrackCollection
+                && !context.stagingProps && !context.stagingEvents'''
+          if old not in text:
+              raise SystemExit('canTrackCollection pattern not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        if (!runtime.suppressCollectionDirect && !owner.mounted && owner.currentNodes.length === 0) {'''
+          new = '''        if (canMaterializeCollection && !runtime.suppressCollectionDirect
+          && !owner.mounted && owner.currentNodes.length === 0) {'''
+          if old not in text:
+              raise SystemExit('direct collection materialization pattern not found')
+          text = text.replace(old, new, 1)
+
+          old = '''          if (force && previousOuterModifiers.length === 0 && boundary.children.size === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {'''
+          new = '''          if (boundary.mounted && previousOuterModifiers.length === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {'''
+          if old not in text:
+              raise SystemExit('boundary direct-patch condition not found')
+          text = text.replace(old, new, 1)
+
+          old = '''            if (patchKeyedCollectionBoundary(boundary, graph, context, runtime)
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {'''
+          new = '''            if ((boundary.children.size === 0
+              && patchKeyedCollectionBoundary(boundary, graph, context, runtime))
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {'''
+          if old not in text:
+              raise SystemExit('boundary patch dispatch pattern not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          git diff --check
+      - name: Install and build
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Run collection Web regression tests
+        run: |
+          set -euo pipefail
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs
+      - name: Commit passing runtime fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/web/src/dom.ts
+          git commit -m 'fix(web): preserve keyed collection boundary hot paths'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
