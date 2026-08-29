@@ -1,0 +1,36 @@
+name: Collection runtime finalize v5
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collection-runtime-finalize-v5
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: contains(github.event.head_commit.message, 'run collection runtime finalize v5')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Finalize and validate keyed collection runtime
+        run: bash .github/collection-runtime-finalize-v5.sh
