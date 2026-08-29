@@ -1564,17 +1564,28 @@ test("@vune-ui/web patches flat keyed host rows in place and preserves generic f
   assert.ok([...container.querySelectorAll("span")].every(node => node === original[node.dataset.row]))
 
   candidateNodes = 0
+  items.value = [...items.value, { id: "d", value: "D", title: "four" }]
+  await Promise.resolve()
+  assert.equal(candidateNodes, 2)
+  assert.equal(container.querySelector('[data-row="a"]'), original.a)
+  assert.equal(container.querySelector('[data-row="c"]'), original.c)
+  const appended = container.querySelector('[data-row="d"]')
+  assert.equal(appended?.textContent, "D")
+
+  candidateNodes = 0
+  items.value = items.value.filter(item => item.id !== "b")
+  await Promise.resolve()
+  assert.equal(candidateNodes, 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "a", "d"])
+  assert.equal(container.querySelector('[data-row="c"]'), original.c)
+  assert.equal(container.querySelector('[data-row="a"]'), original.a)
+  assert.equal(container.querySelector('[data-row="d"]'), appended)
+
+  candidateNodes = 0
   attachRefs.value = true
   await Promise.resolve()
   assert.ok(candidateNodes > 0)
-  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "b", "a"])
-
-  candidateNodes = 0
-  items.value = [...items.value, { id: "d", value: "D", title: "four" }]
-  await Promise.resolve()
-  assert.ok(candidateNodes > 0)
-  assert.equal(container.querySelector('[data-row="a"]'), original.a)
-  assert.equal(container.querySelector('[data-row="d"]')?.textContent, "D")
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "a", "d"])
 
   dom.window.document.createElement = createElement
   dom.window.document.createTextNode = createTextNode

@@ -1608,8 +1608,6 @@ function patchFlatKeyedHostBoundary(boundary: DomViewBoundary, value: ViewGraphV
   if (rootElement.namespaceURI !== HTML_NS || rootElement.localName.toLowerCase() !== plan.rootType.toLowerCase()) return false
   const parent = domContentContainer(rootElement)
   const currentChildren = [...parent.childNodes]
-  if (currentChildren.length !== plan.rows.length) return false
-
   const keyed = new Map<string | number, Element>()
   const oldIndex = new Map<Element, number>()
   for (let index = 0; index < currentChildren.length; index += 1) {
@@ -1621,34 +1619,66 @@ function patchFlatKeyedHostBoundary(boundary: DomViewBoundary, value: ViewGraphV
     oldIndex.set(element, index)
   }
 
-  const desired: Element[] = new Array(plan.rows.length)
-  const indices: number[] = new Array(plan.rows.length)
-  const textNodes: Text[] = new Array(plan.rows.length)
+  const matched: Array<{ readonly live: Element; readonly text: Text; readonly position: number } | undefined> = new Array(plan.rows.length)
+  const desiredKeys = new Set<string | number>()
   for (let index = 0; index < plan.rows.length; index += 1) {
     const row = plan.rows[index]
+    desiredKeys.add(row.key)
     const live = keyed.get(row.key)
-    if (!live || live.parentNode !== parent || live.namespaceURI !== HTML_NS
+    if (!live) continue
+    if (live.parentNode !== parent || live.namespaceURI !== HTML_NS
       || live.localName.toLowerCase() !== row.type.toLowerCase()) return false
     const content = domContentContainer(live)
     if (content.childNodes.length !== 1 || content.firstChild?.nodeType !== 3) return false
     const position = oldIndex.get(live)
     if (position === undefined) return false
-    desired[index] = live
-    indices[index] = position
-    textNodes[index] = content.firstChild as Text
+    matched[index] = { live, text: content.firstChild as Text, position }
   }
 
+  const stale = currentChildren.filter(child => {
+    const key = context.domKeys.get(child)
+    return key !== undefined && !desiredKeys.has(key)
+  })
   patchDomProps(rootElement, plan.rootProps, context)
   context.hasDomKeys = true
   context.keyedParents.add(parent)
+  removeNodeBatch(parent, stale, context)
+
+  const desired: Element[] = new Array(plan.rows.length)
+  const existingDesired: Element[] = []
+  const existingIndices: number[] = []
   for (let index = 0; index < plan.rows.length; index += 1) {
     const row = plan.rows[index]
-    const live = desired[index]
+    const existing = matched[index]
+    let live: Element
+    let text: Text
+    if (existing) {
+      live = existing.live
+      text = existing.text
+      existingDesired.push(live)
+      existingIndices.push(existing.position)
+    } else {
+      live = createTaggedElement(context, row.type)
+      text = context.document.createTextNode(row.text)
+      live.appendChild(text)
+    }
+    desired[index] = live
     context.domKeys.set(live, row.key)
     patchDomProps(live, row.props, context)
-    if (textNodes[index].nodeValue !== row.text) textNodes[index].nodeValue = row.text
+    if (text.nodeValue !== row.text) text.nodeValue = row.text
   }
-  reorderKnownKeyedChildren(parent, desired, indices)
+
+  // First minimize moves among rows that survived the mutation, then insert
+  // only genuinely new rows into the gaps. Appends therefore allocate one
+  // element + one text node, removals allocate nothing, and reverse keeps the
+  // existing high-density reorder path.
+  reorderKnownKeyedChildren(parent, existingDesired, existingIndices)
+  let anchor: Node | null = null
+  for (let index = desired.length - 1; index >= 0; index -= 1) {
+    const live = desired[index]
+    if (live.parentNode !== parent) parent.insertBefore(live, anchor)
+    anchor = live
+  }
   return true
 }
 
