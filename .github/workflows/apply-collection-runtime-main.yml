@@ -59,12 +59,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/core/src/state.ts \
-            packages/core/src/graph/types.ts \
-            packages/core/src/graph/nodes.ts \
-            packages/core/src/graph/renderer.ts \
-            packages/core/src/views.ts \
-            packages/web/src/dom.ts \
-            tests/web-package.test.mjs
+          git add -u
           git commit -m "Add persistent keyed collection execution runtime"
           git push origin HEAD:main
