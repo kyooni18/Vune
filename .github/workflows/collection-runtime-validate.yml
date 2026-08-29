@@ -1,0 +1,148 @@
+name: Collection runtime validate
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - name: Apply staged product patch
+        id: patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/collection-runtime-finalize.patch.gz.b64.* \
+            | base64 --decode \
+            | gzip --decompress \
+            > /tmp/collection-runtime-finalize.patch
+          if git apply --check /tmp/collection-runtime-finalize.patch; then
+            git apply /tmp/collection-runtime-finalize.patch
+            echo 'applied=true' >> "$GITHUB_OUTPUT"
+          elif git apply --reverse --check /tmp/collection-runtime-finalize.patch; then
+            echo 'applied=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'The staged product patch does not apply cleanly in either direction.' >&2
+            exit 1
+          fi
+          git diff --check
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - run: mkdir -p validation-output
+
+      - name: Install dependencies
+        run: set -o pipefail; pnpm install --frozen-lockfile 2>&1 | tee validation-output/current-install.log
+
+      - name: Build workspace
+        run: set -o pipefail; pnpm run build 2>&1 | tee validation-output/current-build.log
+
+      - name: State core tests
+        run: set -o pipefail; node --test tests/core.test.mjs 2>&1 | tee validation-output/current-state-core.log
+
+      - name: Collection-specific Web tests
+        run: >-
+          set -o pipefail; node --test
+          --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
+          tests/web-package.test.mjs 2>&1 | tee validation-output/current-web-collection.log
+
+      - name: Compiler tests
+        run: set -o pipefail; node --test tests/compiler-package.test.mjs 2>&1 | tee validation-output/current-compiler.log
+
+      - name: React and Vue collection adapter tests
+        run: >-
+          set -o pipefail; node --test
+          --test-name-pattern='compiler-planned State collections|collection fallback keeps source'
+          tests/react-client.test.mjs tests/vue-live.test.mjs 2>&1 | tee validation-output/current-adapters.log
+
+      - name: Full Web package tests
+        run: set -o pipefail; node --test tests/web-package.test.mjs 2>&1 | tee validation-output/current-web-full.log
+
+      - name: Full test suite
+        run: set -o pipefail; pnpm test 2>&1 | tee validation-output/current-pnpm-test.log
+
+      - name: Current 25k collection benchmark
+        run: set -o pipefail; node benchmarks/collection-runtime.mjs 2>&1 | tee validation-output/current-benchmark.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: collection-current-validation
+          path: validation-output
+          retention-days: 2
+          if-no-files-found: warn
+
+      - name: Commit validated product changes
+        if: success() && steps.patch.outputs.applied == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            packages/compiler/src/collection-specialization.ts \
+            packages/core/src/state.ts \
+            packages/react/src/renderer.ts \
+            packages/vue/src/index.ts \
+            packages/web/src/dom.ts \
+            tests/compiler-package.test.mjs \
+            tests/core.test.mjs \
+            tests/react-client.test.mjs \
+            tests/vue-live.test.mjs \
+            tests/web-package.test.mjs
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No product changes need committing.'
+            exit 0
+          fi
+          git commit -m 'perf: finalize collection runtime hot paths'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
+
+  benchmark-checkpoint:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 71010c2b1c45ff5994eb6561d97e5e406e249d39
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - run: mkdir -p validation-output
+      - name: Install checkpoint dependencies
+        run: set -o pipefail; pnpm install --frozen-lockfile 2>&1 | tee validation-output/checkpoint-install.log
+      - name: Build checkpoint
+        run: set -o pipefail; pnpm run build 2>&1 | tee validation-output/checkpoint-build.log
+      - name: Checkpoint 25k collection benchmark
+        run: set -o pipefail; node benchmarks/collection-runtime.mjs 2>&1 | tee validation-output/checkpoint-benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: collection-checkpoint-benchmark
+          path: validation-output
+          retention-days: 2
+          if-no-files-found: warn
