@@ -1,0 +1,103 @@
+name: Collection runtime validation v2
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: contains(github.event.head_commit.message, 'validate collection runtime v2')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm run build
+
+      - name: State core tests
+        run: node --test tests/core.test.mjs
+
+      - name: Collection-specific Web tests
+        run: >-
+          node --test
+          --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
+          tests/web-package.test.mjs
+
+      - name: Compiler tests
+        run: node --test tests/compiler-package.test.mjs
+
+      - name: React and Vue collection adapter tests
+        run: >-
+          node --test
+          --test-name-pattern='compiler-planned State collections'
+          tests/react-client.test.mjs tests/vue-live.test.mjs
+
+      - name: Full Web package tests
+        run: node --test tests/web-package.test.mjs
+
+      - name: Collection benchmark
+        run: node benchmarks/collection-runtime.mjs | tee /tmp/collection-runtime-benchmark.txt
+
+      - name: Full test suite
+        run: pnpm test
+
+      - name: Remove temporary collection diagnostics
+        run: |
+          set -euo pipefail
+          find .github -maxdepth 1 -type f -name 'collection-*' -print -delete
+          rm -rf .github/collection-runtime-patch
+          rm -f .github/workflows/collection-runtime-finalize.yml
+          rm -f .github/workflows/collection-runtime-validation-v2.yml
+          git add -A
+          git diff --cached --check
+
+      - name: Rebuild after cleanup
+        run: pnpm run build
+
+      - name: Re-run State core tests after cleanup
+        run: node --test tests/core.test.mjs
+
+      - name: Re-run collection-specific Web tests after cleanup
+        run: >-
+          node --test
+          --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity'
+          tests/web-package.test.mjs
+
+      - name: Re-run compiler tests after cleanup
+        run: node --test tests/compiler-package.test.mjs
+
+      - name: Re-run full Web package tests after cleanup
+        run: node --test tests/web-package.test.mjs
+
+      - name: Re-run full test suite after cleanup
+        run: pnpm test
+
+      - name: Commit validated cleanup
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if ! git diff --cached --quiet; then
+            git commit -m 'Finalize keyed collection runtime validation [skip ci]'
+            git push origin HEAD:codex/collection-runtime-finalize-20260830
+          fi
