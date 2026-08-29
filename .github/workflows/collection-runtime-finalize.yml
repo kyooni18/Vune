@@ -1,4 +1,4 @@
-name: Collection Runtime Finalize
+name: Export collection runtime workspace
 
 on:
   push:
@@ -6,57 +6,21 @@ on:
       - codex/collection-runtime-finalize-20260830
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  checkpoint-state-hotpaths:
-    if: github.actor != 'github-actions[bot]'
+  export:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: codex/collection-runtime-finalize-20260830
-      - uses: pnpm/action-setup@v4
+          fetch-depth: 0
+      - name: Package workspace
+        run: tar --exclude=.git --exclude=vune-workspace.tar.gz -czf vune-workspace.tar.gz .
+      - uses: actions/upload-artifact@v4
         with:
-          version: 11.22.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.13.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: node .github/collection-state-hotpath.mjs
-      - name: Finalize staged hot paths
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs')
-          const domPath = 'packages/web/src/dom.ts'
-          let dom = fs.readFileSync(domPath, 'utf8')
-          dom = dom.replace('    const stagedOccurrenceCounts = new Map(instance.occurrenceCounts)\n', '    const occurrenceDeltas = new Map<string, number>()\n')
-          dom = dom.replace('      const occurrence = stagedOccurrenceCounts.get(resolved.identity) ?? 0\n      stagedOccurrenceCounts.set(resolved.identity, occurrence + 1)\n', '      const delta = occurrenceDeltas.get(resolved.identity) ?? 0\n      const occurrence = (instance.occurrenceCounts.get(resolved.identity) ?? 0) + delta\n      occurrenceDeltas.set(resolved.identity, delta + 1)\n')
-          dom = dom.replace('    instance.occurrenceCounts = stagedOccurrenceCounts\n    instance.node = node\n', '    for (const [baseKey, delta] of occurrenceDeltas) {\n      instance.occurrenceCounts.set(baseKey, (instance.occurrenceCounts.get(baseKey) ?? 0) + delta)\n    }\n    instance.node = node\n')
-          fs.writeFileSync(domPath, dom)
-          const statePath = 'packages/core/src/state.ts'
-          let state = fs.readFileSync(statePath, 'utf8')
-          for (const name of ['previousRaw', 'nextRaw', 'raw']) {
-            state = state.replaceAll(`record.rootArrayRefs.get(${name})`, `record.rootArrayRefs.get(${name} as object)`)
-            state = state.replaceAll(`record.rootArrayRefs.delete(${name})`, `record.rootArrayRefs.delete(${name} as object)`)
-            state = state.replaceAll(`record.rootArrayRefs.set(${name},`, `record.rootArrayRefs.set(${name} as object,`)
-          }
-          fs.writeFileSync(statePath, state)
-          NODE
-      - run: pnpm run build
-      - name: Run current State hot-path diagnostics
-        continue-on-error: true
-        run: node --test --test-name-pattern='shallow root-array ownership|shallow array ownership keeps duplicate|State tracks|shared raw|detaches stale|shared nested|circular raw|array batches|array mutator|prototype and extensibility' tests/core.test.mjs
-      - name: Checkpoint WIP source
-        if: always()
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/core/src/state.ts packages/web/src/dom.ts tests/core.test.mjs
-          if git diff --cached --quiet; then
-            echo 'No source changes to checkpoint'
-            exit 0
-          fi
-          git commit -m 'wip: checkpoint incremental collection ownership'
-          git push origin HEAD:codex/collection-runtime-finalize-20260830
+          name: vune-workspace
+          path: vune-workspace.tar.gz
+          retention-days: 1
+          if-no-files-found: error
