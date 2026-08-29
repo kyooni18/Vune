@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  validate-compiler-collection-plan:
+  validate-state-collection-boundary:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -24,68 +24,52 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Wire compiler collection pass
+      - name: Fix and lock State collection ownership
         run: |
           node <<'NODE'
           const fs = require('node:fs')
-          const path = 'packages/compiler/src/pipeline.ts'
+          const path = 'packages/compiler/src/collection-specialization.ts'
           let source = fs.readFileSync(path, 'utf8')
-          const importMarker = 'import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"\n'
-          if (!source.includes(importMarker)) throw new Error('specialization import marker missing')
-          source = source.replace(importMarker, importMarker + 'import { lowerCompiledCollections } from "./collection-specialization.js"\n')
-          const helpers = 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate"]'
-          if (!source.includes(helpers)) throw new Error('runtime helper marker missing')
-          source = source.replace(helpers, 'const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", "compiledCollectionContent"]')
-          const pass = '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)\n'
-          if (!source.includes(pass)) throw new Error('compiler pass marker missing')
-          source = source.replace(pass, '  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)\n  const withCompiledCollections = lowerCompiledCollections(withSemanticSpecializations)\n  const withCompiledTemplates = lowerCompiledViewTemplates(withCompiledCollections)\n')
+          const typo = 'index.dotDotToken'
+          if (!source.includes(typo)) throw new Error('expected State collection patch typo marker missing')
+          source = source.replace(typo, 'index.dotDotDotToken')
           fs.writeFileSync(path, source)
           NODE
-      - name: Add compiler regressions
-        run: |
           cat >> tests/compiler-package.test.mjs <<'EOF'
 
-          test("compiler emits direct collection row plans only for proven flat host rows", () => {
+          test("compiler keeps proven top-level State collections owned by the ForEach boundary", () => {
             const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
           const items = State([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: item.value }, item.value))) })`
-            const output = transformVuneSource(source, "CompiledCollection.vune.ts")
-            assert.match(output, /compiledCollectionContent\(item => Element\("span"/)
-            assert.match(output, /kind: "flat-text-host", indexIndependent: true/)
-            assert.match(output, /evaluate: \(item\) => \(\{ type: "span", props: \{ title: item\.value \}, text: item\.value \}\)/)
-            assert.match(output, /import \{[^}]*compiledCollectionContent[^}]*\} from "@vune-ui\/core"/)
-            assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+            const output = transformVuneSource(source, "StateOwnedCollection.vune.ts")
+            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
+            assert.doesNotMatch(output, /createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
           })
 
-          test("compiler keeps index-sensitive collection plans conservative", () => {
+          test("compiler recognizes aliased State constructors for collection ownership", () => {
+            const source = `import { State as S, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+          const items = S([{ id: "a", value: "A" }])
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) })`
+            const output = transformVuneSource(source, "AliasedStateCollection.vune.ts")
+            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items, compiledCollectionContent/)
+          })
+
+          test("compiler does not rewrite a shadowing local value as a StateRef collection", () => {
             const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = State([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, (item, index) => Element("span", { title: item.value }, index + ":" + item.value))) })`
-            const output = transformVuneSource(source, "IndexedCompiledCollection.vune.ts")
-            assert.match(output, /compiledCollectionContent/)
-            assert.match(output, /indexIndependent: false/)
-          })
-
-          test("compiler refuses effectful or structurally complex collection rows", () => {
-            const effectful = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = State([{ id: "a", value: "A" }])
-          const format = value => value.toUpperCase()
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", { title: format(item.value) }, item.value))) })`
-            assert.doesNotMatch(transformVuneSource(effectful, "EffectfulCollection.vune.ts"), /compiledCollectionContent/)
-
-            const nested = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
-          const items = State([{ id: "a", value: "A" }])
-          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => Element("section", null, ForEach(items.value, item => Element("span", null, Element("strong", null, item.value)))) })`
-            assert.doesNotMatch(transformVuneSource(nested, "NestedCollection.vune.ts"), /compiledCollectionContent/)
+          const items = State([{ id: "outer", value: "Outer" }])
+          export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => { const items = { value: [{ id: "local", value: "Local" }] }; return Element("section", null, ForEach(items.value, item => Element("span", null, item.value))) } })`
+            const output = transformVuneSource(source, "ShadowedStateCollection.vune.ts")
+            assert.match(output, /ForEach\.viewType\.createNodeCompiled\(0, \[items\.value, compiledCollectionContent/)
+            assert.doesNotMatch(output, /createNodeCompiled\(0, \[items, compiledCollectionContent/)
           })
           EOF
       - run: pnpm run build
-      - run: node --test --test-name-pattern='collection row plans|collection plans conservative|collection rows' tests/compiler-package.test.mjs
+      - run: node --test --test-name-pattern='collection row plans|collection plans conservative|collection rows|State collections owned|aliased State constructors|shadowing local value' tests/compiler-package.test.mjs
       - run: node --test --test-name-pattern='ForEach' tests/web-package.test.mjs
-      - name: Commit validated compiler pass
+      - name: Commit validated ownership pass
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add packages/compiler/src/collection-specialization.ts packages/compiler/src/pipeline.ts tests/compiler-package.test.mjs
-          git commit -m 'Compile proven ForEach rows to direct collection plans'
+          git add packages/compiler/src/collection-specialization.ts tests/compiler-package.test.mjs
+          git commit -m 'Keep State collections inside ForEach boundaries'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
