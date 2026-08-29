@@ -1,0 +1,35 @@
+name: Materialize collection plan draft
+
+on:
+  push:
+    branches:
+      - automation/compiler-collection-plan
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decode draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          base64 --decode .automation/apply-vune-collections.b64 | gzip -dc > .automation/apply-vune-collections.mjs
+          node --check .automation/apply-vune-collections.mjs
+          wc -l -c .automation/apply-vune-collections.mjs
+      - name: Commit decoded source for review
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .automation/apply-vune-collections.mjs
+          git commit -m 'Materialize collection plan draft for review'
+          git push origin HEAD:automation/compiler-collection-plan
