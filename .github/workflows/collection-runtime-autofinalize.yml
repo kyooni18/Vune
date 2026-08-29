@@ -1,0 +1,153 @@
+name: Collection runtime autonomous finalization
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: contains(github.event.head_commit.message, 'autofinalize collection runtime')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - name: Apply idempotent collection boundary fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/web/src/dom.ts')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '''      const canTrackCollection = Boolean(runtime && ownerKey && owner
+                && !context.hydrating && !context.stagingProps && !context.stagingEvents)''',
+                  '''      const canTrackCollection = Boolean(runtime && ownerKey && owner && !context.hydrating)
+              const canMaterializeCollection = canTrackCollection
+                && !context.stagingProps && !context.stagingEvents''',
+              ),
+              (
+                  '''        if (!runtime.suppressCollectionDirect && !owner.mounted && owner.currentNodes.length === 0) {''',
+                  '''        if (canMaterializeCollection && !runtime.suppressCollectionDirect
+          && !owner.mounted && owner.currentNodes.length === 0) {''',
+              ),
+              (
+                  '''          if (force && previousOuterModifiers.length === 0 && boundary.children.size === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+                  '''          if (boundary.mounted && previousOuterModifiers.length === 0
+            && boundary.currentNodes.length === 1 && !context.activeTransaction?.animation) {''',
+              ),
+              (
+                  '''            if (patchKeyedCollectionBoundary(boundary, graph, context, runtime)
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {''',
+                  '''            if ((boundary.children.size === 0
+              && patchKeyedCollectionBoundary(boundary, graph, context, runtime))
+              || patchFlatKeyedHostBoundary(boundary, graph, context)) {''',
+              ),
+          ]
+
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+              elif new not in text:
+                  raise SystemExit(f'neither old nor new runtime pattern found: {old.splitlines()[0]}')
+
+          path.write_text(text)
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace
+        run: pnpm run build
+      - name: State core tests
+        run: node --test tests/core.test.mjs
+      - name: Collection-specific Web tests
+        run: |
+          node --test \
+            --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
+            tests/web-package.test.mjs
+      - name: Compiler tests
+        run: node --test tests/compiler-package.test.mjs
+      - name: React and Vue collection adapter tests
+        run: |
+          node --test \
+            --test-name-pattern='collection|ForEach|keyed' \
+            tests/react-client.test.mjs tests/vue-live.test.mjs
+      - name: Full Web package tests
+        run: node --test tests/web-package.test.mjs
+      - name: Benchmark checkpoint and optimized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vune-validation
+          git worktree add --detach /tmp/vune-checkpoint 71010c2b1c45ff5994eb6561d97e5e406e249d39
+          (
+            cd /tmp/vune-checkpoint
+            pnpm install --frozen-lockfile
+            pnpm run build
+            node benchmarks/collection-runtime.mjs > /tmp/vune-validation/checkpoint.json
+          )
+          git worktree remove --force /tmp/vune-checkpoint
+          node benchmarks/collection-runtime.mjs > /tmp/vune-validation/optimized.json
+          echo 'Checkpoint benchmark:'
+          cat /tmp/vune-validation/checkpoint.json
+          echo 'Optimized benchmark:'
+          cat /tmp/vune-validation/optimized.json
+      - name: Full test suite
+        run: pnpm test
+      - name: Remove temporary collection diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -r --ignore-unmatch \
+            .github/collection-state-hotpath.mjs \
+            .github/collection-runtime-apply.mjs \
+            .github/collection-runtime-finalize.patch.gz.b64.* \
+            .github/collection-runtime-patch \
+            .github/collection-web-failure.txt \
+            .github/collection-bisect-result.txt \
+            .github/workflows/collection-runtime-finalize.yml \
+            .github/workflows/collection-runtime-fix.yml \
+            .github/workflows/collection-runtime-validate.yml \
+            .github/workflows/collection-runtime-autofinalize.yml
+          while IFS= read -r path; do
+            case "$path" in
+              .github/collection-*|.github/workflows/collection-*)
+                echo "unexpected temporary collection diagnostic remains: $path" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git ls-files '.github/**')
+          git diff --cached --check
+      - name: Commit validated product tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
+          optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/web/src/dom.ts
+          git commit \
+            -m 'chore: finalize validated collection runtime' \
+            -m "checkpoint-benchmark=$checkpoint" \
+            -m "optimized-benchmark=$optimized" \
+            -m 'validation=build,core,collection-web,compiler,react-vue,full-web,pnpm-test'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
