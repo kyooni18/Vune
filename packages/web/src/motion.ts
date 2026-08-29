@@ -1,17 +1,16 @@
 import {
   animate,
-  compileMotionPlan as compileEngineMotionPlan,
   curves,
+  createInterpolator,
   motionValue,
   smooth,
   spring,
   timing,
   type AnimationControls,
-  type MotionExecutionPlan,
+  type InterpolatorOptions,
   type MotionSpec,
   type MotionValue,
-} from "o0o0o/core"
-import { createInterpolator, type InterpolatorOptions } from "o0o0o/interpolate/css"
+} from "o0o0o"
 import type { Animation } from "@vune-ui/core"
 import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 
@@ -50,11 +49,11 @@ type MotionRoute =
   | { readonly kind: "scalar"; readonly unit: string; readonly value: number }
   | { readonly kind: "interpolated"; readonly options: InterpolatorOptions }
 
+type VuneMotionSpec = MotionSpec & { readonly blendDuration?: number }
+
 interface CompiledMotionPlan {
   /** Public/raw spec retained for compatibility and diagnostics. */
-  readonly spec: MotionSpec
-  /** Fully compiled o0o0o route: spring coefficients/easing LUT are ready. */
-  readonly executionPlan: MotionExecutionPlan
+  readonly spec: VuneMotionSpec
   readonly delayMs: number
   /** Number of forward passes. Infinity means repeat forever. */
   readonly repeatCount: number
@@ -156,15 +155,14 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
     return shared
   }
 
-  const spec = descriptor.kind === "spring"
-    ? spring({ response, dampingRatio, blendDuration })
+  const spec: VuneMotionSpec = descriptor.kind === "spring"
+    ? Object.freeze({ ...spring({ response, dampingRatio }), blendDuration })
     : (() => {
         const base = curveFor(descriptor.kind)
         return base.kind === "timing" ? timing({ duration, curve: base.curve }) : base
       })()
   const plan: CompiledMotionPlan = Object.freeze({
     spec,
-    executionPlan: compileEngineMotionPlan(spec),
     delayMs,
     repeatCount,
     autoreverses,
@@ -179,8 +177,8 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
   return plan
 }
 
-/** Convert and memoize Vune's SwiftUI-shaped value into an o0o0o execution spec. */
-export function motionSpecForAnimation(animation: Animation): MotionSpec {
+/** Convert and memoize Vune's SwiftUI-shaped value into a public o0o0o spec. */
+export function motionSpecForAnimation(animation: Animation): VuneMotionSpec {
   return compileMotionPlan(animation).spec
 }
 
@@ -313,13 +311,13 @@ class ScalarMotionChannel implements MotionChannel {
           // Calling animate() on the same MotionValue deliberately avoids a
           // pre-cancel here: o0o0o retargets a live spring in-place and carries
           // its velocity into the new target.
-          this.#control = animate(this.#value, target.value, plan.executionPlan)
+          this.#control = animate(this.#value, target.value, plan.spec)
           const forward = await this.#control.finished
           if (generation !== this.#generation || forward.status !== "finished") return
           forwardPass += 1
           if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
           if (plan.autoreverses) {
-            this.#control = animate(this.#value, origin, plan.executionPlan)
+            this.#control = animate(this.#value, origin, plan.spec)
             const reverse = await this.#control.finished
             if (generation !== this.#generation || reverse.status !== "finished") return
           } else {
@@ -415,13 +413,13 @@ class InterpolatedMotionChannel implements MotionChannel {
       try {
         while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || forwardPass < plan.repeatCount)) {
           this.#progress.set(0, 0)
-          this.#control = animate(this.#progress, 1, plan.executionPlan)
+          this.#control = animate(this.#progress, 1, plan.spec)
           const forward = await this.#control.finished
           if (generation !== this.#generation || forward.status !== "finished") return
           forwardPass += 1
           if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
           if (plan.autoreverses) {
-            this.#control = animate(this.#progress, 0, plan.executionPlan)
+            this.#control = animate(this.#progress, 0, plan.spec)
             const reverse = await this.#control.finished
             if (generation !== this.#generation || reverse.status !== "finished") return
           }
