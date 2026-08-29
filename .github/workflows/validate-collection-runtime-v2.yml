@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20.19.0
+          node-version: 24
           cache: pnpm
 
       - name: Apply collection runtime patches
@@ -69,7 +69,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm -r .github/patches/collection-runtime
-          git rm .github/workflows/apply-collection-runtime-main.yml
           git rm .github/workflows/validate-collection-runtime-v2.yml
           git add packages tests
           git commit -m 'Implement persistent keyed collection runtime'
