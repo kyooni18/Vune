@@ -2294,3 +2294,63 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
   unmount()
   dom.window.close()
 })
+
+
+test("@vune-ui/web executes push pop and reverse without reevaluating stable compiled rows", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }, { id: "c", value: "C" }])
+  let parentRuns = 0
+  let rowRuns = 0
+  let keyRuns = 0
+  const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => { keyRuns += 1; return item.id },
+    evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
+  })
+  const App = defineView("StructuralCompiledCollectionApp", {
+    initializers: [initializer("StructuralCompiledCollectionApp()", args => args.length === 0)],
+    body: () => { parentRuns += 1; return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])) },
+  })
+  const unmount = mount(App(), container)
+  const a = container.querySelector("[data-row=a]")
+  const b = container.querySelector("[data-row=b]")
+  const c = container.querySelector("[data-row=c]")
+  assert.equal(parentRuns, 1)
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value.push({ id: "d", value: "D" })
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["A", "B", "C", "D"])
+  assert.strictEqual(container.querySelector("[data-row=a]"), a)
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value.pop()
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 0)
+  assert.equal(keyRuns, 0)
+  assert.equal(container.querySelector("[data-row=d]"), null)
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value.reverse()
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 0)
+  assert.equal(keyRuns, 0)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["C", "B", "A"])
+  assert.strictEqual(container.querySelector("[data-row=a]"), a)
+  assert.strictEqual(container.querySelector("[data-row=b]"), b)
+  assert.strictEqual(container.querySelector("[data-row=c]"), c)
+
+  unmount()
+  dom.window.close()
+})
