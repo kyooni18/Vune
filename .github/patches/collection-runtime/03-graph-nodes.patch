@@ -111,8 +111,6 @@ index 8189547..0000000 100644
 +}
 +
  export function viewFragment(children: readonly ViewGraphChild[] = []): ModifiableViewNode {
-@@ -279 +367 @@ export function isViewNode(value: unknown): value is ViewNode {
-     const descriptor = Object.getOwnPropertyDescriptor(value, "kind")
 @@ -287,4 +375,4 @@ export function isViewNode(value: unknown): value is ViewNode {
      if (!descriptor || !("value" in descriptor)) return false
      const kind = descriptor.value
