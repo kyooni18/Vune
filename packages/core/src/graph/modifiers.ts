@@ -187,7 +187,7 @@ export function decorate(node: ViewNode, owned = false): ModifiableViewNode {
   }
   const existing = decoratedNodes.get(node)
   if (existing) return existing
-  const result = Object.assign(Object.create(modifierPrototype), node) as ModifiableViewNode
+  const result = Object.defineProperties(Object.create(modifierPrototype), Object.getOwnPropertyDescriptors(node)) as ModifiableViewNode
   const frozen = Object.freeze(result)
   decoratedNodes.set(node, frozen)
   if (frozen !== node) decoratedNodes.set(frozen, frozen)
