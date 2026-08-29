@@ -71,7 +71,7 @@ index 8189547..0000000 100644
 +  for (const entry of keyedCollectionEntries(node)) {
 +    const value = node.content(entry.item, entry.index, entry.key)
 +    if (isViewNode(value) && value.kind === "fragment") children.push(...value.children)
-+    else if (arrayCheck(value) === true) children.push(...snapshotArrayValues(value as readonly ViewGraphChild[]))
++    else if (arrayCheck(value) === true) children.push(...(snapshotArrayValues(value as readonly ViewGraphChild[]) as readonly ViewGraphChild[]))
 +    else children.push(value as ViewGraphChild)
 +  }
 +  return Object.freeze(children)
