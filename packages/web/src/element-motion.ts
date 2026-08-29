@@ -7,7 +7,6 @@ import {
   type AnimationControls,
   type InterpolatorOptions,
 } from "o0o0o"
-import { ownStyleAnimation } from "o0o0o/dom"
 import { motionSpecForAnimation } from "./motion.js"
 
 export type MotionStatus = "finished" | "cancelled"
@@ -30,6 +29,37 @@ export interface ElementMotionOptions {
 export interface MotionHandle {
   readonly finished: Promise<MotionStatus>
   cancel(): void
+}
+
+const styleAnimationOwners = new WeakMap<Element, Map<string, MotionHandle>>()
+
+/** Keep one active writer per CSS property without relying on private o0o0o APIs. */
+function ownStyleAnimation(element: Element, properties: readonly string[], handle: MotionHandle): void {
+  const uniqueProperties = [...new Set(properties)]
+  if (uniqueProperties.length === 0) return
+  let owners = styleAnimationOwners.get(element)
+  if (!owners) {
+    owners = new Map()
+    styleAnimationOwners.set(element, owners)
+  }
+
+  const displaced = new Set<MotionHandle>()
+  for (const property of uniqueProperties) {
+    const previous = owners.get(property)
+    if (previous && previous !== handle) displaced.add(previous)
+  }
+  for (const previous of displaced) previous.cancel()
+  for (const property of uniqueProperties) owners.set(property, handle)
+
+  const release = () => {
+    const current = styleAnimationOwners.get(element)
+    if (!current) return
+    for (const property of uniqueProperties) {
+      if (current.get(property) === handle) current.delete(property)
+    }
+    if (current.size === 0) styleAnimationOwners.delete(element)
+  }
+  void handle.finished.then(release, release)
 }
 
 interface AnimationTiming {
