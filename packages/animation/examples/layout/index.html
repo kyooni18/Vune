@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Motion runtime layout + color</title>
+<style>
+  body { font-family: system-ui; padding: 40px; }
+  #row { display: flex; gap: 16px; width: 640px; }
+  #a, #b { height: 120px; border-radius: 24px; }
+  #a { width: 180px; background: #ff2d55; }
+  #b { flex: 1; background: #5ac8fa; }
+  .expanded #a { width: 360px; }
+</style>
+<div id="row"><div id="a"></div><div id="b"></div></div>
+<button id="toggle">Toggle</button>
+<script type="module">
+  import { smooth, animateInterpolated } from '../../src/index.js';
+  import { animateLayout } from '../../src/layout/index.js';
+
+  const row = document.querySelector('#row');
+  const a = document.querySelector('#a');
+  const b = document.querySelector('#b');
+  let expanded = false;
+
+  document.querySelector('#toggle').onclick = () => {
+    animateLayout([a, b], () => {
+      expanded = !expanded;
+      row.classList.toggle('expanded', expanded);
+    }, { spec: smooth() });
+
+    animateInterpolated(
+      expanded ? '#ff2d55' : '#5ac8fa',
+      expanded ? '#5ac8fa' : '#ff2d55',
+      smooth(),
+      (color) => { a.style.background = color; },
+      { type: 'color', color: { space: 'oklab' } },
+    );
+  };
+</script>

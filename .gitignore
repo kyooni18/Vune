@@ -18,5 +18,6 @@ symbol-animation-dist/
 .playwright-cli/
 output/
 *.cpuprofile
+packages/animation/wasm/*.wasm
 local-packages/*.tgz
 local-packages/manifest.json

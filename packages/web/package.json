@@ -40,8 +40,8 @@
     "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
   },
   "dependencies": {
-    "@vune-ui/core": "workspace:*",
-    "o0o0o": "^0.2.2"
+    "@vune-ui/animation": "workspace:*",
+    "@vune-ui/core": "workspace:*"
   },
   "sideEffects": false,
   "publishConfig": {

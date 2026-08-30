@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const canonicalPackages = ["core", "compiler", "react", "vue", "web", "vite"]
+const canonicalPackages = ["animation", "core", "compiler", "react", "vue", "web", "vite"]
 const compatibilityPackages = ["legacy-react"]
 const releaseTargets = [
   { dir: root, canonical: false, publishPrefix: "dist/", requireExports: true },
@@ -118,6 +118,7 @@ for (const target of releaseTargets) {
   assert.doesNotMatch(JSON.stringify(packedManifest), /workspace:/, `${manifest.name} published manifest leaked a workspace: dependency`)
   if (manifest.name === 'vune-ui') {
     for (const name of [
+      '@vune-ui/animation',
       '@vune-ui/compiler',
       '@vune-ui/core',
       '@vune-ui/react',
@@ -153,7 +154,6 @@ try {
       "react-dom": localDependency("react-dom"),
       vue: localDependency("vue"),
       typescript: localDependency("typescript"),
-      o0o0o: localDependency("o0o0o"),
     },
   }, null, 2))
   const install = spawnSync("npm", [
@@ -167,7 +167,7 @@ try {
     ...canonicalDependencyTarballs,
   ], { cwd: canonicalOnlyDir, encoding: "utf8" })
   assert.equal(install.status, 0, `canonical-only packed install failed:\n${install.stdout}\n${install.stderr}`)
-  for (const packageName of ["compiler", "core", "react", "vite", "vue", "web"]) {
+  for (const packageName of ["animation", "compiler", "core", "react", "vite", "vue", "web"]) {
     assert.equal(existsSync(resolve(canonicalOnlyDir, `node_modules/@vune-ui/${packageName}`)), true, `canonical vune-ui did not install @vune-ui/${packageName}`)
   }
   const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
@@ -190,6 +190,7 @@ try {
     dependencies: {
       "vune-ui": dependency("vune-ui"),
       "create-vune-ui": dependency("create-vune-ui"),
+      "@vune-ui/animation": dependency("@vune-ui/animation"),
       "@vune-ui/core": dependency("@vune-ui/core"),
       "@vune-ui/compiler": dependency("@vune-ui/compiler"),
       "@vune-ui/legacy-react": dependency("@vune-ui/legacy-react"),
@@ -201,7 +202,6 @@ try {
       "react-dom": localDependency("react-dom"),
       vue: localDependency("vue"),
       typescript: localDependency("typescript"),
-      o0o0o: localDependency("o0o0o"),
     },
   }
   writeFileSync(resolve(installDir, "package.json"), JSON.stringify(installManifest, null, 2))
@@ -209,6 +209,7 @@ try {
   assert.equal(install.status, 0, `clean packed install failed:\n${install.stdout}\n${install.stderr}`)
   const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import * as canonical from "vune-ui";
+    import { spring } from "@vune-ui/animation";
     import { Text } from "vune-ui";
     import { renderToStaticMarkup } from "react-dom/server";
     import { render as renderReact } from "@vune-ui/react";
@@ -217,6 +218,7 @@ try {
     import { compileVuneFile } from "@vune-ui/compiler";
     import { vunePlugin } from "@vune-ui/vite";
     if (typeof canonical.Text !== "function") throw new Error("packed canonical entry failed");
+    if (spring().kind !== "spring") throw new Error("packed animation runtime failed");
     if (renderToStaticMarkup(renderReact(Text("react"))) !== "<span>react</span>") throw new Error("packed React render failed");
     if (!renderVue(Text("vue"))) throw new Error("packed Vue render failed");
     if (renderToHTML(Text("packed")) !== "<span>packed</span>") throw new Error("packed Web render failed");

@@ -91,6 +91,7 @@ const projectFiles = [
 
 const localPackagePaths = {
   'vune-ui': '.',
+  '@vune-ui/animation': 'packages/animation',
   '@vune-ui/core': 'packages/core',
   '@vune-ui/compiler': 'packages/compiler',
   '@vune-ui/legacy-react': 'packages/legacy-react',
@@ -198,7 +199,7 @@ function configureLocalDependencies(projectRoot, localRoot, renderer = 'react', 
   // Add the internal runtime/compiler plumbing directly so bundlers that
   // resolve through the consumer's node_modules (Vite/Rolldown included)
   // see the same graph as the Vune workspace.
-  for (const name of ['@vune-ui/core', '@vune-ui/compiler']) {
+  for (const name of ['@vune-ui/animation', '@vune-ui/core', '@vune-ui/compiler']) {
     manifest.devDependencies[name] = linkSpecifier(resolve(localRoot, localPackagePaths[name]))
   }
   // pnpm 11 moved overrides out of package.json and into pnpm-workspace.yaml.
@@ -210,7 +211,7 @@ function configureLocalDependencies(projectRoot, localRoot, renderer = 'react', 
   }
   const overridePaths = includeRootPackage
     ? localPackagePaths
-    : Object.fromEntries(['@vune-ui/core', '@vune-ui/compiler', '@vune-ui/web', '@vune-ui/vite'].map(name => [name, localPackagePaths[name]]))
+    : Object.fromEntries(['@vune-ui/animation', '@vune-ui/core', '@vune-ui/compiler', '@vune-ui/web', '@vune-ui/vite'].map(name => [name, localPackagePaths[name]]))
   const overrides = Object.fromEntries(
     Object.entries(overridePaths).map(([name, relativePath]) => [
       name,

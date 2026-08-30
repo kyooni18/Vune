@@ -10,7 +10,7 @@ import {
   type InterpolatorOptions,
   type MotionSpec,
   type MotionValue,
-} from "o0o0o"
+} from "@vune-ui/animation"
 import type { Animation } from "@vune-ui/core"
 import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 import { svgPathInterpolatorOptions } from "./path-interpolation.js"
@@ -211,7 +211,7 @@ function compileMotionPlan(animation: Animation): CompiledMotionPlan {
   return plan
 }
 
-/** Convert and memoize Vune's SwiftUI-shaped value into a public o0o0o spec. */
+/** Convert and memoize Vune's SwiftUI-shaped value into a public @vune-ui/animation spec. */
 export function motionSpecForAnimation(animation: Animation): VuneMotionSpec {
   return compileMotionPlan(animation).spec
 }
@@ -344,7 +344,7 @@ class ScalarMotionChannel implements MotionChannel {
         while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || cycle < plan.repeatCount)) {
           const reverse = plan.autoreverses && cycle % 2 === 1
           // Calling animate() on the same MotionValue deliberately avoids a
-          // pre-cancel here: o0o0o retargets a live spring in-place and carries
+          // pre-cancel here: @vune-ui/animation retargets a live spring in-place and carries
           // its velocity into the new target.
           this.#control = animate(this.#value, reverse ? origin : target.value, plan.spec)
           const result = await this.#control.finished
@@ -591,8 +591,8 @@ export function cancelDomAttributeAnimation(element: Element, name: string): voi
 }
 
 /**
- * Animate a DOM attribute through the same Vune/o0o0o clock as style motion.
- * SVG path data uses o0o0o's cubic-normalizing path interpolator and keeps its
+ * Animate a DOM attribute through the same Vune animation clock as style motion.
+ * SVG path data uses @vune-ui/animation's cubic-normalizing path interpolator and keeps its
  * current presentation value when interrupted and retargeted.
  */
 export function animateDomAttribute(
@@ -711,7 +711,7 @@ export function animateDomStyle(
 
 /**
  * Launch a whole style diff as one motion batch. Every property keeps its own
- * persistent channel and execution plan, while o0o0o shares the frame loop and
+ * persistent channel and execution plan, while @vune-ui/animation shares the frame loop and
  * Vune coalesces the resulting DOM writes into one commit batch.
  */
 export function animateDomStyles(element: Element, changes: readonly DomStyleMotionChange[]): ReadonlySet<string> {

@@ -127,6 +127,7 @@ test('vune-ui link upgrades an existing project to robust local source links', (
   const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
   for (const name of [
     'vune-ui',
+    '@vune-ui/animation',
     '@vune-ui/core',
     '@vune-ui/compiler',
     '@vune-ui/legacy-react',

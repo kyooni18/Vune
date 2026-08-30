@@ -32,14 +32,14 @@ if (!existsSync(manifestPath)) {
 const packages = new Map()
 for (const file of readdirSync(packDir)) {
   if (!file.endsWith('.tgz')) continue
-  const match = file.match(/^(vune-ui(?:-(?:core|compiler|legacy-react|react|vue|web|vite))?)-(.+)\.tgz$/u)
+  const match = file.match(/^(vune-ui(?:-(?:animation|core|compiler|legacy-react|react|vue|web|vite))?)-(.+)\.tgz$/u)
   if (!match) continue
   const short = match[1]
   const name = short === 'vune-ui' ? 'vune-ui' : `@vune-ui/${short.slice('vune-ui-'.length)}`
   packages.set(name, resolve(packDir, file))
 }
 
-for (const required of ['vune-ui', '@vune-ui/core', '@vune-ui/compiler', '@vune-ui/vite', `@vune-ui/${rendererArg}`]) {
+for (const required of ['vune-ui', '@vune-ui/animation', '@vune-ui/core', '@vune-ui/compiler', '@vune-ui/vite', `@vune-ui/${rendererArg}`]) {
   if (!packages.has(required)) {
     console.error(`Missing local tarball for ${required}. Run \`pnpm pack:local\` first.`)
     process.exit(1)

@@ -1,5 +1,5 @@
-import type { InterpolatorOptions } from "o0o0o"
-import { createPathMorpher, parsePath, type ParsedPathSegment } from "o0o0o/path"
+import type { InterpolatorOptions } from "@vune-ui/animation"
+import { createPathMorpher, parsePath, type ParsedPathSegment } from "@vune-ui/animation/path"
 
 interface PathGeometry {
   readonly centroidX: number
@@ -306,7 +306,7 @@ export function createSvgPathInterpolator(from: string, to: string): (progress: 
   }
 }
 
-/** o0o0o custom interpolation option that retains exact authored endpoints. */
+/** @vune-ui/animation custom interpolation option that retains exact authored endpoints. */
 export function svgPathInterpolatorOptions(from: string, to: string): InterpolatorOptions {
   const interpolate = createSvgPathInterpolator(from, to)
   return { interpolate: (_from, _to, progress) => interpolate(progress) }

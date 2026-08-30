@@ -180,7 +180,7 @@ View invalidation / graph evaluation
     v
 renderer transaction
     |
-    +--> @vune-ui/web -> o0o0o numeric/color/transform interpolation
+    +--> @vune-ui/web -> @vune-ui/animation numeric/color/transform interpolation
     |
     `--> @vune-ui/react / @vune-ui/vue -> renderer-native style transition fallback
 ```
@@ -190,7 +190,7 @@ State writes snapshot the active mutation transaction, so asynchronous renderer
 updates do not lose the animation selected at mutation time. React, Vue, and DOM
 renderers consume the same render transaction.
 
-The DOM renderer now uses `o0o0o@0.2.2` for numeric, color, and transform values.
+The DOM renderer uses the in-workspace `@vune-ui/animation` package for numeric, color, and transform values.
 Spring updates keep the current value and velocity when a state update retargets
 an element, and a per-element/property control cancels the previous motion.
 The first render remains synchronous for SSR and hydration safety. React and Vue

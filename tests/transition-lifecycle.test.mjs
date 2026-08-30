@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 const jsdomModule = await import("jsdom").catch(() => null)
 import { Animation, State, Text, Transition, defineView, initializer, viewFragment } from "../packages/core/dist/index.js"
-import { mount, playWebTransition, transitionDurationMs, transitionFrames } from "../packages/web/dist/index.js"
+import { mount } from "../packages/web/dist/index.js"
+import { playWebTransition, transitionDurationMs, transitionFrames } from "../packages/web/dist/transition.js"
 
 test("transition descriptors compose insertion and removal effects without renderer state", () => {
   const transition = Transition.opacity
@@ -71,7 +72,7 @@ test("exit transitions leave the live reconciliation tree immediately and clean 
 
 
 test('presentation coordinator locks modal scroll and restores focus', { skip: jsdomModule == null }, async () => {
-  const { activateWebPresentation, activePresentationCount, disposeWebPresentation } = await import('../packages/web/dist/index.js')
+  const { activateWebPresentation, activePresentationCount, disposeWebPresentation } = await import('../packages/web/dist/presentation.js')
   const dom = new jsdomModule.JSDOM('<!doctype html><body><button id="before">Before</button><dialog id="modal"></dialog></body>')
   const { document } = dom.window
   const before = document.getElementById('before')

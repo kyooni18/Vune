@@ -6,7 +6,7 @@ import {
   motionValue,
   type AnimationControls,
   type InterpolatorOptions,
-} from "o0o0o"
+} from "@vune-ui/animation"
 import { motionSpecForAnimation } from "./motion.js"
 
 export type MotionStatus = "finished" | "cancelled"

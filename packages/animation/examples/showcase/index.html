@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Motion Runtime 0.6 Showcase</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      font-family: system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 25% 20%, #6849ff 0 12%, transparent 42%),
+        radial-gradient(circle at 75% 70%, #00a6ff 0 10%, transparent 40%),
+        linear-gradient(145deg, #13151e, #23293b);
+      color: white;
+    }
+    .panel {
+      width: min(720px, calc(100vw - 40px));
+      min-height: 420px;
+      padding: 32px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 36px;
+      box-shadow: 0 28px 80px rgba(0,0,0,.32);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+    svg { width: 100%; overflow: visible; }
+    path { fill: rgba(255,255,255,.92); }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    p { color: rgba(255,255,255,.72); line-height: 1.5; }
+    @media (max-width: 620px) { .panel { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <section class="panel" id="panel">
+    <svg viewBox="0 0 200 200" aria-label="morphing shape">
+      <path id="shape" d="M100 15 L125 72 L186 76 L139 116 L154 176 L100 143 L46 176 L61 116 L14 76 L75 72 Z" />
+    </svg>
+    <div>
+      <h1>Motion Runtime</h1>
+      <p>One spring progress value drives both a perceptual material transition and a pre-normalized SVG path morph.</p>
+      <button id="toggle">Morph</button>
+    </div>
+  </section>
+  <script type="module">
+    import { smooth } from '../../src/index.js';
+    import { animateMaterial, animatePath } from '../../src/dom/index.js';
+
+    const star = 'M100 15 L125 72 L186 76 L139 116 L154 176 L100 143 L46 176 L61 116 L14 76 L75 72 Z';
+    const blob = 'M100 20 C150 18 181 47 178 94 C175 145 146 179 99 180 C48 181 18 149 22 98 C26 51 53 22 100 20 Z';
+    const panel = document.querySelector('#panel');
+    const shape = document.querySelector('#shape');
+    let active = false;
+
+    document.querySelector('#toggle').addEventListener('click', () => {
+      const next = !active;
+      animatePath(shape, active ? blob : star, next ? blob : star, smooth(), { precision: 2 });
+      animateMaterial(panel, active ? 'ultraThin' : 'glass', next ? 'glass' : 'ultraThin', smooth());
+      active = next;
+    });
+
+    animateMaterial(panel, 'clear', 'ultraThin', smooth());
+  </script>
+</body>
+</html>

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@vune-ui/animation':
+        specifier: workspace:*
+        version: link:packages/animation
       '@vune-ui/compiler':
         specifier: workspace:*
         version: link:packages/compiler
@@ -84,6 +87,8 @@ importers:
 
   editors/vscode: {}
 
+  packages/animation: {}
+
   packages/compiler:
     dependencies:
       '@vune-ui/core':
@@ -156,12 +161,12 @@ importers:
 
   packages/web:
     dependencies:
+      '@vune-ui/animation':
+        specifier: workspace:*
+        version: link:../animation
       '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
-      o0o0o:
-        specifier: ^0.2.2
-        version: 0.2.2
 
 packages:
 
@@ -880,10 +885,6 @@ packages:
 
   nwsapi@2.2.24:
     resolution: {integrity: sha512-7YRhZ3jS45LwmSCT4b2sVFHt/WuovaktDU07QrtOBY2PXskss5a9jfmR9jptyumwXST+rFjrmppMY1KT/yn35A==}
-
-  o0o0o@0.2.2:
-    resolution: {integrity: sha512-8F3k1f2M/F2P5LE+/SLYKPx+pExl7xshQFtvK18Yo4qJDZ+LN6ZVXdg/xTm7PcY11kTCFBj6Fa7RPT9hgenK1Q==}
-    engines: {node: '>=20'}
 
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
@@ -1652,8 +1653,6 @@ snapshots:
   node-releases@2.0.53: {}
 
   nwsapi@2.2.24: {}
-
-  o0o0o@0.2.2: {}
 
   parse5@7.3.0:
     dependencies:

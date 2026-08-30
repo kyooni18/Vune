@@ -19,6 +19,7 @@ const packDir = resolve(root, 'local-packages')
 const defaultRegistry = 'https://registry.npmjs.org/'
 
 const releaseTargets = [
+  'packages/animation',
   'packages/core',
   'packages/compiler',
   'packages/legacy-react',

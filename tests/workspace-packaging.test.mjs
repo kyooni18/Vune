@@ -8,6 +8,7 @@ import test from 'node:test'
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const manifests = [
   'package.json',
+  'packages/animation/package.json',
   'packages/compiler/package.json',
   'packages/core/package.json',
   'packages/create-vune-ui/package.json',
@@ -38,6 +39,7 @@ test('workspace-internal dependencies never require a published Vune package dur
 test('canonical root installs the published Vune packages together', () => {
   const manifest = readJSON('package.json')
   for (const name of [
+    '@vune-ui/animation',
     '@vune-ui/compiler',
     '@vune-ui/core',
     '@vune-ui/react',

@@ -1,5 +1,5 @@
 import { Animation, type ContentTransition, type SymbolReplacementFallback, type TextTransitionDirection } from "@vune-ui/core"
-import { createInterpolator } from "o0o0o"
+import { createInterpolator } from "@vune-ui/animation"
 import { vuneMotion, type MotionHandle } from "./element-motion.js"
 import {
   createSvgPathInterpolator,

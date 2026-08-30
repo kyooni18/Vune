@@ -66,6 +66,7 @@
     "check": "pnpm run build:workspace && tsc -p tsconfig.build.json --noEmit",
     "test:types": "tsc -p tsconfig.tests.json",
     "test:runtime": "node --test tests/react-runtime.test.mjs tests/react-widgets.test.mjs tests/react-client.test.mjs tests/macro-react.test.mjs tests/new-features.test.mjs tests/view-system.test.mjs",
+    "test:animation": "pnpm --filter @vune-ui/animation run test:full && pnpm --filter @vune-ui/animation run typecheck",
     "test:browser": "node --test tests/browser.test.mjs",
     "test:browser:vue": "node --test tests/vue-browser.test.mjs",
     "test:browser:web": "node --test tests/web-browser.test.mjs",
@@ -76,7 +77,7 @@
     "benchmark:performance:ci": "VUNE_BENCH_CI=1 pnpm run build:workspace && VUNE_BENCH_CI=1 node --expose-gc benchmarks/performance.mjs",
     "benchmark:browser": "pnpm run build:workspace && vite build --config benchmarks/browser.vite.config.ts && node benchmarks/browser-performance.mjs",
     "benchmark:browser:ci": "VUNE_BROWSER_BENCH_CI=1 pnpm run benchmark:browser",
-    "test": "pnpm run build && pnpm run test:types && pnpm run test:runtime && pnpm run test:packages && pnpm run test:docs && pnpm run test:release",
+    "test": "pnpm run build && pnpm run test:types && pnpm run test:animation && pnpm run test:runtime && pnpm run test:packages && pnpm run test:docs && pnpm run test:release",
     "dev": "vite --config examples/vite.config.ts",
     "demo:build": "vite build --config examples/vite.config.ts",
     "demo:vue:build": "vite build --config examples/vue.vite.config.ts",
@@ -113,6 +114,7 @@
     "snapshot:swiftui": "node scripts/snapshot-swiftui-api.mjs"
   },
   "dependencies": {
+    "@vune-ui/animation": "workspace:*",
     "@vune-ui/compiler": "workspace:*",
     "@vune-ui/core": "workspace:*",
     "@vune-ui/react": "workspace:*",

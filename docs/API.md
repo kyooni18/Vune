@@ -184,7 +184,7 @@ assistive technology while an `aria-hidden` visual overlay animates.
 SVG `Path` is intrinsically animatable: changing `d` under `.animation()` or an
 explicit animation domain uses the same persistent motion clock as style
 properties. Vune first assigns changing compound contours by geometry, then
-o0o0o normalizes each pair to compatible cubic geometry. The SVG parser accepts
+`@vune-ui/animation` normalizes each pair to compatible cubic geometry. The SVG parser accepts
 compact arc-flag syntax used by production icon packs. High-confidence shape
 correspondence may extrapolate normalized coordinates with spring overshoot;
 low-confidence correspondence keeps the silhouette within monotonic 0...1

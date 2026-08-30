@@ -1,0 +1,110 @@
+{
+  "name": "@vune-ui/animation",
+  "version": "0.1.20",
+  "type": "module",
+  "description": "Renderer-agnostic Vune animation runtime with JS/WASM/Worker execution, gestures, timelines, transitions, scroll linking, constraints, and GPU/canvas adapters.",
+  "sideEffects": false,
+  "main": "./dist/src/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./core": {
+      "types": "./dist/src/core/index.d.ts",
+      "import": "./dist/src/core/index.js"
+    },
+    "./dom": {
+      "types": "./dist/src/dom/index.d.ts",
+      "import": "./dist/src/dom/index.js"
+    },
+    "./interpolate": {
+      "types": "./dist/src/interpolate/index.d.ts",
+      "import": "./dist/src/interpolate/index.js"
+    },
+    "./interpolate/css": {
+      "types": "./dist/src/interpolate/css.d.ts",
+      "import": "./dist/src/interpolate/css.js"
+    },
+    "./layout": {
+      "types": "./dist/src/layout/index.d.ts",
+      "import": "./dist/src/layout/index.js"
+    },
+    "./worker": {
+      "types": "./dist/src/worker/index.d.ts",
+      "import": "./dist/src/worker/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/src/wasm/index.d.ts",
+      "import": "./dist/src/wasm/index.js"
+    },
+    "./path": {
+      "types": "./dist/src/path/index.d.ts",
+      "import": "./dist/src/path/index.js"
+    },
+    "./material": {
+      "types": "./dist/src/material/index.d.ts",
+      "import": "./dist/src/material/index.js"
+    },
+    "./gesture": {
+      "types": "./dist/src/gesture/index.d.ts",
+      "import": "./dist/src/gesture/index.js"
+    },
+    "./timeline": {
+      "types": "./dist/src/timeline/index.d.ts",
+      "import": "./dist/src/timeline/index.js"
+    },
+    "./transition": {
+      "types": "./dist/src/transition/index.d.ts",
+      "import": "./dist/src/transition/index.js"
+    },
+    "./scroll": {
+      "types": "./dist/src/scroll/index.d.ts",
+      "import": "./dist/src/scroll/index.js"
+    },
+    "./constraints": {
+      "types": "./dist/src/constraints/index.d.ts",
+      "import": "./dist/src/constraints/index.js"
+    },
+    "./canvas": {
+      "types": "./dist/src/canvas/index.d.ts",
+      "import": "./dist/src/canvas/index.js"
+    },
+    "./webgl": {
+      "types": "./dist/src/webgl/index.d.ts",
+      "import": "./dist/src/webgl/index.js"
+    },
+    "./webgpu": {
+      "types": "./dist/src/webgpu/index.d.ts",
+      "import": "./dist/src/webgpu/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:wasm": "bash wasm/build.sh && node scripts/snapshot-wasm.mjs",
+    "test": "pnpm run build && pnpm run test:full && pnpm run typecheck",
+    "test:focused": "node --test test/motion-value.test.mjs test/spring.test.mjs test/timing.test.mjs test/interpolation.test.mjs test/layout.test.mjs test/material.test.mjs test/planner.test.mjs test/timeline.test.mjs test/transition.test.mjs test/gesture.test.mjs",
+    "test:full": "node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.types.json",
+    "bench": "node bench/springs.mjs",
+    "bench:worker": "node bench/worker-springs.mjs",
+    "bench:path": "node bench/path.mjs",
+    "bench:gestures": "node bench/gestures.mjs",
+    "bench:timeline": "node bench/timeline.mjs",
+    "bench:transitions": "node bench/transitions.mjs",
+    "bench:constraints": "node bench/constraints.mjs",
+    "bench:scroll": "node bench/scroll.mjs",
+    "bench:renderers": "node bench/renderers.mjs"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "ARCHITECTURE.md",
+    "PERFORMANCE.md",
+    "CHANGELOG.md"
+  ]
+}

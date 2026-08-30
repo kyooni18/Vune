@@ -34,7 +34,7 @@ async function waitUntil(predicate, timeout = 250) {
   return predicate()
 }
 
-test("Web DOM animation adapter executes o0o0o timing and spring specs", async () => {
+test("Web DOM animation adapter executes @vune-ui/animation timing and spring specs", async () => {
   const dom = new JSDOM('<div style="opacity:0"></div>')
   const element = dom.window.document.querySelector("div")
   assert.ok(element)
@@ -73,7 +73,7 @@ test("Web motion channels honor delay/repeat and retarget from the live presenta
   dom.window.close()
 })
 
-test("Web mount routes animated State patches through o0o0o", async () => {
+test("Web mount routes animated State patches through @vune-ui/animation", async () => {
   const dom = new JSDOM('<div id="app"></div>')
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
