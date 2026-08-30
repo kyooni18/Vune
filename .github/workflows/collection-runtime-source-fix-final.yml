@@ -109,18 +109,25 @@ jobs:
             'dynamic dependency collection',
           )
 
-          old_fallback = '''        // Candidate fallback rendering suppresses direct DOM ownership, but a
-                // compiler-isolated State source still needs a fresh invalidation
-                // subscription after the previous executor is discarded.
-                registerGenericStateCollection(node, identity, ownerKey, context, runtime)
-          '''
-          new_fallback = '''        // A compiled collection normally isolates its source dependency inside
-                // the direct executor. Once rendering falls back to the generic graph,
-                // that compiler proof no longer applies: let the owning View collect
-                // the source and row reads through the normal dependency collector.
-                if (node.compiled?.evaluateKey) owner.dynamicDependencies = true
-          '''
-          source = replace_once(source, old_fallback, new_fallback, 'generic collection ownership handoff')
+          source, count = re.subn(
+            r'(?m)^(\s*)registerGenericStateCollection\(node, identity, ownerKey, context, runtime\)$',
+            r'\1if (node.compiled?.evaluateKey) owner.dynamicDependencies = true',
+            source,
+            count=1,
+          )
+          if count != 1:
+            raise SystemExit(f'generic collection ownership handoff: expected one call, found {count}')
+
+          source = source.replace(
+            '        // Candidate fallback rendering suppresses direct DOM ownership, but a\n'
+            '        // compiler-isolated State source still needs a fresh invalidation\n'
+            '        // subscription after the previous executor is discarded.\n',
+            '        // A compiled collection normally isolates its source dependency inside\n'
+            '        // the direct executor. Once rendering falls back to the generic graph,\n'
+            '        // that compiler proof no longer applies: let the owning View collect\n'
+            '        // the source and row reads through the normal dependency collector.\n',
+            1,
+          )
 
           pattern = re.compile(
             r'function registerGenericStateCollection\(.*?\n}\n\n(?=function collectionMutationEffects\()',
