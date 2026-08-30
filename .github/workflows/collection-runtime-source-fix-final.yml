@@ -36,6 +36,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           def replace_once(source: str, before: str, after: str, label: str) -> str:
             count = source.count(before)
@@ -78,27 +79,56 @@ jobs:
             'compiled collection prop predicate',
           )
 
-          old_subscription = '''  registerDomCollection(runtime, instance)
-            subscribeDomCollection(instance, context, runtime)
-          }
+          source = replace_once(
+            source,
+            '  renderedBody: boolean\n}',
+            '  renderedBody: boolean\n  dynamicDependencies: boolean\n}',
+            'boundary dynamic dependency field',
+          )
 
-          function collectionMutationEffects(
-          '''
-          new_subscription = '''  registerDomCollection(runtime, instance)
-            const source = node.source as StateRef<unknown>
-            // Generic fallback must invalidate the owning View, not run the direct
-            // collection patcher with an empty row index. Keeping this ownership in
-            // the DOM renderer also avoids leaking the source dependency into React
-            // and Vue collection boundaries.
-            instance.unsubscribe = subscribeState(source, (transaction, batch) => {
-              if (runtime.collections.get(instance.key) !== instance) return
-              runtime.invalidateBoundary?.(instance.ownerKey, transaction, batch.mutations)
-            })
-          }
+          source = replace_once(
+            source,
+            '        renderedBody: true,\n      }',
+            '        renderedBody: true,\n        dynamicDependencies: false,\n      }',
+            'boundary dynamic dependency initialization',
+          )
 
-          function collectionMutationEffects(
+          source = replace_once(
+            source,
+            '    const declared = node.dependencies\n',
+            '    boundary.dynamicDependencies = false\n    const declared = node.dependencies\n',
+            'boundary dependency proof reset',
+          )
+
+          source = replace_once(
+            source,
+            '        dependency => { if (!(declared && node.dependenciesComplete === true)) dependencies.add(dependency) },',
+            '''        dependency => {
+                  if (!(declared && node.dependenciesComplete === true) || boundary.dynamicDependencies) dependencies.add(dependency)
+                },''',
+            'dynamic dependency collection',
+          )
+
+          old_fallback = '''        // Candidate fallback rendering suppresses direct DOM ownership, but a
+                // compiler-isolated State source still needs a fresh invalidation
+                // subscription after the previous executor is discarded.
+                registerGenericStateCollection(node, identity, ownerKey, context, runtime)
           '''
-          source = replace_once(source, old_subscription, new_subscription, 'generic collection subscription')
+          new_fallback = '''        // A compiled collection normally isolates its source dependency inside
+                // the direct executor. Once rendering falls back to the generic graph,
+                // that compiler proof no longer applies: let the owning View collect
+                // the source and row reads through the normal dependency collector.
+                if (node.compiled?.evaluateKey) owner.dynamicDependencies = true
+          '''
+          source = replace_once(source, old_fallback, new_fallback, 'generic collection ownership handoff')
+
+          pattern = re.compile(
+            r'function registerGenericStateCollection\(.*?\n}\n\n(?=function collectionMutationEffects\()',
+            re.S,
+          )
+          source, count = pattern.subn('', source, count=1)
+          if count != 1:
+            raise SystemExit(f'generic collection helper removal: expected one match, found {count}')
 
           path.write_text(source)
           PY
