@@ -1,0 +1,181 @@
+name: Runtime regression fix
+
+on:
+  push:
+    branches:
+      - codex/collection-runtime-finalize-20260830
+
+permissions:
+  contents: write
+
+concurrency:
+  group: runtime-regression-fix
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: contains(github.event.head_commit.message, 'run runtime regression fix')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/collection-runtime-finalize-20260830
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Patch direct keyed eligibility
+        run: |
+          node <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+
+          const path = 'packages/web/src/dom.ts'
+          let source = readFileSync(path, 'utf8')
+
+          const replaceOnce = (before, after, label) => {
+            const first = source.indexOf(before)
+            if (first < 0) throw new Error(`missing patch anchor: ${label}`)
+            if (source.indexOf(before, first + before.length) >= 0) throw new Error(`ambiguous patch anchor: ${label}`)
+            source = source.slice(0, first) + after + source.slice(first + before.length)
+          }
+
+          replaceOnce(
+`      // Event listener lifecycle is renderer state, not a data-only host prop.
+      // Keep it on the generic graph path even when a manually supplied
+      // compiled plan happens to return a function.
+      if (/^on[A-Za-z]/.test(key)) return false
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+`,
+`      // The generic flat keyed host patcher already owns event-listener
+      // lifecycle through patchDomProps, so callbacks are safe here. Compiled
+      // collection executors use the stricter predicate below because their
+      // State subscription would otherwise bypass generic View invalidation.
+      if (/^on[A-Za-z]/.test(key)) {
+        if (value !== undefined && value !== null && typeof value !== "function") return false
+        continue
+      }
+      const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
+`,
+            'event props in direct keyed host predicate',
+          )
+
+          replaceOnce(
+`function ordinaryDirectHostTag(type: unknown): type is string {
+`,
+`function directCompiledCollectionPropsSafe(props: Record<string, unknown> | null): boolean {
+  if (!directKeyedPatchPropsSafe(props)) return false
+  if (!props) return true
+  try {
+    for (const key of Reflect.ownKeys(props)) {
+      if (typeof key === "string" && /^on[A-Za-z]/.test(key)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function ordinaryDirectHostTag(type: unknown): type is string {
+`,
+            'compiled collection prop predicate insertion',
+          )
+
+          replaceOnce(
+`      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined
+`,
+`      || !directCompiledCollectionPropsSafe(evaluated.props)) return undefined
+`,
+            'compiled collection predicate use',
+          )
+
+          replaceOnce(
+`function registerGenericStateCollection(
+  node: KeyedCollectionViewNode,
+  identity: readonly (string | number)[],
+  ownerKey: string,
+  context: DomRenderContext,
+  runtime: DomViewRuntime,
+): void {
+  // Compiler-owned State collections normally stay entirely inside the direct
+  // executor. Runtime values can still invalidate that proof (for example a
+  // manually supplied descriptor returning an event prop). Keep the source
+  // subscription even when rendering the row graph generically, otherwise the
+  // compiler's parent-invalidation isolation would leave that fallback stale.
+  if (!isStateRef(node.source) || !node.compiled?.evaluateKey) return
+  const key = viewIdentityKey([...identity, "collection-executor"])
+  const instance: DomCollectionInstance = {
+    key,
+    ownerKey,
+    node,
+    sourceIdentity: collectionSourceIdentity(node),
+    rows: new Map(),
+    order: [],
+    rowsByItem: new Map(),
+    actualKeys: new Set(),
+    occurrenceCounts: new Map(),
+    pendingMutations: [],
+    scheduled: false,
+  }
+  registerDomCollection(runtime, instance)
+  subscribeDomCollection(instance, context, runtime)
+}
+
+`,
+``,
+            'generic collection subscription helper',
+          )
+
+          replaceOnce(
+`        // Candidate fallback rendering suppresses direct DOM ownership, but a
+        // compiler-isolated State source still needs a fresh invalidation
+        // subscription after the previous executor is discarded.
+        registerGenericStateCollection(node, identity, ownerKey, context, runtime)
+`,
+`        // Once direct execution loses its proof, generic rendering owns the
+        // dependency lifecycle again. Do not retain a collection-local State
+        // subscription here: it would isolate effectful rows from their normal
+        // View invalidation path.
+`,
+            'generic collection fallback registration',
+          )
+
+          writeFileSync(path, source)
+          NODE
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Targeted web regression tests
+        run: >-
+          node --test
+          --test-name-pattern='flat keyed host rows|eventful compiled collection|row-local invalidation|compiled keyed collection|push pop and reverse|batches in-place ForEach mutations|duplicate occurrence identity'
+          tests/web-package.test.mjs
+
+      - name: Full validation
+        run: |
+          node --test tests/core.test.mjs
+          node --test tests/compiler-package.test.mjs
+          node --test --test-name-pattern='compiler-planned State collections' tests/react-client.test.mjs tests/vue-live.test.mjs
+          node --test tests/web-package.test.mjs
+          pnpm test
+
+      - name: Commit fix and remove one-shot workflow
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/runtime-regression-fix.yml
+          git add packages/web/src/dom.ts
+          git diff --cached --check
+          git commit -m 'Fix keyed collection fallback eligibility [skip ci]'
+          git push origin HEAD:codex/collection-runtime-finalize-20260830
