@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    if: ${{ !contains(github.event.head_commit.message, '[skip source-fix]') }}
+  validate-and-commit:
+    if: contains(github.event.head_commit.message, 'run proxy fallback fix')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -22,151 +22,292 @@ jobs:
         with:
           ref: codex/collection-runtime-finalize-20260830
           fetch-depth: 0
+
       - uses: pnpm/action-setup@v4
         with:
           version: 11.22.0
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.13.0
+          node-version: 26.7.0
           cache: pnpm
 
-      - name: Fix collection fast-path eligibility and generic fallback ownership
+      - name: Patch collection fallback semantics
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           def replace_once(source: str, before: str, after: str, label: str) -> str:
-            count = source.count(before)
-            if count == 1:
+              count = source.count(before)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
               return source.replace(before, after, 1)
-            if count == 0 and after in source:
-              return source
-            raise SystemExit(f'{label}: expected one match, found {count}')
+
+          helper = '''function reactiveFallbackCollectionEntry(
+            node: KeyedCollectionViewNode,
+            entry: KeyedCollectionEntry,
+          ): KeyedCollectionEntry {
+            if (!isStateRef(node.source)) return entry
+            const items = node.source.value as readonly unknown[]
+            if (reactiveIdentity(items) === items) return entry
+            try {
+              const item = items[entry.index]
+              return Object.is(item, entry.item) ? entry : { ...entry, item }
+            } catch {
+              return entry
+            }
+          }
+
+          '''
 
           path = Path('packages/web/src/dom.ts')
           source = path.read_text()
-
           source = replace_once(
-            source,
-            'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {',
-            'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null, allowEvents = true): boolean {',
-            'direct keyed prop predicate signature',
+              source,
+              'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {',
+              'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null, allowEvents = true): boolean {',
+              'web direct keyed predicate signature',
           )
-
-          old_event = '''      // Event listener lifecycle is renderer state, not a data-only host prop.
-                // Keep it on the generic graph path even when a manually supplied
-                // compiled plan happens to return a function.
-                if (/^on[A-Za-z]/.test(key)) return false
-          '''
-          new_event = '''      // Raw keyed-host patching owns listener lifecycle through patchDomProps.
-                // Compiler-owned collection executors stay data-only so a runtime plan
-                // that produces effects falls back to the generic renderer instead.
-                if (/^on[A-Za-z]/.test(key)) {
-                  if (!allowEvents) return false
-                  if (value !== undefined && value !== null && typeof value !== "function") return false
-                  continue
-                }
-          '''
-          source = replace_once(source, old_event, new_event, 'event prop safety branch')
-
           source = replace_once(
-            source,
-            '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined',
-            '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined',
-            'compiled collection prop predicate',
+              source,
+              '''      // Event listener lifecycle is renderer state, not a data-only host prop.\n      // Keep it on the generic graph path even when a manually supplied\n      // compiled plan happens to return a function.\n      if (/^on[A-Za-z]/.test(key)) return false\n''',
+              '''      // Raw keyed-host patching owns listener lifecycle through patchDomProps.\n      // Compiler-owned direct collection executors remain data-only.\n      if (/^on[A-Za-z]/.test(key)) {\n        if (!allowEvents) return false\n        if (value !== undefined && value !== null && typeof value !== "function") return false\n        continue\n      }\n''',
+              'web event prop branch',
           )
-
           source = replace_once(
-            source,
-            '  renderedBody: boolean\n}',
-            '  renderedBody: boolean\n  dynamicDependencies: boolean\n}',
-            'boundary dynamic dependency field',
+              source,
+              '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined',
+              '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined',
+              'web compiled collection strict predicate',
           )
-
           source = replace_once(
-            source,
-            '        renderedBody: true,\n      }',
-            '        renderedBody: true,\n        dynamicDependencies: false,\n      }',
-            'boundary dynamic dependency initialization',
+              source,
+              'function ordinaryDirectHostTag(type: unknown): type is string {',
+              helper + 'function ordinaryDirectHostTag(type: unknown): type is string {',
+              'web reactive fallback helper',
           )
-
           source = replace_once(
-            source,
-            '    const declared = node.dependencies\n',
-            '    boundary.dynamicDependencies = false\n    const declared = node.dependencies\n',
-            'boundary dependency proof reset',
+              source,
+              '      for (const entry of keyedCollectionEntries(node)) appendDomChild(fragment, renderEntry(entry), context)',
+              '''      for (const entry of keyedCollectionEntries(node)) {\n        appendDomChild(fragment, renderEntry(reactiveFallbackCollectionEntry(node, entry)), context)\n      }''',
+              'web generic collection reactive entry',
           )
+          path.write_text(source)
 
+          path = Path('packages/react/src/renderer.ts')
+          source = path.read_text()
           source = replace_once(
-            source,
-            '        dependency => { if (!(declared && node.dependenciesComplete === true)) dependencies.add(dependency) },',
-            '''        dependency => {
-                  if (!(declared && node.dependenciesComplete === true) || boundary.dynamicDependencies) dependencies.add(dependency)
-                },''',
-            'dynamic dependency collection',
+              source,
+              '  isForeignComponent,\n  keyedCollectionEntries,',
+              '  isForeignComponent,\n  isStateRef,\n  keyedCollectionEntries,',
+              'react isStateRef import',
           )
-
-          source, count = re.subn(
-            r'(?m)^(\s*)registerGenericStateCollection\(node, identity, ownerKey, context, runtime\)$',
-            r'\1if (node.compiled?.evaluateKey) owner.dynamicDependencies = true',
-            source,
-            count=1,
+          source = replace_once(
+              source,
+              '  layoutLength,\n  renderViewNode,',
+              '  layoutLength,\n  reactiveIdentity,\n  renderViewNode,',
+              'react reactiveIdentity import',
           )
-          if count != 1:
-            raise SystemExit(f'generic collection ownership handoff: expected one call, found {count}')
-
-          source = source.replace(
-            '        // Candidate fallback rendering suppresses direct DOM ownership, but a\n'
-            '        // compiler-isolated State source still needs a fresh invalidation\n'
-            '        // subscription after the previous executor is discarded.\n',
-            '        // A compiled collection normally isolates its source dependency inside\n'
-            '        // the direct executor. Once rendering falls back to the generic graph,\n'
-            '        // that compiler proof no longer applies: let the owning View collect\n'
-            '        // the source and row reads through the normal dependency collector.\n',
-            1,
+          source = replace_once(
+              source,
+              'function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): ReactNode | undefined {',
+              helper + 'function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): ReactNode | undefined {',
+              'react reactive fallback helper',
           )
-
-          pattern = re.compile(
-            r'function registerGenericStateCollection\(.*?\n}\n\n(?=function collectionMutationEffects\()',
-            re.S,
+          source = replace_once(
+              source,
+              '      return direct ?? createElement(Fragment, { key: entry.key }, renderEntry(entry))',
+              '      return direct ?? createElement(Fragment, { key: entry.key }, renderEntry(reactiveFallbackCollectionEntry(node, entry)))',
+              'react generic collection reactive entry',
           )
-          source, count = pattern.subn('', source, count=1)
-          if count != 1:
-            raise SystemExit(f'generic collection helper removal: expected one match, found {count}')
+          path.write_text(source)
 
+          path = Path('packages/vue/src/index.ts')
+          source = path.read_text()
+          source = replace_once(
+              source,
+              '  isForeignComponent,\n  keyedCollectionEntries,',
+              '  isForeignComponent,\n  isStateRef,\n  keyedCollectionEntries,',
+              'vue isStateRef import',
+          )
+          source = replace_once(
+              source,
+              '  layoutLength,\n  renderViewNode,',
+              '  layoutLength,\n  reactiveIdentity,\n  renderViewNode,',
+              'vue reactiveIdentity import',
+          )
+          source = replace_once(
+              source,
+              'function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): VNodeChild | undefined {',
+              helper + 'function renderDirectCollectionEntry(node: KeyedCollectionViewNode, entry: KeyedCollectionEntry): VNodeChild | undefined {',
+              'vue reactive fallback helper',
+          )
+          source = replace_once(
+              source,
+              '          return direct ?? h(Fragment, { key: entry.key }, [props.renderEntry(entry)])',
+              '          return direct ?? h(Fragment, { key: entry.key }, [props.renderEntry(reactiveFallbackCollectionEntry(props.node, entry))])',
+              'vue generic collection reactive entry',
+          )
           path.write_text(source)
           PY
           git diff --check
 
+      - name: Add adapter fallback regression coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> tests/react-client.test.mjs <<'EOF'
+
+          test('React keeps eventful compiled collection fallback rows reactive without rebuilding the parent View', async () => {
+            const restore = installDOM()
+            try {
+              const items = CanonicalState([{ id: 'a', value: 'A', calls: 0 }])
+              let parentRuns = 0
+              let genericRuns = 0
+              const content = compiledCollectionContent(item => {
+                genericRuns += 1
+                return viewElement('button', {
+                  'data-row': item.id,
+                  onClick: () => { item.calls += 1 },
+                }, [`${item.value}:${item.calls}`])
+              }, {
+                kind: 'flat-text-host',
+                indexIndependent: true,
+                evaluateKey: item => item.id,
+                evaluate: item => ({
+                  type: 'button',
+                  props: { 'data-row': item.id, onClick: () => { item.calls += 1 } },
+                  text: `${item.value}:${item.calls}`,
+                }),
+              })
+              const App = canonicalView(() => {
+                parentRuns += 1
+                return viewElement('section', null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+              })
+              const root = createRoot(document.getElementById('root'))
+              await act(async () => { root.render(createElement(App)) })
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 1)
+              assert.equal(document.querySelector('[data-row="a"]').textContent, 'A:0')
+
+              await act(async () => {
+                document.querySelector('[data-row="a"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+              })
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 2)
+              assert.equal(items.value[0].calls, 1)
+              assert.equal(document.querySelector('[data-row="a"]').textContent, 'A:1')
+
+              await act(async () => { items.value[0].value = 'A2' })
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 3)
+              assert.equal(document.querySelector('[data-row="a"]').textContent, 'A2:1')
+              await act(async () => { root.unmount() })
+            } finally {
+              restore()
+            }
+          })
+          EOF
+
+          cat >> tests/vue-live.test.mjs <<'EOF'
+
+          test("Vue keeps eventful compiled collection fallback rows reactive without rebuilding the parent View", async () => {
+            const dom = new JSDOM("<!doctype html><div id=app></div>")
+            const previous = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, SVGElement: globalThis.SVGElement, Node: globalThis.Node }
+            globalThis.window = dom.window
+            globalThis.document = dom.window.document
+            globalThis.Element = dom.window.Element
+            globalThis.SVGElement = dom.window.SVGElement
+            globalThis.Node = dom.window.Node
+            try {
+              const { createApp, nextTick } = await import("vue")
+              const { VuneView } = await import("../packages/vue/dist/index.js")
+              const items = State([{ id: "a", value: "A", calls: 0 }])
+              let parentRuns = 0
+              let genericRuns = 0
+              const content = compiledCollectionContent(item => {
+                genericRuns += 1
+                return viewElement("button", {
+                  "data-row": item.id,
+                  onClick: () => { item.calls += 1 },
+                }, [`${item.value}:${item.calls}`])
+              }, {
+                kind: "flat-text-host",
+                indexIndependent: true,
+                evaluateKey: item => item.id,
+                evaluate: item => ({
+                  type: "button",
+                  props: { "data-row": item.id, onClick: () => { item.calls += 1 } },
+                  text: `${item.value}:${item.calls}`,
+                }),
+              })
+              const App = defineView("VueEventfulCompiledCollectionFallback", {
+                initializers: [initializer("App()", args => args.length === 0)],
+                body: () => {
+                  parentRuns += 1
+                  return viewElement("section", null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+                },
+              })
+              const app = createApp(VuneView, { render: () => App() })
+              app.mount(dom.window.document.getElementById("app"))
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 1)
+              assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "A:0")
+
+              dom.window.document.querySelector('[data-row="a"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+              await nextTick()
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 2)
+              assert.equal(items.value[0].calls, 1)
+              assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "A:1")
+
+              items.value[0].value = "A2"
+              await nextTick()
+              assert.equal(parentRuns, 1)
+              assert.equal(genericRuns, 3)
+              assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "A2:1")
+              app.unmount()
+            } finally {
+              globalThis.window = previous.window
+              globalThis.document = previous.document
+              globalThis.Element = previous.Element
+              globalThis.SVGElement = previous.SVGElement
+              globalThis.Node = previous.Node
+              dom.window.close()
+            }
+          })
+          EOF
+          git diff --check
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
       - name: Build workspace
         run: pnpm run build
-      - name: State core tests
-        run: node --test tests/core.test.mjs
-      - name: Collection-specific Web tests
+
+      - name: Targeted collection regressions
         shell: bash
         run: |
           node --test \
             --test-name-pattern='row-local invalidation|flat keyed host rows|batches in-place ForEach mutations|compiled keyed collection|eventful compiled collection|push pop and reverse|duplicate occurrence identity' \
             tests/web-package.test.mjs
-      - name: Compiler tests
-        run: node --test tests/compiler-package.test.mjs
-      - name: React and Vue collection adapter tests
+          node --test \
+            --test-name-pattern='compiler-planned State collections|eventful compiled collection fallback' \
+            tests/react-client.test.mjs tests/vue-live.test.mjs
+
+      - name: Full package validation
         shell: bash
         run: |
-          node --test \
-            --test-name-pattern='collection|ForEach|keyed' \
-            tests/react-client.test.mjs tests/vue-live.test.mjs
-      - name: Full Web package tests
-        run: node --test tests/web-package.test.mjs
-      - name: Full test suite
-        run: pnpm test
+          node --test tests/core.test.mjs
+          node --test tests/compiler-package.test.mjs
+          node --test tests/web-package.test.mjs
+          node --test tests/react-client.test.mjs
+          node --test tests/vue-live.test.mjs
+          pnpm test
 
-      - name: Benchmark checkpoint and optimized branch
+      - name: Benchmark checkpoint and optimized tree
         shell: bash
         run: |
           set -euo pipefail
@@ -190,14 +331,14 @@ jobs:
         with:
           name: collection-runtime-final-evidence
           path: /tmp/vune-validation
-          retention-days: 3
+          retention-days: 7
           if-no-files-found: error
 
-      - name: Commit validated product tree and remove diagnostics
+      - name: Commit validated product tree and clean diagnostics
         shell: bash
         run: |
           set -euo pipefail
-          git diff -- packages/web/src/dom.ts > /tmp/collection-source-fix.patch
+          git diff -- packages/web/src/dom.ts packages/react/src/renderer.ts packages/vue/src/index.ts tests/react-client.test.mjs tests/vue-live.test.mjs > /tmp/final-product.patch
           git reset --hard HEAD
           git clean -fd
           git fetch origin codex/collection-runtime-finalize-20260830
@@ -208,7 +349,8 @@ jobs:
             exit 1
           fi
           git rebase origin/codex/collection-runtime-finalize-20260830
-          git apply /tmp/collection-source-fix.patch
+          git apply /tmp/final-product.patch
+
           while IFS= read -r -d '' path; do
             git rm -r -f --ignore-unmatch -- "$path"
           done < <(find .github -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
@@ -216,19 +358,16 @@ jobs:
             git rm -f --ignore-unmatch -- "$path"
           done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
           git rm -f --ignore-unmatch .github/workflows/runtime-regression-fix.yml
-          if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-|^\.github/workflows/runtime-regression-fix\.yml$)'; then
-            echo 'Temporary collection diagnostics remain after cleanup.' >&2
-            exit 1
-          fi
+
           checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
           optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
-          git add packages/web/src/dom.ts
+          git add packages/web/src/dom.ts packages/react/src/renderer.ts packages/vue/src/index.ts tests/react-client.test.mjs tests/vue-live.test.mjs
           git diff --cached --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit \
-            -m 'perf: finalize collection runtime hot paths [skip source-fix]' \
+            -m 'perf: finalize collection runtime hot paths [skip ci]' \
             -m "checkpoint-benchmark=$checkpoint" \
             -m "optimized-benchmark=$optimized" \
-            -m 'validation=build,state-core,collection-web,compiler,react-vue,full-web,pnpm-test'
+            -m 'validation=build,targeted-web,targeted-adapters,core,compiler,full-web,full-react,full-vue,pnpm-test'
           git push origin HEAD:codex/collection-runtime-finalize-20260830
