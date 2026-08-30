@@ -2,7 +2,7 @@ import { vuneForeignComponent } from "./symbols.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import { decorate, modifiedContent, snapshotRecord } from "./modifiers.js"
 import { snapshotElementProps } from "./element-internal.js"
-import type { StateRef } from "../state.js"
+import { isStateRef, type StateRef } from "../state.js"
 import type {
   CompiledTemplateDescriptor,
   CompiledTemplateValue,
@@ -245,12 +245,22 @@ export function keyedCollectionView(
   } = {},
 ): ModifiableViewNode {
   let materializedChildren: readonly ViewGraphChild[] | undefined
+  const fallbackContent: KeyedCollectionViewNode["content"] = options.readItems && isStateRef(source)
+    ? (item, index, entryKey) => {
+        let reactiveItem = item
+        try {
+          const current = source.value
+          if (Array.isArray(current) && index >= 0 && index < current.length) reactiveItem = current[index]
+        } catch { /* revoked or hostile State values keep the descriptor snapshot fallback */ }
+        return content(reactiveItem, index, entryKey)
+      }
+    : content
   const node = {
     kind: "collection" as const,
     items: snapshotArrayValues(items),
     source,
     key,
-    content,
+    content: fallbackContent,
     indexIndependent: options.indexIndependent === true,
     ...(options.compiled ? { compiled: options.compiled } : {}),
     ...(options.readItems ? { readItems: options.readItems } : {}),
