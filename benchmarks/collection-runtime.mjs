@@ -5,10 +5,10 @@ import {
   Element,
   ForEach,
   State,
-  compiledCollectionContent,
   defineView,
   initializer,
 } from "../packages/core/dist/index.js"
+import { compiledCollectionContent } from "../packages/core/dist/internal-runtime.js"
 import { mount } from "../packages/web/dist/index.js"
 
 const rowCount = Number.parseInt(process.env.VUNE_COLLECTION_ROWS ?? "25000", 10)

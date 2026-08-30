@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks"
 import { readFileSync } from "node:fs"
 import { createElement } from "react"
-import { renderToStaticMarkup } from "react-dom/server"
+import { renderToStaticMarkup, renderToString as renderReactToString } from "react-dom/server"
 import { JSDOM } from "jsdom"
 import { compileVuneFile } from "../packages/compiler/dist/index.js"
 import {
@@ -18,6 +18,7 @@ import {
   initializerKinds,
   subscribeState,
 } from "../packages/core/dist/index.js"
+import { compiledCollectionContent } from "../packages/core/dist/internal-runtime.js"
 import { render as renderReact } from "../packages/react/dist/index.js"
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
 
@@ -27,6 +28,7 @@ const counts = (process.env.VUNE_BENCH_ITEMS ?? (ci ? "100,1000" : "100,1000,100
   .map(value => Number(value.trim()))
   .filter(value => Number.isFinite(value) && value > 0)
 const rounds = Number(process.env.VUNE_BENCH_ROUNDS ?? (ci ? 3 : 5))
+const warmupRounds = Number(process.env.VUNE_BENCH_WARMUP_ROUNDS ?? 1)
 const results = []
 let vueBenchmarkRuntime
 const budgets = {
@@ -39,25 +41,21 @@ const budgets = {
   heap: 10,
   specialization: 1.25,
   templateConstruction: Number(process.env.VUNE_BENCH_TEMPLATE_RATIO ?? 1.25),
-  state: 50,
-  compiler: 1000,
+  state: 25,
+  compiler: Number(process.env.VUNE_BENCH_COMPILER_MS ?? 250),
   hydration: 1000,
+  reactHydrationRatio: Number(process.env.VUNE_BENCH_REACT_HYDRATION_RATIO ?? 10),
+  vueHydrationRatio: Number(process.env.VUNE_BENCH_VUE_HYDRATION_RATIO ?? 10),
   keyedDom: 2000,
   reactRerender: 2000,
   vueRerender: 2000,
   reactClientRatio: Number(process.env.VUNE_BENCH_REACT_CLIENT_RATIO ?? 10),
   vueClientRatio: Number(process.env.VUNE_BENCH_VUE_CLIENT_RATIO ?? 10),
-  deepState: 100,
+  deepState: 25,
   burstDom: 1500,
   conditionalDom: 2000,
   lazyScroll: 2000,
-  showcaseCompiler: 1500,
-}
-
-function collect(factory) {
-  const value = factory()
-  if (typeof globalThis.gc === "function") globalThis.gc()
-  return value
+  showcaseCompiler: Number(process.env.VUNE_BENCH_SHOWCASE_COMPILER_MS ?? 500),
 }
 
 function median(samples) {
@@ -82,9 +80,10 @@ function retainedHeap(factory) {
 
 function measure(name, factory) {
   const samples = []
+  for (let round = 0; round < warmupRounds; round += 1) factory()
   for (let round = 0; round < rounds; round += 1) {
     const start = performance.now()
-    collect(factory)
+    factory()
     samples.push(performance.now() - start)
   }
   const value = median(samples)
@@ -94,6 +93,11 @@ function measure(name, factory) {
 
 function measureMutation(name, setup, mutate) {
   const samples = []
+  for (let round = 0; round < warmupRounds; round += 1) {
+    const fixture = setup()
+    mutate(fixture)
+    fixture.cleanup?.()
+  }
   for (let round = 0; round < rounds; round += 1) {
     const fixture = setup()
     const start = performance.now()
@@ -108,6 +112,7 @@ function measureMutation(name, setup, mutate) {
 
 async function measureAsync(name, factory) {
   const samples = []
+  for (let round = 0; round < warmupRounds; round += 1) await factory()
   for (let round = 0; round < rounds; round += 1) {
     const start = performance.now()
     await factory()
@@ -118,11 +123,11 @@ async function measureAsync(name, factory) {
   return value
 }
 
-function ratio(name, actual, baseline, budget) {
+function ratio(name, actual, baseline, budget, guard = true) {
   const value = actual / Math.max(baseline, 0.001)
   results.push({ name, actual, baseline, ratio: value })
   console.log(`${name} ratio: ${value.toFixed(2)}x (budget ${budget}x)`)
-  if (ci && value > budget) throw new Error(`${name} exceeded ${budget}x baseline: ${value.toFixed(2)}x`)
+  if (ci && guard && value > budget) throw new Error(`${name} exceeded ${budget}x baseline: ${value.toFixed(2)}x`)
 }
 
 function itemViews(count) {
@@ -225,14 +230,15 @@ for (const count of counts) {
 async function rawDomUpdate(count) {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
-  const nodes = rawReactItems(count).map(node => {
+  const textNodes = rawReactItems(count).map(node => {
     const element = dom.window.document.createElement("span")
-    element.textContent = node.props.children
-    return element
+    const text = dom.window.document.createTextNode(node.props.children)
+    element.appendChild(text)
+    container.appendChild(element)
+    return text
   })
-  container.replaceChildren(...nodes)
   const start = performance.now()
-  nodes.forEach((node, index) => { node.textContent = `next-${index}` })
+  textNodes.forEach((node, index) => { node.nodeValue = `next-${index}` })
   const elapsed = performance.now() - start
   dom.window.close()
   return elapsed
@@ -294,6 +300,53 @@ async function webHydration(count) {
   unmount()
   dom.window.close()
   return elapsed
+}
+
+async function rawReactHydration(count) {
+  const dom = new JSDOM("<div id=app></div>")
+  const restore = installRendererDOM(dom)
+  try {
+    const { act } = await import("react")
+    const { hydrateRoot } = await import("react-dom/client")
+    const container = dom.window.document.querySelector("#app")
+    const value = createElement("div", null, ...Array.from(
+      { length: count },
+      (_, index) => createElement("span", { key: index, "data-key": index }, String(index)),
+    ))
+    container.innerHTML = renderReactToString(value)
+    let root
+    const start = performance.now()
+    await act(async () => { root = hydrateRoot(container, value) })
+    const elapsed = performance.now() - start
+    await act(async () => { root.unmount() })
+    return elapsed
+  } finally {
+    restore()
+  }
+}
+
+async function rawVueHydration(count) {
+  const { dom, runtime: vue, serverRenderer } = await getVueRuntime()
+  const container = dom.window.document.querySelector("#vue-benchmark-app")
+  container.replaceChildren()
+  try {
+    const App = {
+      render: () => vue.h("div", null, Array.from(
+        { length: count },
+        (_, index) => vue.h("span", { key: index, "data-key": index }, String(index)),
+      )),
+    }
+    container.innerHTML = await serverRenderer.renderToString(vue.createSSRApp(App))
+    const app = vue.createSSRApp(App)
+    const start = performance.now()
+    app.mount(container)
+    await vue.nextTick()
+    const elapsed = performance.now() - start
+    app.unmount()
+    return elapsed
+  } finally {
+    container.replaceChildren()
+  }
 }
 
 function installRendererDOM(dom) {
@@ -358,11 +411,47 @@ async function rawReactRerender(count, mode = "full") {
     }
     const root = createRoot(dom.window.document.querySelector("#app"))
     await act(async () => { root.render(createElement(App)) })
-    const start = performance.now()
-    flushSync(() => {
-      setItems(previous => updateClientItems(previous, mode))
+    let elapsed = 0
+    await act(() => {
+      const start = performance.now()
+      flushSync(() => {
+        setItems(previous => updateClientItems(previous, mode))
+      })
+      elapsed = performance.now() - start
     })
-    const elapsed = performance.now() - start
+    await act(async () => { root.unmount() })
+    return elapsed
+  } finally {
+    restore()
+  }
+}
+
+async function rawReactMemoRerender(count) {
+  const dom = new JSDOM("<div id=app></div>")
+  const restore = installRendererDOM(dom)
+  try {
+    const { act, memo, useState } = await import("react")
+    const { createRoot } = await import("react-dom/client")
+    const { flushSync } = await import("react-dom")
+    let setItems
+    const Row = memo(function Row({ item }) {
+      return createElement("span", null, item.value)
+    })
+    function App() {
+      const [items, set] = useState(() => clientItems(count))
+      setItems = set
+      return createElement("div", null, items.map(item => createElement(Row, { key: item.id, item })))
+    }
+    const root = createRoot(dom.window.document.querySelector("#app"))
+    await act(async () => { root.render(createElement(App)) })
+    let elapsed = 0
+    await act(() => {
+      const start = performance.now()
+      flushSync(() => {
+        setItems(previous => updateClientItems(previous, "single"))
+      })
+      elapsed = performance.now() - start
+    })
     await act(async () => { root.unmount() })
     return elapsed
   } finally {
@@ -384,11 +473,55 @@ async function reactRerender(count, mode = "full") {
     })
     const root = createRoot(dom.window.document.querySelector("#app"))
     await act(async () => { root.render(renderReact(App())) })
-    const start = performance.now()
-    flushSync(() => {
-      items.value = updateClientItems(items.value, mode)
+    let elapsed = 0
+    await act(() => {
+      const start = performance.now()
+      flushSync(() => {
+        items.value = updateClientItems(items.value, mode)
+      })
+      elapsed = performance.now() - start
     })
-    const elapsed = performance.now() - start
+    await act(async () => { root.unmount() })
+    return elapsed
+  } finally {
+    restore()
+  }
+}
+
+async function reactCompiledCollectionRerender(count, ownedMutation = false) {
+  const dom = new JSDOM("<div id=app></div>")
+  const restore = installRendererDOM(dom)
+  try {
+    const { act } = await import("react")
+    const { createRoot } = await import("react-dom/client")
+    const { flushSync } = await import("react-dom")
+    const items = State(clientItems(count))
+    const content = compiledCollectionContent(
+      item => Element("span", { key: item.id }, item.value),
+      {
+        kind: "flat-text-host",
+        indexIndependent: true,
+        evaluateKey: item => item.id,
+        evaluate: item => ({ type: "span", props: null, text: item.value }),
+      },
+    )
+    const graph = Element("div", null, ForEach(items, item => item.id, content))
+    const root = createRoot(dom.window.document.querySelector("#app"))
+    await act(async () => { root.render(renderReact(graph)) })
+    let elapsed = 0
+    await act(() => {
+      const start = performance.now()
+      flushSync(() => {
+        if (ownedMutation) {
+          const index = Math.floor(items.value.length / 2)
+          const current = items.value[index]
+          if (current) items.value[index] = { ...current, value: `next-${index}` }
+        } else {
+          items.value = updateClientItems(items.value, "single")
+        }
+      })
+      elapsed = performance.now() - start
+    })
     await act(async () => { root.unmount() })
     return elapsed
   } finally {
@@ -417,6 +550,28 @@ async function rawVueRerender(count, mode = "full") {
   }
 }
 
+async function rawVueOwnedMutation(count) {
+  const { dom, runtime: vue } = await getVueRuntime()
+  const container = dom.window.document.querySelector("#vue-benchmark-app")
+  container.replaceChildren()
+  try {
+    const items = vue.ref(clientItems(count))
+    const app = vue.createApp({
+      render: () => vue.h("div", null, items.value.map(item => vue.h("span", { key: item.id }, item.value))),
+    })
+    app.mount(container)
+    const index = Math.floor(items.value.length / 2)
+    const start = performance.now()
+    if (items.value[index]) items.value[index].value = `next-${index}`
+    await vue.nextTick()
+    const elapsed = performance.now() - start
+    app.unmount()
+    return elapsed
+  } finally {
+    container.replaceChildren()
+  }
+}
+
 async function vueRerender(count, mode = "full") {
   const { dom, runtime: vue, vuneRenderer } = await getVueRuntime()
   const container = dom.window.document.querySelector("#vue-benchmark-app")
@@ -431,6 +586,41 @@ async function vueRerender(count, mode = "full") {
     app.mount(container)
     const start = performance.now()
     items.value = updateClientItems(items.value, mode)
+    await vue.nextTick()
+    const elapsed = performance.now() - start
+    app.unmount()
+    return elapsed
+  } finally {
+    container.replaceChildren()
+  }
+}
+
+async function vueCompiledCollectionRerender(count, ownedMutation = false) {
+  const { dom, runtime: vue, vuneRenderer } = await getVueRuntime()
+  const container = dom.window.document.querySelector("#vue-benchmark-app")
+  container.replaceChildren()
+  try {
+    const items = State(clientItems(count))
+    const content = compiledCollectionContent(
+      item => Element("span", { key: item.id }, item.value),
+      {
+        kind: "flat-text-host",
+        indexIndependent: true,
+        evaluateKey: item => item.id,
+        evaluate: item => ({ type: "span", props: null, text: item.value }),
+      },
+    )
+    const graph = Element("div", null, ForEach(items, item => item.id, content))
+    const app = vue.createApp({ render: () => vuneRenderer.render(graph) })
+    app.mount(container)
+    const start = performance.now()
+    if (ownedMutation) {
+      const index = Math.floor(items.value.length / 2)
+      const current = items.value[index]
+      if (current) items.value[index] = { ...current, value: `next-${index}` }
+    } else {
+      items.value = updateClientItems(items.value, "single")
+    }
     await vue.nextTick()
     const elapsed = performance.now() - start
     app.unmount()
@@ -571,10 +761,12 @@ if (ci && arraySort > arrayMutationBudget) throw new Error(`State in-place sort 
 for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   const rawState = measure(`raw state update ${count}`, () => rawStateUpdate(count))
   const vuneState = measure(`Vune State update ${count}`, () => vuneStateUpdate(count))
-  ratio(`State update ${count}`, vuneState, rawState, budgets.state)
+  ratio(`State update ${count}`, vuneState, rawState, Number.POSITIVE_INFINITY, false)
+  if (ci && vuneState > budgets.state) throw new Error(`State update exceeded ${budgets.state} ms for ${count}: ${vuneState.toFixed(2)} ms`)
   const rawDeepState = measure(`raw deep State update ${count}`, () => rawDeepStateUpdate(count))
   const vuneDeepState = measure(`Vune deep State update ${count}`, () => vuneDeepStateUpdate(count))
-  ratio(`Deep State update ${count}`, vuneDeepState, rawDeepState, budgets.deepState)
+  ratio(`Deep State update ${count}`, vuneDeepState, rawDeepState, Number.POSITIVE_INFINITY, false)
+  if (ci && vuneDeepState > budgets.deepState) throw new Error(`Deep State update exceeded ${budgets.deepState} ms for ${count}: ${vuneDeepState.toFixed(2)} ms`)
 
   // DOM rounds are intentionally sequential. Running independent JSDOM instances
   // concurrently makes microtask scheduling and GC contention dominate the ratio.
@@ -582,12 +774,21 @@ for (const count of counts.slice(0, ci ? 2 : counts.length)) {
   const vune = await measureRounds(() => vuneDomUpdate(count))
   const keyed = await measureRounds(() => keyedDomUpdate(count))
   const hydration = await measureRounds(() => webHydration(count))
+  const rawReactHydrationTime = await measureRounds(() => rawReactHydration(count))
+  const rawVueHydrationTime = await measureRounds(() => rawVueHydration(count))
   console.log(`raw DOM update ${count}: ${raw.toFixed(2)} ms`)
   console.log(`Vune DOM reconciliation ${count}: ${vune.toFixed(2)} ms`)
   console.log(`Vune keyed DOM update ${count}: ${keyed.toFixed(2)} ms`)
   console.log(`Vune Web hydration ${count}: ${hydration.toFixed(2)} ms`)
+  console.log(`raw React hydration ${count}: ${rawReactHydrationTime.toFixed(2)} ms`)
+  console.log(`raw Vue hydration ${count}: ${rawVueHydrationTime.toFixed(2)} ms`)
   ratio(`DOM reconciliation ${count}`, vune, raw, budgets.dom)
-  if (!Number.isFinite(keyed) || !Number.isFinite(hydration)) throw new Error(`DOM or hydration benchmark produced a non-finite measurement for ${count}`)
+  ratio(`Web hydration vs React ${count}`, hydration, rawReactHydrationTime, budgets.reactHydrationRatio)
+  // Keep this JSDOM comparison visible, but let the production Chromium suite
+  // own the release gate. Vue's JSDOM hydration path is an unusually low floor
+  // and makes this ratio volatile without reflecting real-browser regressions.
+  ratio(`Web hydration vs Vue ${count}`, hydration, rawVueHydrationTime, budgets.vueHydrationRatio, false)
+  if (![keyed, hydration, rawReactHydrationTime, rawVueHydrationTime].every(Number.isFinite)) throw new Error(`DOM or hydration benchmark produced a non-finite measurement for ${count}`)
   if (ci && keyed > budgets.keyedDom) throw new Error(`Keyed DOM update exceeded ${budgets.keyedDom} ms for ${count}: ${keyed.toFixed(2)} ms`)
   if (ci && hydration > budgets.hydration) throw new Error(`Hydration exceeded ${budgets.hydration} ms for ${count}: ${hydration.toFixed(2)} ms`)
 
@@ -602,6 +803,23 @@ for (const count of counts.slice(0, ci ? 2 : counts.length)) {
     console.log(`Vune Vue ${mode} rerender ${count}: ${vueRerenderTime.toFixed(2)} ms`)
     ratio(`React client ${mode} ${count}`, reactRerenderTime, rawReactRerenderTime, budgets.reactClientRatio)
     ratio(`Vue client ${mode} ${count}`, vueRerenderTime, rawVueRerenderTime, budgets.vueClientRatio)
+    if (mode === "single") {
+      const rawReactMemoTime = await measureRounds(() => rawReactMemoRerender(count))
+      const rawVueOwnedTime = await measureRounds(() => rawVueOwnedMutation(count))
+      const reactCompiledCollectionTime = await measureRounds(() => reactCompiledCollectionRerender(count))
+      const vueCompiledCollectionTime = await measureRounds(() => vueCompiledCollectionRerender(count))
+      const reactOwnedCollectionTime = await measureRounds(() => reactCompiledCollectionRerender(count, true))
+      const vueOwnedCollectionTime = await measureRounds(() => vueCompiledCollectionRerender(count, true))
+      console.log(`raw React memoized single rerender ${count}: ${rawReactMemoTime.toFixed(2)} ms`)
+      console.log(`raw Vue owned single mutation ${count}: ${rawVueOwnedTime.toFixed(2)} ms`)
+      console.log(`Vune React compiled collection single rerender ${count}: ${reactCompiledCollectionTime.toFixed(2)} ms`)
+      console.log(`Vune Vue compiled collection single rerender ${count}: ${vueCompiledCollectionTime.toFixed(2)} ms`)
+      console.log(`Vune React compiled collection owned single mutation ${count}: ${reactOwnedCollectionTime.toFixed(2)} ms`)
+      console.log(`Vune Vue compiled collection owned single mutation ${count}: ${vueOwnedCollectionTime.toFixed(2)} ms`)
+      ratio(`React compiled collection single ${count}`, reactCompiledCollectionTime, rawReactRerenderTime, budgets.reactClientRatio)
+      ratio(`Vue compiled collection single ${count}`, vueCompiledCollectionTime, rawVueRerenderTime, budgets.vueClientRatio)
+      if (![rawReactMemoTime, rawVueOwnedTime, reactOwnedCollectionTime, vueOwnedCollectionTime].every(Number.isFinite)) throw new Error(`Compiled collection owned mutation benchmark produced a non-finite measurement for ${count}`)
+    }
     if (![rawReactRerenderTime, reactRerenderTime, rawVueRerenderTime, vueRerenderTime].every(Number.isFinite)) throw new Error(`Renderer rerender benchmark produced a non-finite measurement for ${count}/${mode}`)
     if (ci && reactRerenderTime > budgets.reactRerender) throw new Error(`React rerender exceeded ${budgets.reactRerender} ms for ${count}/${mode}: ${reactRerenderTime.toFixed(2)} ms`)
     if (ci && vueRerenderTime > budgets.vueRerender) throw new Error(`Vue rerender exceeded ${budgets.vueRerender} ms for ${count}/${mode}: ${vueRerenderTime.toFixed(2)} ms`)

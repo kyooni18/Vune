@@ -23,6 +23,17 @@ import {
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
 import { animateDomStyle, motionSpecForAnimation } from "../packages/web/dist/motion.js"
 
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+
+async function waitUntil(predicate, timeout = 250) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await sleep(5)
+  }
+  return predicate()
+}
+
 test("Web DOM animation adapter executes o0o0o timing and spring specs", async () => {
   const dom = new JSDOM('<div style="opacity:0"></div>')
   const element = dom.window.document.querySelector("div")
@@ -41,14 +52,16 @@ test("Web motion channels honor delay/repeat and retarget from the live presenta
 
   const repeated = Animation.linear(0.01).delay(0.01).repeatCount(2, false)
   assert.equal(animateDomStyle(element, "opacity", "0", 1, repeated), true)
-  await new Promise(resolve => setTimeout(resolve, 5))
+  await sleep(5)
   assert.equal(element.style.opacity, "0")
-  await new Promise(resolve => setTimeout(resolve, 70))
-  assert.equal(element.style.opacity, "1")
+  assert.equal(await waitUntil(() => element.style.opacity === "1", 180), true)
 
   element.style.opacity = "0"
   assert.equal(animateDomStyle(element, "opacity", "0", 1, Animation.spring(0.12, 0.82)), true)
-  await new Promise(resolve => setTimeout(resolve, 35))
+  assert.equal(await waitUntil(() => {
+    const value = Number(element.style.opacity)
+    return value > 0 && value < 1
+  }, 140), true)
   const presentation = Number(element.style.opacity)
   assert.ok(presentation > 0 && presentation < 1)
   // `from` deliberately supplies the logical previous target (1). A persistent
@@ -56,8 +69,7 @@ test("Web motion channels honor delay/repeat and retarget from the live presenta
   assert.equal(animateDomStyle(element, "opacity", 1, 0, Animation.spring(0.12, 0.82)), true)
   const immediatelyAfterRetarget = Number(element.style.opacity)
   assert.ok(Math.abs(immediatelyAfterRetarget - presentation) < 0.2)
-  await new Promise(resolve => setTimeout(resolve, 220))
-  assert.ok(Number(element.style.opacity) < 0.02)
+  assert.equal(await waitUntil(() => Number(element.style.opacity) < 0.02, 320), true)
   dom.window.close()
 })
 
@@ -78,10 +90,11 @@ test("Web mount routes animated State patches through o0o0o", async () => {
   dom.window.close()
 })
 
-test("SwiftUI API manifest is the canonical compiler/runtime seed", () => {
+test("SwiftUI API manifest drives the canonical source contract and runtime mapping", () => {
   const vstack = swiftUIInitializerSymbols("VStack")
   assert.equal(vstack?.length, 1)
   assert.equal(vstack?.[0].signature, "init(alignment:spacing:content:)")
+  assert.equal(vstack?.[0].index, 1)
   assert.deepEqual(vstack?.[0].parameters.map(parameter => parameter.name), ["alignment", "spacing", "content"])
   assert.equal(vstack?.[0].parameters.at(-1)?.kind, "viewBuilder")
   assert.equal(vstack?.[0].parameters.at(-1)?.trailing, true)
@@ -89,6 +102,11 @@ test("SwiftUI API manifest is the canonical compiler/runtime seed", () => {
   assert.equal(swiftUICanonicalModifierNames.has("opacity"), true)
   assert.equal(swiftUICanonicalModifierNames.has("margin"), false)
   assert.equal(swiftUIStaticModifierNames.has("margin"), true)
+  const animation = swiftUIApiManifest.modifiers.find(modifier => modifier.name === "animation")
+  assert.ok(animation)
+  assert.deepEqual(animation.swiftUISignatures, ["animation(_:)", "animation(_:value:)"])
+  assert.equal(swiftUIApiManifest.views.VStack.fidelity, "web-approximation")
+  assert.equal(swiftUIApiManifest.views.Group.fidelity, "source")
   assert.equal(swiftUIApiManifest.schemaVersion, 1)
 })
 
@@ -168,6 +186,26 @@ test("Swift-style labeled modifiers lower before TypeScript parsing", () => {
   assert.equal(
     transformVuneSource('Text("Hi").scaleEffect(x: 1.2, y: 0.8, anchor: .center)', "Modifier.vune.ts"),
     'Text("Hi").scaleEffect({ x: 1.2, y: 0.8 }, "center")',
+  )
+  assert.equal(
+    transformVuneSource('Text("Hi").scaleEffect(x: 1.2)', "Modifier.vune.ts"),
+    'Text("Hi").scaleEffect({ x: 1.2 })',
+  )
+  assert.equal(
+    transformVuneSource('Text("Hi").shadow(radius: 8, x: 1)', "Modifier.vune.ts"),
+    'Text("Hi").shadow(undefined, 8, 1)',
+  )
+  assert.equal(
+    transformVuneSource('Text("Hi").fixedSize(horizontal: true, vertical: false)', "Modifier.vune.ts"),
+    'Text("Hi").fixedSize(true, false)',
+  )
+  assert.equal(
+    transformVuneSource('Text("Hi").onTapGesture(count: 2, perform: { save() })', "Modifier.vune.ts"),
+    'Text("Hi").onTapGesture(2, () => {save()})',
+  )
+  assert.equal(
+    transformVuneSource('Text("Hi").onHover(perform: { hovering in setHover(hovering) })', "Modifier.vune.ts"),
+    'Text("Hi").onHover((hovering) => {setHover(hovering)})',
   )
 })
 

@@ -1,13 +1,10 @@
 import {
   ViewBuilder,
-  compiledCollectionPlanOf,
   defineBuiltinView,
   geometryView,
   initializer,
   initializerKinds,
   isViewNode,
-  keyedCollectionChildKey,
-  keyedCollectionView,
   lazyView,
   resolveBuilderInput,
   type NamedArguments,
@@ -19,11 +16,13 @@ import {
   viewElement,
   viewFragment,
 } from "./graph.js"
+import { compiledCollectionPlanOf, keyedCollectionChildKey, keyedCollectionView } from "./graph/nodes.js"
 import { viewElementOwned } from "./graph/element-internal.js"
 import type { VuneCustomElementAttributes, VuneHtmlAttributes, VuneHtmlTagName } from "./html.js"
 import { layoutLength } from "./layout.js"
 import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { Binding, isBinding, isStateRef, type BindingRef, type StateRef } from "./state.js"
+import { snapshotStateArrayForSubscription } from "./state-internal.js"
 import type { GeometryProxy } from "./graph.js"
 import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"
 import { keyedContent } from "./graph/modifiers.js"
@@ -537,7 +536,7 @@ function snapshotCollectionItems(value: unknown): readonly unknown[] | undefined
 }
 
 function requireCollectionItems(value: unknown): readonly unknown[] {
-  const snapshot = snapshotCollectionItems(value)
+  const snapshot = snapshotStateArrayForSubscription(value) ?? snapshotCollectionItems(value)
   if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
   return snapshot
 }

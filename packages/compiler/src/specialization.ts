@@ -72,6 +72,14 @@ function rememberExternalSourceFile(key: string, cached: CachedSourceFile): void
 
 function createVuneTypeScriptProgram(source: string, fileName: string): VuneTypeScriptProgram | undefined {
   const rootFileName = compilerRootFileName(fileName)
+  const currentDirectory = ts.sys.getCurrentDirectory()
+  let workspaceSelfReference = false
+  try {
+    const packageSource = ts.sys.readFile(`${currentDirectory.replace(/[\\/]$/, "")}/package.json`)
+    workspaceSelfReference = packageSource ? JSON.parse(packageSource).name === "vune-ui" : false
+  } catch {
+    workspaceSelfReference = false
+  }
   const options: ts.CompilerOptions = {
     allowJs: false,
     module: ts.ModuleKind.ESNext,
@@ -79,6 +87,10 @@ function createVuneTypeScriptProgram(source: string, fileName: string): VuneType
     noEmit: true,
     skipLibCheck: true,
     target: ts.ScriptTarget.ES2022,
+    ...(workspaceSelfReference ? {
+      baseUrl: currentDirectory,
+      paths: { "vune-ui": ["./src/index.ts"] },
+    } : {}),
   }
   const host = ts.createCompilerHost(options, true)
   const normalize = (value: string): string => value.replaceAll("\\", "/")
@@ -141,6 +153,19 @@ const compilerMotionProperties = new Map<string, readonly string[]>([
   ["scaleEffect", ["scale"]],
   ["rotationEffect", ["rotate"]],
   ["offset", ["translate"]],
+  ["position", ["left", "top", "transform"]],
+  ["zIndex", ["z-index"]],
+  ["kerning", ["letter-spacing"]],
+  ["tracking", ["letter-spacing"]],
+  ["baselineOffset", ["top"]],
+  ["shadow", ["box-shadow"]],
+  ["blur", ["filter"]],
+  ["brightness", ["filter"]],
+  ["contrast", ["filter"]],
+  ["saturation", ["filter"]],
+  ["grayscale", ["filter"]],
+  ["hueRotation", ["filter"]],
+  ["contentTransition", ["--vune-content"]],
 ])
 
 function cssPropertyFromCompilerKey(value: string): string {
@@ -178,6 +203,60 @@ function compiledAutoMotionArgumentsSource(properties: Iterable<string>): string
   const mask = motionPropertyMask(unique)
   const extras = unique.filter(property => motionPropertyBit(property) === 0)
   return extras.length > 0 ? `${mask}, ${JSON.stringify(extras)}` : String(mask)
+}
+
+function lowerSymbolEffectArgument(source: string): string {
+  const value = source.trim()
+  if (value === ".automatic") return "SymbolEffect.automatic"
+  if (value === ".byLayer") return "SymbolEffect.byLayer"
+  if (value === ".wholeSymbol") return "SymbolEffect.wholeSymbol"
+  if (value === ".magicReplace") return "SymbolEffect.magicReplace()"
+  const magic = value.match(/^\.magicReplace\s*\(([\s\S]*)\)$/)
+  if (magic) {
+    const argument = magic[1].trim()
+    if (!argument) return "SymbolEffect.magicReplace()"
+    const fallback = argument.replace(/^fallback\s*:\s*/, "").trim()
+    const implicit = fallback.match(/^\.([A-Za-z_$][A-Za-z0-9_$]*)$/)
+    return `SymbolEffect.magicReplace(${implicit ? JSON.stringify(implicit[1]) : lowerImplicitMemberShorthand(lowerShorthand(fallback))})`
+  }
+  return lowerImplicitMemberShorthand(lowerShorthand(value))
+}
+
+export function lowerContentTransitionArgument(source: string): string {
+  const value = source.trim()
+  if (value === ".identity") return "ContentTransition.identity"
+  if (value === ".opacity") return "ContentTransition.opacity"
+  if (value === ".interpolate") return "ContentTransition.interpolate"
+  const blur = value.match(/^\.blurReplace\s*\(([\s\S]*)\)$/)
+  if (blur) {
+    const argument = blur[1].trim().replace(/^radius\s*:\s*/, "")
+    return argument ? `ContentTransition.blurReplace(${lowerImplicitMemberShorthand(lowerShorthand(argument))})` : "ContentTransition.blurReplace()"
+  }
+  const push = value.match(/^\.push\s*\(([\s\S]*)\)$/)
+  if (push) {
+    const argument = push[1].trim().replace(/^(?:from|direction)\s*:\s*/, "")
+    if (!argument) return "ContentTransition.push()"
+    const implicit = argument.match(/^\.([A-Za-z_$][A-Za-z0-9_$]*)$/)
+    return `ContentTransition.push(${implicit ? JSON.stringify(implicit[1]) : lowerImplicitMemberShorthand(lowerShorthand(argument))})`
+  }
+  const scale = value.match(/^\.scale\s*\(([\s\S]*)\)$/)
+  if (scale) {
+    const argument = scale[1].trim().replace(/^scale\s*:\s*/, "")
+    return argument ? `ContentTransition.scale(${lowerImplicitMemberShorthand(lowerShorthand(argument))})` : "ContentTransition.scale()"
+  }
+  const numeric = value.match(/^\.numericText\s*\(([\s\S]*)\)$/)
+  if (numeric) {
+    const argument = numeric[1].trim().replace(/^value\s*:\s*/, "")
+    return argument
+      ? `ContentTransition.numericText(${lowerImplicitMemberShorthand(lowerShorthand(argument))})`
+      : "ContentTransition.numericText()"
+  }
+  const symbol = value.match(/^\.symbolEffect\s*\(([\s\S]*)\)$/)
+  if (symbol) {
+    const argument = symbol[1].trim()
+    return argument ? `ContentTransition.symbolEffect(${lowerSymbolEffectArgument(argument)})` : "ContentTransition.symbolEffect()"
+  }
+  return lowerImplicitMemberShorthand(lowerShorthand(value))
 }
 
 function isVuneViewType(checker: ts.TypeChecker, type: ts.Type): boolean {
@@ -247,7 +326,7 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
         return `["animationAuto", [${motionArguments}]]`
       }
       const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
-        ? "0"
+        ? name === "padding" ? "16" : "0"
         : call.arguments.map(argument => {
           // An implicit member argument (`.red`) is not valid TypeScript, so
           // the parser recovers with a zero-width base and the node's start
@@ -261,7 +340,7 @@ export function lowerStaticModifierChains(source: string, fileName: string): str
           // `arr[0].red`, `"str".red`) or to spread punctuation (`...values`).
           if (source[cursor] === "." && !(cursor > 0 && /[A-Za-z0-9_$.)"'\]]/.test(source[cursor - 1]))) start = cursor
           const raw = source.slice(start, argument.end)
-          return lowerImplicitMemberShorthand(lowerShorthand(raw))
+          return name === "contentTransition" ? lowerContentTransitionArgument(raw) : lowerImplicitMemberShorthand(lowerShorthand(raw))
         }).join(", ")
       if (name === "animation") pendingMotionProperties.clear()
       else for (const property of inferredMotionProperties(name, call)) pendingMotionProperties.add(property)
@@ -742,8 +821,17 @@ export function lowerStaticSemanticSpecializations(source: string, fileName: str
   // modules below. Avoid constructing a TypeScript Program for ordinary helper
   // modules merely because they contain function calls; modifier chains remain
   // eligible because their View type can arrive through a local/transitive import.
-  const hasRuntimeImportHint = /(?:from\s*|import\s*\()\s*["'](?:vune-ui|@vune-ui\/(?:core|react))["']/.test(source)
-  if (!hasModifierHint && !hasRuntimeImportHint) return source
+  const hintFile = ts.createSourceFile("vune-semantic-hint.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const runtimeImports = runtimeViewImports(hintFile)
+  const hasNamedRuntimeCall = [...runtimeImports.keys()].some(name => new RegExp(`\\b${name}\\s*\\(`).test(source))
+  const namespaceImports = hintFile.statements.flatMap(statement => {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+      || !canonicalRuntimeModules.has(statement.moduleSpecifier.text)) return []
+    const bindings = statement.importClause?.namedBindings
+    return bindings && ts.isNamespaceImport(bindings) ? [bindings.name.text] : []
+  })
+  const hasNamespaceRuntimeCall = namespaceImports.some(namespace => new RegExp(`\\b${namespace}\\s*\\.\\s*[A-Z][A-Za-z0-9_$]*\\s*\\(`).test(source))
+  if (!hasModifierHint && !hasNamedRuntimeCall && !hasNamespaceRuntimeCall) return source
 
   const snapshot = createSemanticSpecializationSnapshot(source, fileName)
   if (!snapshot) return source
@@ -804,14 +892,14 @@ export function lowerStaticSemanticSpecializations(source: string, fileName: str
           return `["animationAuto", [${motionArguments}]]`
         }
         const argumentsSource = call.arguments.length === 0 && (name === "padding" || name === "margin")
-          ? "0"
+          ? name === "padding" ? "16" : "0"
           : call.arguments.map(argument => {
             let start = argument.getStart(sourceFile)
             let cursor = start - 1
             while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1
             if (source[cursor] === "." && !(cursor > 0 && /[A-Za-z0-9_$.)"'\]]/.test(source[cursor - 1]))) start = cursor
             const raw = renderRange(start, argument.end, candidate)
-            return lowerImplicitMemberShorthand(lowerShorthand(raw))
+            return name === "contentTransition" ? lowerContentTransitionArgument(raw) : lowerImplicitMemberShorthand(lowerShorthand(raw))
           }).join(", ")
         if (name === "animation") pendingMotionProperties.clear()
         else for (const property of inferredMotionProperties(name, call)) pendingMotionProperties.add(property)
@@ -1379,8 +1467,14 @@ function exactFunctionReturn(fn: ts.ArrowFunction): ts.Expression | undefined {
 
 const directCompiledBodyModifierNames = new Set([
   "padding", "margin", "gap", "font", "fontSize", "bold",
-  "foreground", "foregroundStyle", "background", "opacity",
-  "scaleEffect", "rotationEffect", "offset", "style", "className", "animation", "animationAuto",
+  "foreground", "foregroundStyle", "opacity",
+  "fontWeight", "fontDesign", "fontWidth", "italic", "underline", "strikethrough", "monospaced", "monospacedDigit",
+  "kerning", "tracking", "baselineOffset", "lineSpacing", "lineLimit", "minimumScaleFactor", "multilineTextAlignment", "truncationMode", "textCase", "allowsTightening",
+  "scaleEffect", "rotationEffect", "offset", "aspectRatio", "scaledToFit", "scaledToFill", "fixedSize", "layoutPriority", "position", "zIndex",
+  "clipShape", "clipped", "border", "shadow", "blur", "brightness", "contrast", "saturation", "grayscale", "hueRotation", "colorInvert", "colorMultiply", "blendMode", "compositingGroup", "drawingGroup", "luminanceToAlpha", "tint",
+  "hidden", "allowsHitTesting", "preferredColorScheme", "controlSize", "scrollDisabled", "scrollIndicators", "scrollBounceBehavior", "scrollClipDisabled", "scrollDismissesKeyboard",
+  "accessibilityLabel", "accessibilityHint", "accessibilityValue", "accessibilityHidden", "accessibilityIdentifier", "accessibilityHeading", "accessibilitySortPriority",
+  "style", "className", "animation", "animationAuto", "contentTransition",
 ])
 
 function directCompiledModifierSpecs(node: ts.Expression): node is ts.ArrayLiteralExpression {

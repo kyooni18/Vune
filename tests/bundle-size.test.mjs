@@ -6,7 +6,10 @@ import test from "node:test"
 import { build } from "vite"
 
 const packageBudgets = {
-  "packages/core/dist/index.js": 512,
+  // Core now intentionally exposes SwiftUI transitions/content transitions,
+  // vector symbols, TextEditor, and Path at the canonical authoring root.
+  // Keep the entry barrel small, but give that reviewed surface honest room.
+  "packages/core/dist/index.js": 1024,
   "dist/index.js": 512,
   "packages/react/dist/index.js": 1024,
   // Vue's renderer now carries the shared animation transaction bridge. Keep
@@ -34,10 +37,11 @@ test("Web SSR imports tree-shake DOM and hydration internals", async () => {
       configFile: false,
       logLevel: "error",
       resolve: {
-        alias: {
-          "@vune-ui/core": resolve("packages/core/dist/index.js"),
-          "@vune-ui/web": resolve("packages/web/dist/index.js"),
-        },
+        alias: [
+          { find: /^@vune-ui\/core\/internal\/motion-abi$/, replacement: resolve("packages/core/dist/motion-abi.js") },
+          { find: /^@vune-ui\/core$/, replacement: resolve("packages/core/dist/index.js") },
+          { find: /^@vune-ui\/web$/, replacement: resolve("packages/web/dist/index.js") },
+        ],
       },
       build: {
         write: false,

@@ -3,6 +3,7 @@ import test from "node:test"
 import { Suspense, createSSRApp, defineAsyncComponent, defineComponent, h, inject, provide, ref, watchEffect } from "vue"
 import { renderToString } from "@vue/server-renderer"
 import {
+  Animation,
   Button,
   GeometryReader,
   State,
@@ -31,6 +32,14 @@ test("@vune-ui/vue renders the renderer-independent graph as Vue VNodes", async 
   assert.match(html, /data-vune="VStack"/)
   const styled = await renderToString(createSSRApp({ render: () => render(Text("Styled").className(["card", false, "active"])) }))
   assert.match(styled, /class="card active"/)
+})
+
+test("@vune-ui/vue VuneView can suppress explicit animation styles at the host boundary", async () => {
+  const value = Text("Still").opacity(0.5).animation(Animation.linear(0.4), 0.5)
+  const animated = await renderToString(createSSRApp({ render: () => h(VuneView, { value }) }))
+  const suppressed = await renderToString(createSSRApp({ render: () => h(VuneView, { value, disablesAnimations: true }) }))
+  assert.match(animated, /transition-duration:0.4s/)
+  assert.doesNotMatch(suppressed, /transition-duration/)
 })
 
 test("@vune-ui/vue materializes compiled templates as native Vue VNodes", async () => {

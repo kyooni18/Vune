@@ -21,6 +21,10 @@ if (process.platform !== "darwin") {
 
 const sdkName = argument("--sdk", "macosx")
 const outputPath = resolve(argument("--output", "api/swiftui-symbols.snapshot.json"))
+const requestedModules = argument("--modules", argument("--module", "SwiftUI,SwiftUICore"))
+  .split(",")
+  .map(value => value.trim())
+  .filter(Boolean)
 const sdkPath = run("xcrun", ["--sdk", sdkName, "--show-sdk-path"])
 const sdkVersion = run("xcrun", ["--sdk", sdkName, "--show-sdk-version"])
 const targetInfo = JSON.parse(run("xcrun", ["swiftc", "-print-target-info"]))
@@ -29,27 +33,42 @@ if (!target) throw new Error("Unable to determine the Swift compiler target trip
 
 const temporary = mkdtempSync(`${tmpdir()}/vune-swiftui-symbols-`)
 try {
-  run("xcrun", [
-    "swift-symbolgraph-extract",
-    "-module-name", "SwiftUI",
-    "-target", target,
-    "-sdk", sdkPath,
-    "-minimum-access-level", "public",
-    "-output-dir", temporary,
-  ])
+  const extractedModules = []
+  for (const moduleName of requestedModules) {
+    try {
+      run("xcrun", [
+        "swift-symbolgraph-extract",
+        "-module-name", moduleName,
+        "-target", target,
+        "-sdk", sdkPath,
+        "-minimum-access-level", "public",
+        "-output-dir", temporary,
+      ])
+      extractedModules.push(moduleName)
+    } catch (error) {
+      // SwiftUICore is a newer SDK split. Older Xcode releases legitimately do
+      // not expose it, so keep the snapshot useful as long as SwiftUI itself
+      // was extracted successfully.
+      if (moduleName === "SwiftUI") throw error
+      console.warn(`Skipping unavailable SwiftUI companion module ${moduleName}.`)
+    }
+  }
 
-  const files = readdirSync(temporary).filter(name => name.startsWith("SwiftUI") && name.endsWith(".symbols.json")).sort()
+  const files = readdirSync(temporary).filter(name => name.endsWith(".symbols.json")).sort()
   if (files.length === 0) throw new Error("swift-symbolgraph-extract produced no SwiftUI symbol graph files.")
 
   const symbols = new Map()
   const relationships = []
   for (const file of files) {
     const graph = JSON.parse(readFileSync(resolve(temporary, file), "utf8"))
+    const graphModule = graph.module?.name ?? file.replace(/\.symbols\.json$/, "").split("@")[0]
+    if (!extractedModules.includes(graphModule)) continue
     for (const symbol of graph.symbols ?? []) {
       if (symbol.accessLevel !== "public") continue
       const precise = symbol.identifier?.precise
       if (!precise) continue
       symbols.set(precise, {
+        module: graphModule,
         preciseIdentifier: precise,
         kind: symbol.kind?.identifier,
         title: symbol.names?.title,
@@ -62,6 +81,7 @@ try {
     }
     for (const relationship of graph.relationships ?? []) {
       relationships.push({
+        module: graphModule,
         kind: relationship.kind,
         source: relationship.source,
         target: relationship.target,
@@ -77,8 +97,9 @@ try {
   try { xcodeVersion = run("xcodebuild", ["-version"]).replaceAll("\n", " ") } catch {}
 
   const snapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     module: "SwiftUI",
+    modules: extractedModules,
     sdk: sdkName,
     sdkVersion,
     target,
@@ -90,7 +111,7 @@ try {
   }
   mkdirSync(dirname(outputPath), { recursive: true })
   writeFileSync(outputPath, `${JSON.stringify(snapshot, null, 2)}\n`)
-  console.log(`Wrote ${orderedSymbols.length} public SwiftUI symbols to ${outputPath}`)
+  console.log(`Wrote ${orderedSymbols.length} public ${extractedModules.join(" + ")} symbols to ${outputPath}`)
 } finally {
   rmSync(temporary, { recursive: true, force: true })
 }

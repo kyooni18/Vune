@@ -16,8 +16,23 @@ export interface VuneDevtoolsBoundarySnapshot {
 export interface VuneDevtoolsSnapshot {
   readonly enabled: boolean
   readonly revision: number
+  readonly runtime: VuneDevtoolsRuntimeSnapshot
   readonly boundaries: readonly VuneDevtoolsBoundarySnapshot[]
 }
+
+export interface VuneDevtoolsRuntimeSnapshot {
+  readonly boundaryInvalidations: number
+  readonly boundaryFlushes: number
+  readonly boundaryUpdates: number
+  readonly compiledPatches: number
+  readonly reconcilePasses: number
+  readonly rootRequests: number
+  readonly rootPasses: number
+  readonly rootEscalations: number
+  readonly collectionFallbacks: number
+}
+
+export type VuneDevtoolsRuntimeEvent = keyof VuneDevtoolsRuntimeSnapshot
 
 type MutableBoundarySnapshot = {
   key: string
@@ -35,6 +50,17 @@ type MutableBoundarySnapshot = {
 const boundaries = new Map<string, MutableBoundarySnapshot>()
 const boundaryElements = new Map<string, WeakRef<Element>>()
 const listeners = new Set<() => void>()
+const runtime: Record<VuneDevtoolsRuntimeEvent, number> = {
+  boundaryInvalidations: 0,
+  boundaryFlushes: 0,
+  boundaryUpdates: 0,
+  compiledPatches: 0,
+  reconcilePasses: 0,
+  rootRequests: 0,
+  rootPasses: 0,
+  rootEscalations: 0,
+  collectionFallbacks: 0,
+}
 let enabled = false
 let revision = 0
 let notifyPending = false
@@ -102,6 +128,13 @@ export function recordVuneBoundaryRender(event: {
   notify()
 }
 
+export function recordVuneRuntimeEvent(event: VuneDevtoolsRuntimeEvent, amount = 1): void {
+  if (!enabled || !Number.isFinite(amount) || amount === 0) return
+  runtime[event] += amount
+  revision += 1
+  notify()
+}
+
 export function getVuneBoundaryElement(key: string): Element | null {
   const element = boundaryElements.get(key)?.deref() ?? null
   if (!element || !element.isConnected) {
@@ -121,6 +154,7 @@ export function recordVuneBoundaryDisposed(key: string): void {
 export function resetVuneDevtools(): void {
   boundaries.clear()
   boundaryElements.clear()
+  for (const event of Object.keys(runtime) as VuneDevtoolsRuntimeEvent[]) runtime[event] = 0
   revision += 1
   notify()
 }
@@ -129,6 +163,7 @@ export function getVuneDevtoolsSnapshot(): VuneDevtoolsSnapshot {
   return Object.freeze({
     enabled,
     revision,
+    runtime: Object.freeze({ ...runtime }),
     boundaries: Object.freeze([...boundaries.values()]
       .map(value => Object.freeze({ ...value }))
       .sort((left, right) => right.totalDurationMs - left.totalDurationMs)),

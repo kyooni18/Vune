@@ -135,7 +135,7 @@ test("VS Code providers return Vune and HTML tooling results", async () => {
     const htmlCompletions = completionProvider.provideCompletionItems(document, htmlPosition)
     assert.ok(viewCompletions.some(item => item.label === "VStack"))
     const buttonCompletion = viewCompletions.find(item => item.label === "Button")
-    assert.equal(buttonCompletion?.detail, "Button(_ title: string | number, @Action action) | Button(@Action action, @ViewBuilder label)")
+    assert.equal(buttonCompletion?.detail, "Button(_ title: string, @Action action) | Button(action: @Action, @ViewBuilder label)")
     assert.doesNotMatch(buttonCompletion?.detail ?? "", /Button\(@Action action\)/)
     assert.match(viewCompletions.find(item => item.label === "Card")?.detail ?? "", /Card\(title: string\)/)
     assert.ok(htmlCompletions.some(item => item.label === "div"))

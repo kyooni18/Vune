@@ -164,7 +164,11 @@ export function compiledTemplate(template: CompiledTemplateDescriptor, slots: re
 
 const compiledCollectionPlans = new WeakMap<Function, CompiledCollectionPlan>()
 
-/** Attach a compiler-generated row executor while preserving the original closure as fallback. */
+/**
+ * Attach a compiler-generated pure row executor while preserving the original
+ * closure as fallback. `evaluate`/`evaluateKey` are row-local compiler output;
+ * renderers may skip them for items proven unchanged by mutation metadata.
+ */
 export function compiledCollectionContent<Content extends (...arguments_: any[]) => ViewGraphValue>(
   content: Content,
   plan: CompiledCollectionPlan,
@@ -177,6 +181,10 @@ export function compiledCollectionContent<Content extends (...arguments_: any[])
     kind: "flat-text-host",
     indexIndependent: plan.indexIndependent === true,
     ...(typeof plan.evaluateKey === "function" ? { evaluateKey: plan.evaluateKey } : {}),
+    ...(typeof plan.hostType === "string" ? { hostType: plan.hostType } : {}),
+    ...(Object.prototype.hasOwnProperty.call(plan, "staticProps") ? { staticProps: plan.staticProps ?? null } : {}),
+    ...(typeof plan.evaluateProps === "function" ? { evaluateProps: plan.evaluateProps } : {}),
+    ...(typeof plan.evaluateText === "function" ? { evaluateText: plan.evaluateText } : {}),
     evaluate: plan.evaluate,
   }))
   return content

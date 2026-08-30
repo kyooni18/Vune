@@ -22,8 +22,9 @@ import {
 import * as Core from "@vune-ui/core"
 import { resolveSemanticCall, swiftUIModifierLowering, type SemanticArgument, type SemanticCallResolution, type SemanticInitializerSymbol, type SemanticViewTypeSymbol } from "@vune-ui/core"
 import { lowerImplicitMemberShorthand, lowerNamedAnimationFactoryCalls, lowerShorthand } from "./shorthand.js"
-import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"
+import { foldStaticResults, hoistStaticViewSubtrees, lowerCompiledViewTemplates, lowerContentTransitionArgument, lowerStaticSemanticSpecializations, staticModifierNames } from "./specialization.js"
 import { lowerCompiledCollections } from "./collection-specialization.js"
+import { lowerStateArrayMaps } from "./state-specialization.js"
 
 // Nested named calls are uncommon in ordinary argument expressions. Keep the
 // recursive lowering path behind a cheap lexical hint so every positional
@@ -49,12 +50,21 @@ function validationSourceFile(source: string): ts.SourceFile {
   return file
 }
 
-/** Compiler-facing view metadata is read from the same ViewType as runtime. */
+/**
+ * Compiler-facing view metadata starts with every runtime View so Vune-native
+ * and compatibility APIs remain usable. Canonical SwiftUI Views are then
+ * replaced by the SDK-audited manifest contract, preventing runtime-only
+ * overloads from silently becoming SwiftUI source syntax.
+ */
 const canonicalInitializerSymbols = new Map<string, readonly SemanticInitializerSymbol[]>()
 for (const [name, value] of Object.entries(Core)) {
   if (typeof value !== "function") continue
   const viewType = (value as { readonly viewType?: { readonly name?: string; readonly semanticSymbol?: { readonly initializers: readonly SemanticInitializerSymbol[] } } }).viewType
   if (viewType?.name && viewType.semanticSymbol) canonicalInitializerSymbols.set(name, viewType.semanticSymbol.initializers)
+}
+for (const name of Core.swiftUIViewNames()) {
+  const canonical = Core.swiftUIInitializerSymbols(name)
+  if (canonical) canonicalInitializerSymbols.set(name, canonical)
 }
 type InitializerSymbolRegistry = ReadonlyMap<string, readonly SemanticInitializerSymbol[]>
 
@@ -78,10 +88,7 @@ function buttonInitializerMessage(call: VuneCallExpression): string {
   if (labels.includes("label") && labels.includes("action") && labels.indexOf("label") < labels.indexOf("action")) {
     return "Button arguments must follow declaration order: action:, label:."
   }
-  if (call.trailing && call.arguments[0]?.label === "action") {
-    return "Button's custom-label initializer requires:\nButton(action: { ... }, label: { ... })"
-  }
-  return "Button requires a text label before its trailing action.\nUse:\nButton(\"Save\") { ... }"
+  return "Button must use either Button(\"Title\") { action } or Button(action: { ... }) { label }."
 }
 
 function knownCallArguments(call: VuneCallExpression): readonly SemanticArgument[] {
@@ -99,7 +106,7 @@ function knownCallArguments(call: VuneCallExpression): readonly SemanticArgument
 
 function canDeferDynamicButton(call: VuneCallExpression, arguments_: readonly SemanticArgument[]): boolean {
   if (!arguments_.some(argument => argument.type === "unknown")) return false
-  if (call.trailing) return call.arguments.length === 1 && !call.arguments[0]?.label
+  if (call.trailing) return call.arguments.length === 1 && (!call.arguments[0]?.label || call.arguments[0]?.label === "action")
   const labels = call.arguments.map(argument => argument.label)
   return labels.length === 2 && labels[0] === "action" && labels[1] === "label"
 }
@@ -158,19 +165,19 @@ function validateKnownTypeScriptCalls(
   registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
   parsedSource?: ts.SourceFile,
 ): void {
-  // This TypeScript-side validator currently only resolves the positional
-  // Button form; scanner-owned labelled/trailing-closure calls are validated
-  // by validateKnownCalls(). Skip the AST entirely for every other module.
+  // SwiftUI-style labels/trailing closures are scanner-owned. Plain positional
+  // JS/TS calls deliberately remain the compatibility surface; only Button's
+  // constrained positional form needs this AST-side validation.
   if (!/\bButton\s*\(/.test(source)) return
   const file = parsedSource ?? validationSourceFile(source)
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && registry.has(node.expression.text)) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Button" && registry.has("Button")) {
       // The Vune scanner owns trailing closures. TypeScript sees the call
       // prefix as a complete call, so leave that shape to validateKnownCalls.
       const callText = source.slice(node.expression.end, node.end)
       const hasVuneLabels = /(?:^|,)\s*[A-Za-z_$][A-Za-z0-9_$]*\s*:/.test(callText)
-      if (!hasVuneLabels && source[skipTrivia(source, node.end)] !== "{" && node.expression.text === "Button") {
-        const callSource = `${node.expression.text}(${node.arguments.map(argument => argument.getText(file)).join(", ")})`
+      if (!hasVuneLabels && source[skipTrivia(source, node.end)] !== "{") {
+        const callSource = `Button(${node.arguments.map(argument => argument.getText(file)).join(", ")})`
         const parsed = parseVuneBuilder(callSource, node.expression.getStart(file)).statements[0]
         if (parsed?.kind === "call") resolveKnownCall(parsed, registry)
       }
@@ -186,7 +193,16 @@ function closureRoleForKnownCall(
   registry: InitializerSymbolRegistry = canonicalInitializerSymbols,
 ): "value" | "viewBuilder" | "action" | undefined {
   if ((call.callee === "withAnimation" || call.callee === "withTransaction") && context.position === "trailing") return "action"
-  const resolved = resolveKnownCall(call, registry)
+  // This helper is also called while lowering the argument list of a call
+  // whose trailing closure has already been split off by the scanner. Such a
+  // synthetic prefix can be incomplete (notably Button(action:) before its
+  // trailing label), so role inference must fall back to manifest metadata
+  // rather than re-diagnosing the partial call.
+  let resolved: ReturnType<typeof resolveKnownCall>
+  try { resolved = resolveKnownCall(call, registry) } catch (error) {
+    if (!(error instanceof VuneInitializerSyntaxError)) throw error
+    resolved = undefined
+  }
   const resolvedArgumentIndex = context.position === "trailing"
     ? Math.max(0, knownCallArguments(call).length - 1)
     : context.label
@@ -368,7 +384,6 @@ function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", 
 function lowerArguments(source: string, calleeName?: string, registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const parsed = calleeName ? parseVuneBuilder(`${calleeName}(${source})`).statements[0] : undefined
   const call = parsed?.kind === "call" ? parsed : undefined
-  if (call && (call.callee === "Button" || call.trailing)) resolveKnownCall(call, registry)
   const positional: string[] = []
   const named: string[] = []
   for (const [argumentIndex, argument] of splitTopLevel(source).entries()) {
@@ -700,6 +715,121 @@ function compilerSemanticArgument(source: string): SemanticArgument {
   if (/^Binding\s*\(/.test(value)) return { label: argument.label, kind: "binding", type: "binding" }
   if (/^State\s*\(/.test(value)) return { label: argument.label, type: "state" }
   return { label: argument.label, type: "unknown" }
+}
+
+interface CanonicalRuntimeBindings {
+  readonly names: ReadonlyMap<string, string>
+  readonly namespaces: ReadonlySet<string>
+}
+
+function canonicalRuntimeBindings(file: ts.SourceFile): CanonicalRuntimeBindings {
+  const names = new Map<string, string>()
+  const namespaces = new Set<string>()
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    if (statement.moduleSpecifier.text !== "vune-ui"
+      && statement.moduleSpecifier.text !== "@vune-ui/core"
+      && statement.moduleSpecifier.text !== "@vune-ui/react") continue
+    const clause = statement.importClause
+    if (!clause || clause.isTypeOnly) continue
+    const bindings = clause.namedBindings
+    if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text)
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if (element.isTypeOnly) continue
+        const exported = element.propertyName?.text ?? element.name.text
+        if (canonicalInitializerSymbols.has(exported)) names.set(element.name.text, exported)
+      }
+    }
+  }
+  return { names, namespaces }
+}
+
+function canonicalCallName(
+  call: ts.CallExpression,
+  bindings: CanonicalRuntimeBindings,
+  shadowed: ReadonlySet<string>,
+): { readonly localSource: string; readonly exportedName: string } | undefined {
+  const callee = unwrapTsExpression(call.expression)
+  if (ts.isIdentifier(callee)) {
+    if (shadowed.has(callee.text)) return undefined
+    const exportedName = bindings.names.get(callee.text)
+    return exportedName ? { localSource: callee.text, exportedName } : undefined
+  }
+  if (!ts.isPropertyAccessExpression(callee)) return undefined
+  const owner = unwrapTsExpression(callee.expression)
+  if (!ts.isIdentifier(owner) || shadowed.has(owner.text) || !bindings.namespaces.has(owner.text)) return undefined
+  return canonicalInitializerSymbols.has(callee.name.text)
+    ? { localSource: `${owner.text}.${callee.name.text}`, exportedName: callee.name.text }
+    : undefined
+}
+
+/**
+ * Resolve the common intrinsic calls that need no TypeChecker from Vune's
+ * canonical initializer manifest. Unknown/dynamic arguments deliberately stay
+ * untouched for the semantic TypeScript pass below.
+ */
+function lowerStaticCanonicalCalls(source: string): string {
+  if (!/(?:from\s*|import\s*\()\s*["'](?:vune-ui|@vune-ui\/(?:core|react))["']/.test(source)) return source
+  const file = ts.createSourceFile("vune-canonical-calls.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = canonicalRuntimeBindings(file)
+  if (bindings.names.size === 0 && bindings.namespaces.size === 0) return source
+  const edits: Array<{ start: number; end: number; replacement: string }> = []
+  const visit = (node: ts.Node, shadowed: ReadonlySet<string>): void => {
+    if (ts.isCallExpression(node)) {
+      const candidate = canonicalCallName(node, bindings, shadowed)
+      if (candidate && !node.arguments.some(argument => /^namedArguments\s*\(/.test(argument.getText(file)))) {
+        const semanticArguments = node.arguments.map(argument => compilerSemanticArgument(argument.getText(file)))
+        if (semanticArguments.every(argument => argument.type !== "unknown")) {
+          const symbols = canonicalInitializerSymbols.get(candidate.exportedName) ?? []
+          const viewType: SemanticViewTypeSymbol = {
+            kind: "view",
+            name: candidate.exportedName,
+            qualifiedName: candidate.exportedName,
+            initializers: symbols,
+            fields: [],
+          }
+          const resolution = resolveSemanticCall(viewType, semanticArguments)
+          const selected = resolution.resolvedInitializer
+          if (selected && !selected.parameters.some(parameter => parameter.variadic || parameter.kind === "viewBuilder" || parameter.kind === "binding")) {
+            edits.push({
+              start: node.getStart(file),
+              end: node.end,
+              replacement: `${candidate.localSource}.viewType.createNodeCompiled(${selected.index}, [${node.arguments.map(argument => argument.getText(file)).join(", ")}])`,
+            })
+            return
+          }
+        }
+      }
+    }
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) {
+      const local = new Set(shadowed)
+      for (const parameter of node.parameters) for (const name of bindingNames(parameter.name)) local.add(name)
+      if (ts.isFunctionDeclaration(node) && node.name) local.add(node.name.text)
+      if (node.body) visit(node.body, local)
+      return
+    }
+    if (ts.isBlock(node)) {
+      const local = new Set(shadowed)
+      for (const name of directBlockBindings(node)) local.add(name)
+      ts.forEachChild(node, child => visit(child, local))
+      return
+    }
+    if (ts.isCatchClause(node)) {
+      const local = new Set(shadowed)
+      if (node.variableDeclaration) for (const name of bindingNames(node.variableDeclaration.name)) local.add(name)
+      visit(node.block, local)
+      return
+    }
+    ts.forEachChild(node, child => visit(child, shadowed))
+  }
+  visit(file, new Set())
+  if (edits.length === 0) return source
+  let result = source
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+  }
+  return result
 }
 
 function legacyHostCoercion(type: string | undefined): "identity" | "boolean" | "number" {
@@ -1445,20 +1575,41 @@ function lowerTopLevelState(source: string): string {
 }
 
 function ensureImports(source: string): string {
-  const required = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate", "compiledCollectionContent"]
+  const callableRequired = ["defineView", "initializer", "resolveBuilderInput", "namedArguments", "overloadClosure", "Binding", "State", "Element", "modifiedContent", "modifiedContentCompiled", "compiledTemplate", "defineCompiledTemplate"]
     .filter(name => new RegExp(`\\b${name}(?:<[^()\\n]*>)?\\s*\\(`).test(source) || (name === "defineView" && /const\s+[A-Z]\w*\s*=\s*defineView/.test(source)))
+  const valueRequired = ["ContentTransition", "SymbolEffect"].filter(name => {
+    if (!new RegExp(`\\b${name}\\s*\\.`).test(source)) return false
+    // Generated Swift-style shorthand should import its core value, while an
+    // explicitly declared local with the same name remains user-owned.
+    return !new RegExp(`\\b(?:const|let|var|class|function|enum|namespace)\\s+${name}\\b`).test(source)
+  })
+  const required = [...callableRequired, ...valueRequired]
   let result = source
-  if (required.length === 0) return result
+  const internalRequired = ["compiledCollectionContent", "mapStateArrayData"].filter(name => new RegExp(`\\b${name}\\s*\\(`).test(source))
+  if (required.length === 0 && internalRequired.length === 0) return result
   const imports = [...result.matchAll(/import\s*\{([^}]*)\}\s*from\s*(["'])(vune-ui|@vune-ui\/core)\2[\t ]*;?/g)]
   const imported = new Set(imports.flatMap(match => match[1].split(",").map(value => value.trim()).filter(Boolean)))
   const missing = required.filter(name => !imported.has(name))
-  if (missing.length === 0) return result
-  const existingCore = imports.find(match => match[3] === "@vune-ui/core")
-  if (!existingCore) return `import { ${missing.join(", ")} } from "@vune-ui/core"\n${result}`
-  const names = existingCore[1].split(",").map(value => value.trim()).filter(Boolean)
-  for (const name of missing) if (!names.includes(name)) names.push(name)
-  const replacement = `import { ${names.join(", ")} } from ${existingCore[2]}@vune-ui/core${existingCore[2]}`
-  result = result.slice(0, existingCore.index) + replacement + result.slice(existingCore.index + existingCore[0].length)
+  if (missing.length > 0) {
+    const existingCore = imports.find(match => match[3] === "@vune-ui/core")
+    if (!existingCore) result = `import { ${missing.join(", ")} } from "@vune-ui/core"\n${result}`
+    else {
+      const names = existingCore[1].split(",").map(value => value.trim()).filter(Boolean)
+      for (const name of missing) if (!names.includes(name)) names.push(name)
+      const replacement = `import { ${names.join(", ")} } from ${existingCore[2]}@vune-ui/core${existingCore[2]}`
+      result = result.slice(0, existingCore.index) + replacement + result.slice(existingCore.index + existingCore[0].length)
+    }
+  }
+  if (internalRequired.length > 0) {
+    const internalImport = /import\s*\{([^}]*)\}\s*from\s*(["'])@vune-ui\/core\/internal\/runtime\2[\t ]*;?/.exec(result)
+    if (!internalImport) result = `import { ${internalRequired.join(", ")} } from "@vune-ui/core/internal/runtime"\n${result}`
+    else {
+      const names = internalImport[1].split(",").map(value => value.trim()).filter(Boolean)
+      for (const name of internalRequired) if (!names.includes(name)) names.push(name)
+      const replacement = `import { ${names.join(", ")} } from ${internalImport[2]}@vune-ui/core/internal/runtime${internalImport[2]}`
+      result = result.slice(0, internalImport.index) + replacement + result.slice(internalImport.index + internalImport[0].length)
+    }
+  }
   return result
 }
 
@@ -1541,7 +1692,8 @@ function lowerNamedModifierCalls(source: string): string {
       if (output[open] !== "(") continue
       const close = matching(output, open, "(", ")")
       const argumentsSource = output.slice(open + 1, close)
-      if (!splitTopLevel(argumentsSource).some(argument => topLevelColon(argument) >= 0)) {
+      const contentTransitionShorthand = identifier.name === "contentTransition" && /^\s*\./.test(argumentsSource)
+      if (!contentTransitionShorthand && !splitTopLevel(argumentsSource).some(argument => topLevelColon(argument) >= 0)) {
         cursor = close
         continue
       }
@@ -1560,12 +1712,32 @@ function lowerNamedModifierCalls(source: string): string {
         value: (validLabel ? source.slice(colon + 1) : source).trim(),
       }
     })
-    const positional = entries.filter(entry => !entry.label).map(entry => lowerImplicitMemberShorthand(lowerShorthand(entry.value)))
+    const lowerCallback = (value: string, parameterized: boolean): string => {
+      const source = value.trim()
+      if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) {
+        return lowerImplicitMemberShorthand(lowerShorthand(source))
+      }
+      const body = source.slice(1, -1).trim()
+      if (parameterized) {
+        const match = /^([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+([\s\S]*)$/.exec(body)
+        if (match) return `(${match[1]}) => {${lowerRange(match[2])}}`
+      }
+      return `() => {${lowerRange(body)}}`
+    }
+    const lowerModifierValue = (value: string, label?: string): string => {
+      if (candidate.name === "contentTransition") return lowerContentTransitionArgument(value)
+      if (candidate.name === "onTapGesture" && label === "perform") return lowerCallback(value, false)
+      if (candidate.name === "onLongPressGesture" && label === "perform") return lowerCallback(value, false)
+      if (candidate.name === "onLongPressGesture" && label === "onPressingChanged") return lowerCallback(value, true)
+      if (candidate.name === "onHover" && label === "perform") return lowerCallback(value, true)
+      return lowerImplicitMemberShorthand(lowerShorthand(value))
+    }
+    const positional = entries.filter(entry => !entry.label).map(entry => lowerModifierValue(entry.value))
     const named = new Map<string, string>()
     for (const entry of entries) {
       if (!entry.label) continue
       if (named.has(entry.label)) throw syntaxError(`Duplicate labeled argument ${entry.label}: in .${candidate.name}(...)`, candidate.open)
-      named.set(entry.label, lowerImplicitMemberShorthand(lowerShorthand(entry.value)))
+      named.set(entry.label, lowerModifierValue(entry.value, entry.label))
     }
 
     let lowered: string
@@ -1576,6 +1748,23 @@ function lowerNamedModifierCalls(source: string): string {
     } else if (lowering.kind === "ordered") {
       for (const label of named.keys()) if (!lowering.labels.includes(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
       lowered = [...positional, ...lowering.labels.flatMap(label => named.has(label) ? [named.get(label)!] : [])].join(", ")
+    } else if (lowering.kind === "slots") {
+      const allowed = new Set(lowering.labels.filter((label): label is string => label !== null))
+      for (const label of named.keys()) if (!allowed.has(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
+      // Fill explicitly: sparse Array holes are skipped by .map(), which used
+      // to serialize omitted leading Swift defaults as `.shadow(, 8)` instead
+      // of the intentional `.shadow(undefined, 8)` runtime call.
+      const slots = new Array<string | undefined>(lowering.labels.length).fill(undefined)
+      let positionalIndex = 0
+      for (let index = 0; index < lowering.labels.length; index += 1) {
+        const label = lowering.labels[index]
+        if (label !== null && named.has(label)) slots[index] = named.get(label)!
+        else if (label === null && positionalIndex < positional.length) slots[index] = positional[positionalIndex++]
+      }
+      if (positionalIndex < positional.length) throw syntaxError(`Too many positional arguments in .${candidate.name}(...)`, candidate.open)
+      let last = slots.length - 1
+      while (last >= 0 && slots[last] === undefined) last -= 1
+      lowered = Array.from({ length: last + 1 }, (_value, index) => slots[index] ?? "undefined").join(", ")
     } else {
       const allowed = new Set([...lowering.objectLabels, ...lowering.orderedLabels])
       for (const label of named.keys()) if (!allowed.has(label)) throw syntaxError(`Unknown labeled argument ${label}: in .${candidate.name}(...)`, candidate.open)
@@ -1703,11 +1892,22 @@ export function transformVuneSource(source: string, fileName = "vune-source.ts")
   // TypeScript. This lets the TypeScript AST see complete view() arguments
   // instead of truncating them at trailing builder blocks.
   const lowered = lowerTopLevelState(withBuilderSyntax)
-  const withStaticResults = foldStaticResults(lowered)
+  // Capture common authored collection rows before any later specialization
+  // turns Text/Element calls into more opaque compiled templates. A second
+  // collection pass below still picks up shapes exposed by constant folding
+  // or static struct specialization.
+  const withStateArrayMaps = lowerStateArrayMaps(lowered)
+  const withAuthoredCollections = lowerCompiledCollections(withStateArrayMaps)
+  const withStaticResults = foldStaticResults(withAuthoredCollections)
   const withStaticStructCalls = lowerStaticStructCalls(withStaticResults, declarations)
-  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withStaticStructCalls, fileName)
-  const withCompiledCollections = lowerCompiledCollections(withSemanticSpecializations)
-  const withCompiledTemplates = lowerCompiledViewTemplates(withCompiledCollections)
+  // Collection planning must see authored Text/Element rows before general
+  // semantic specialization lowers those calls into templates. Otherwise
+  // making a core View canonical can accidentally disable the faster keyed
+  // flat-row plan. The fallback closure may still be specialized afterwards.
+  const withCompiledCollections = lowerCompiledCollections(withStaticStructCalls)
+  const withCanonicalCalls = lowerStaticCanonicalCalls(withCompiledCollections)
+  const withSemanticSpecializations = lowerStaticSemanticSpecializations(withCanonicalCalls, fileName)
+  const withCompiledTemplates = lowerCompiledViewTemplates(withSemanticSpecializations)
   // Hoisting only needs the imports authored/retained by the source. Injecting
   // compiler helper imports first makes the final static pass parse a larger
   // module and can only add irrelevant bindings to its candidate set.

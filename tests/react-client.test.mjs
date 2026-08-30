@@ -17,7 +17,8 @@ import {
   view,
 } from '../dist/legacy.js'
 import { GeometryReader, Text as CanonicalText, mount as canonicalMount, render as canonicalRender, useVuneState, view as canonicalView } from '../packages/react/dist/index.js'
-import { ForEach, State as CanonicalState, compiledCollectionContent, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
+import { ForEach, State as CanonicalState, defineView, initializer, viewElement } from '../packages/core/dist/index.js'
+import { compiledCollectionContent } from '../packages/core/dist/internal-runtime.js'
 
 function installDOM() {
   const dom = new JSDOM('<!doctype html><html><body><main id="root"></main></body></html>', {
@@ -139,16 +140,78 @@ test('React owns compiler-planned State collections without rebuilding the paren
     await act(async () => { items.value[1] = { id: 'b', value: 'B1' } })
     assert.equal(parentRuns, 1)
     assert.equal(genericRuns, 0)
-    assert.equal(rowRuns, 2)
+    assert.equal(rowRuns, 1)
     assert.equal(document.querySelector('[data-row="b"]').textContent, 'B1')
+
+    rowRuns = 0
+    await act(async () => {
+      const next = [...items.value]
+      next[1] = { id: 'b', value: 'B2' }
+      items.value = next
+    })
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 1)
+    assert.equal(document.querySelector('[data-row="b"]').textContent, 'B2')
+
+    rowRuns = 0
+    await act(async () => { items.value[0].value = 'A1' })
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 1)
+    assert.equal(document.querySelector('[data-row="a"]').textContent, 'A1')
 
     rowRuns = 0
     await act(async () => { items.value.reverse() })
     assert.equal(parentRuns, 1)
     assert.equal(genericRuns, 0)
-    assert.equal(rowRuns, 2)
-    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['B1', 'A'])
+    assert.equal(rowRuns, 0)
+    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['B2', 'A1'])
     assert.strictEqual(document.querySelector('[data-row="a"]'), a)
+
+    rowRuns = 0
+    await act(async () => { items.value.push({ id: 'c', value: 'C' }) })
+    assert.equal(rowRuns, 1)
+    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['B2', 'A1', 'C'])
+
+    rowRuns = 0
+    await act(async () => { items.value.pop() })
+    assert.equal(rowRuns, 0)
+    assert.deepEqual([...document.querySelectorAll('span')].map(node => node.textContent), ['B2', 'A1'])
+    await act(async () => { root.unmount() })
+  } finally {
+    restore()
+  }
+})
+
+test('React prunes conservative declared State dependencies owned by compiled collections', async () => {
+  const restore = installDOM()
+  try {
+    const items = CanonicalState([{ id: 'a', value: 'A' }, { id: 'b', value: 'B' }])
+    let parentRuns = 0
+    let rowRuns = 0
+    const content = compiledCollectionContent(item => viewElement('span', { 'data-row': item.id }, [item.value]), {
+      kind: 'flat-text-host',
+      indexIndependent: true,
+      evaluateKey: item => item.id,
+      evaluate: item => { rowRuns += 1; return { type: 'span', props: { 'data-row': item.id }, text: item.value } },
+    })
+    const App = defineView('ReactDeclaredOwnedCollectionApp', {
+      initializers: [initializer('App()', args => args.length === 0)],
+      dependencies: () => [items],
+      dependenciesComplete: true,
+      body: () => {
+        parentRuns += 1
+        return viewElement('section', null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+      },
+    })
+    const root = createRoot(document.getElementById('root'))
+    await act(async () => { root.render(canonicalRender(App())) })
+    rowRuns = 0
+    await act(async () => { items.value[1].value = 'B2' })
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 1)
+    assert.equal(document.querySelector('[data-row="b"]').textContent, 'B2')
     await act(async () => { root.unmount() })
   } finally {
     restore()

@@ -4,6 +4,7 @@ import {
   Box,
   Circle,
   Alert,
+  ContentTransition,
   Element,
   GeometryReader,
   Grid,
@@ -15,6 +16,7 @@ import {
   NavigationStack,
   Picker,
   ProgressView,
+  Path,
   RoundedRectangle,
   SafeArea,
   Sheet,
@@ -22,17 +24,20 @@ import {
   Slider,
   Spacer,
   State,
+  SymbolEffect,
   Text,
   TextField,
   TextArea,
   Toggle,
   VStack,
+  VectorSymbol,
   ZStack,
   namedArguments,
   type BindingRef,
   type ViewBuilderClosure,
   type ViewGraphValue,
 } from '../packages/core/src/index.js'
+import { Svg } from '../packages/core/src/web-primitives.js'
 
 const bigintLeaf: ViewGraphValue = 1n
 // @ts-expect-error arbitrary objects are not renderer-neutral View graph leaves
@@ -53,6 +58,7 @@ ScrollView('both', () => Text('Scrollable'))
 SafeArea(['top', 'left'], () => Text('Inset'))
 GeometryReader(geometry => Text(geometry.size.width))
 Text('Frame').frame({ minWidth: 120, maxWidth: 'infinity', height: '3rem', alignment: 'center' })
+Text('Ideal frame').frame({ idealWidth: 100, idealHeight: 44 })
 Text('Styled').foreground('CanvasText').background('Canvas').style({ borderRadius: 8, '--vune-accent': '#7c3aed' })
 // @ts-expect-error inline style names are checked while CSS custom properties stay extensible
 Text('Invalid style').style({ colro: 'tomato' })
@@ -72,6 +78,31 @@ TextField(Binding(name), 'Name')
 TextArea(Binding(name), 'Description')
 Slider(countBinding, { min: 0, max: 10, step: 1 })
 Image('/vune.png', { alt: 'Vune' })
+const statusSymbol = new VectorSymbol({
+  name: 'status',
+  viewBox: '0 0 24 24',
+  layers: [{ id: 'shape', d: 'M2 2 L22 2 L22 22 L2 22 Z', fill: 'currentColor' }],
+})
+Image(statusSymbol, { alt: 'Status' })
+  .contentTransition(ContentTransition.symbolEffect(SymbolEffect.magicReplace()))
+  .animation()
+const svgNodeSymbol = VectorSymbol.fromSVGNodes([
+  ['circle', { cx: 12, cy: 12, r: 8, stroke: 'currentColor', fill: 'none' }],
+  ['line', { x1: 6, y1: 6, x2: 18, y2: 18, stroke: 'currentColor', 'stroke-width': 2 }],
+], { name: 'svg-node-symbol', viewBox: '0 0 24 24' })
+Image(svgNodeSymbol).contentTransition(ContentTransition.symbolEffect(SymbolEffect.automatic)).animation()
+const lucideLikeSymbol = VectorSymbol.fromLucide({
+  name: 'standard-icon',
+  size: 24,
+  node: [['path', { d: 'M4 12 L20 12' }]],
+})
+Image(lucideLikeSymbol)
+Text('Saved').contentTransition(ContentTransition.interpolate).animation()
+Text('Saved').contentTransition(ContentTransition.blurReplace()).animation()
+Text('Saved').contentTransition(ContentTransition.push('trailing')).animation()
+Text('Saved').contentTransition(ContentTransition.scale(0.84)).animation()
+Text('10').contentTransition(ContentTransition.numericText(10)).animation()
+Svg('0 0 24 24', () => Path('M2 2 L22 22').animation())
 Link('Docs', () => '/docs')
 Box(() => Text('Box'))
 Grid({ columns: 2 }, () => [Text('A'), Text('B')])
@@ -159,7 +190,7 @@ SafeArea('horizontal', () => Text('Invalid'))
 // @ts-expect-error Spacer accepts only a CSS length
 Spacer({ minLength: 12 })
 // @ts-expect-error frame rejects unknown layout properties
-Text('Invalid').frame({ idealWidth: 100 })
+Text('Invalid').frame({ preferredWidth: 100 })
 // @ts-expect-error frame alignment is a closed semantic
 Text('Invalid').frame({ alignment: 'baseline' })
 // @ts-expect-error foreground colors are CSS strings

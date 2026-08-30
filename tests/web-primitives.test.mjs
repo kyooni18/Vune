@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Binding, Canvas, ContentEditable, FilePicker, FocusScope, Path, Popover, State, Svg, TextEditor, Video } from '../packages/core/dist/index.js'
+import { Binding, Path, State, TextEditor } from '../packages/core/dist/index.js'
+import { Canvas, ContentEditable, FilePicker, FocusScope, Popover, Svg, Video } from '../packages/core/dist/web-primitives.js'
 
 function element(value) {
   assert.equal(value.kind, 'element')

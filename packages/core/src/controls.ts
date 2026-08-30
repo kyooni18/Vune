@@ -10,6 +10,7 @@ import { Animation } from "./animation.js"
 import { isBinding, resolveValue, type BindingRef, type Value } from "./state.js"
 import { requireOptionRecord } from "./options.js"
 import { Text } from "./views.js"
+import { isVectorSymbol, type VectorSymbol } from "./vector-symbol.js"
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -253,21 +254,50 @@ export const Slider = defineBuiltinView<SliderProps>(
 ) as TypedViewConstructor<SliderProps, SliderCall>
 
 export interface ImageOptions { readonly alt?: string }
-export interface ImageProps extends ImageOptions { readonly source: string }
-interface ImageCall { (source: Value<string>, options?: ImageOptions): ModifiableViewNode }
+export interface ImageProps extends ImageOptions { readonly source?: string; readonly symbol?: VectorSymbol }
+interface ImageCall {
+  (source: Value<string>, options?: ImageOptions): ModifiableViewNode
+  (symbol: VectorSymbol, options?: ImageOptions): ModifiableViewNode
+}
 
 export const Image = defineBuiltinView<ImageProps>(
   "Image",
   [initializer(
     "Image(source, options?)",
-    args => args.length >= 1 && args.length <= 2 && (typeof args[0] === "string" || typeof args[0] === "function") && (args[1] === undefined || isObject(args[1])),
+    args => args.length >= 1 && args.length <= 2 && (typeof args[0] === "string" || typeof args[0] === "function" || isVectorSymbol(args[0])) && (args[1] === undefined || isObject(args[1])),
     args => {
       const options = args[1] === undefined ? {} : requireOptionRecord(args[1], ["alt"], "Image")
-      return { source: String(resolveValue(args[0] as Value<string>)), alt: typeof options.alt === "string" ? options.alt : undefined }
+      return isVectorSymbol(args[0])
+        ? { symbol: args[0], alt: typeof options.alt === "string" ? options.alt : undefined }
+        : { source: String(resolveValue(args[0] as Value<string>)), alt: typeof options.alt === "string" ? options.alt : undefined }
     },
-    [initializerKinds.value(true, "source", undefined, "Value<string>"), initializerKinds.value(false, "options", ["alt"], "object")],
+    [initializerKinds.value(true, "source", undefined, "Value<string> | VectorSymbol"), initializerKinds.value(false, "options", ["alt"], "object")],
   )],
-  ({ source, alt }) => viewElement("img", { src: source, alt }),
+  ({ source, symbol, alt }) => {
+    if (!symbol) return viewElement("img", { src: source, alt })
+    const descriptor = symbol.descriptor
+    return viewElement("svg", {
+      "data-vune": "VectorSymbol",
+      "data-vune-symbol": descriptor.name ?? "",
+      viewBox: descriptor.viewBox,
+      xmlns: "http://www.w3.org/2000/svg",
+      ...(alt ? { role: "img", "aria-label": alt } : { "aria-hidden": "true" }),
+    }, descriptor.layers.map(layer => viewElement("path", {
+      key: layer.id,
+      "data-vune-symbol-layer": layer.id,
+      d: layer.d,
+      ...(layer.fill !== undefined ? { fill: layer.fill } : {}),
+      ...(layer.stroke !== undefined ? { stroke: layer.stroke } : {}),
+      ...(layer.strokeWidth !== undefined ? { strokeWidth: layer.strokeWidth } : {}),
+      ...(layer.strokeLinecap !== undefined ? { strokeLinecap: layer.strokeLinecap } : {}),
+      ...(layer.strokeLinejoin !== undefined ? { strokeLinejoin: layer.strokeLinejoin } : {}),
+      ...(layer.fillRule !== undefined ? { fillRule: layer.fillRule } : {}),
+      ...(layer.clipRule !== undefined ? { clipRule: layer.clipRule } : {}),
+      ...(layer.transform !== undefined ? { transform: layer.transform } : {}),
+      ...(layer.vectorEffect !== undefined ? { vectorEffect: layer.vectorEffect } : {}),
+      ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
+    })))
+  },
 ) as TypedViewConstructor<ImageProps, ImageCall>
 
 export interface LinkProps { readonly label: string; readonly href: string }

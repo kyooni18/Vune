@@ -107,7 +107,10 @@ export function playWebTransition(
         duration,
         delay,
         easing: css?.transitionTimingFunction ?? "ease",
-        fill: "none",
+        // Keep the insertion/removal start frame applied during a delay. With
+        // `none`, a delayed enter briefly exposes the live final DOM state and
+        // then jumps backwards when playback begins.
+        fill: "backwards",
       })
       animation.addEventListener("finish", finish, { once: true })
       animation.addEventListener("cancel", finish, { once: true })

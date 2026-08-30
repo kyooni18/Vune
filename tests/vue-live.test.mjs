@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { JSDOM } from "jsdom"
-import { ForEach, GeometryReader, State, Text, compiledCollectionContent, defineView, initializer, viewElement } from "../packages/core/dist/index.js"
+import { ForEach, GeometryReader, State, Text, defineView, initializer, viewElement } from "../packages/core/dist/index.js"
+import { compiledCollectionContent } from "../packages/core/dist/internal-runtime.js"
 
 test("Vue consumes core keyed View identity for reorder and remount State semantics", async () => {
   const dom = new JSDOM("<!doctype html><div id=app></div>")
@@ -94,17 +95,95 @@ test("Vue owns compiler-planned State collections without rebuilding the parent 
     await nextTick()
     assert.equal(parentRuns, 1)
     assert.equal(genericRuns, 0)
-    assert.equal(rowRuns, 2)
+    assert.equal(rowRuns, 1)
     assert.equal(dom.window.document.querySelector('[data-row="b"]')?.textContent, "B1")
+
+    rowRuns = 0
+    const next = [...items.value]
+    next[1] = { id: "b", value: "B2" }
+    items.value = next
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 1)
+    assert.equal(dom.window.document.querySelector('[data-row="b"]')?.textContent, "B2")
+
+    rowRuns = 0
+    items.value[0].value = "A1"
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(genericRuns, 0)
+    assert.equal(rowRuns, 1)
+    assert.equal(dom.window.document.querySelector('[data-row="a"]')?.textContent, "A1")
 
     rowRuns = 0
     items.value.reverse()
     await nextTick()
     assert.equal(parentRuns, 1)
     assert.equal(genericRuns, 0)
-    assert.equal(rowRuns, 2)
-    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["B1", "A"])
+    assert.equal(rowRuns, 0)
+    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["B2", "A1"])
     assert.strictEqual(dom.window.document.querySelector('[data-row="a"]'), a)
+
+    rowRuns = 0
+    items.value.push({ id: "c", value: "C" })
+    await nextTick()
+    assert.equal(rowRuns, 1)
+    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["B2", "A1", "C"])
+
+    rowRuns = 0
+    items.value.pop()
+    await nextTick()
+    assert.equal(rowRuns, 0)
+    assert.deepEqual([...dom.window.document.querySelectorAll("span")].map(node => node.textContent), ["B2", "A1"])
+    app.unmount()
+  } finally {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.Element = previous.Element
+    globalThis.SVGElement = previous.SVGElement
+    globalThis.Node = previous.Node
+    dom.window.close()
+  }
+})
+
+test("Vue prunes conservative declared State dependencies owned by compiled collections", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>")
+  const previous = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, SVGElement: globalThis.SVGElement, Node: globalThis.Node }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.Element = dom.window.Element
+  globalThis.SVGElement = dom.window.SVGElement
+  globalThis.Node = dom.window.Node
+  try {
+    const { createApp, nextTick } = await import("vue")
+    const { VuneView } = await import("../packages/vue/dist/index.js")
+    const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }])
+    let parentRuns = 0
+    let rowRuns = 0
+    const content = compiledCollectionContent(item => viewElement("span", { "data-row": item.id }, [item.value]), {
+      kind: "flat-text-host",
+      indexIndependent: true,
+      evaluateKey: item => item.id,
+      evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
+    })
+    const App = defineView("VueDeclaredOwnedCollectionApp", {
+      initializers: [initializer("App()", args => args.length === 0)],
+      dependencies: () => [items],
+      dependenciesComplete: true,
+      body: () => {
+        parentRuns += 1
+        return viewElement("section", null, [ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content])])
+      },
+    })
+    const app = createApp(VuneView, { render: () => App() })
+    app.mount(dom.window.document.getElementById("app"))
+    rowRuns = 0
+    items.value[1].value = "B2"
+    await nextTick()
+    assert.equal(parentRuns, 1)
+    assert.equal(rowRuns, 1)
+    assert.equal(dom.window.document.querySelector('[data-row="b"]')?.textContent, "B2")
     app.unmount()
   } finally {
     globalThis.window = previous.window

@@ -28,7 +28,7 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     case "modified": {
       let contentIdentity = identity
       for (const item of value.modifiers) {
-        if (item.name === "keyed") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
+        if (item.name === "keyed" || item.name === "id") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
       }
       return collectLogicalViewIdentities(value.content, contentIdentity)
     }
@@ -44,7 +44,7 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
 }
 
 export function renderViewNode<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>): Output {
-  return renderViewNodeAt(value, renderer, ["root"])
+  return renderViewNodeStack(value, renderer, ["root"])
 }
 
 function renderCompiledTemplateValue<Output>(
@@ -62,8 +62,26 @@ function renderCompiledTemplateValue<Output>(
 }
 
 export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: ViewIdentity): Output {
-  if (arrayCheck(value) === true) return renderer.fragment(snapshotArrayValues(value as readonly unknown[]).map((item, index) => renderViewNodeAt(item as ViewGraphValue, renderer, [...identity, "array", index])))
+  // Public callers may retain the identity they pass us. Copy it once at the
+  // entry point, then let the internal depth-first traversal reuse one mutable
+  // stack instead of allocating/copying an identity array for every ordinary
+  // element and primitive child.
+  return renderViewNodeStack(value, renderer, [...identity])
+}
+
+function renderViewNodeStack<Output>(value: ViewGraphValue, renderer: VuneRenderer<Output>, identity: Array<string | number>): Output {
   if (!isViewNode(value)) {
+    if (arrayCheck(value) === true) {
+      const values = snapshotArrayValues(value as readonly unknown[])
+      const children = new Array<Output>(values.length)
+      const base = identity.length
+      for (let index = 0; index < values.length; index += 1) {
+        identity.push("array", index)
+        children[index] = renderViewNodeStack(values[index] as ViewGraphValue, renderer, identity)
+        identity.length = base
+      }
+      return renderer.fragment(children)
+    }
     if (value === null || value === undefined || typeof value === "boolean") {
       return renderer.value ? renderer.value(null) : null as Output
     }
@@ -75,59 +93,104 @@ export function renderViewNodeAt<Output>(value: ViewGraphValue, renderer: VuneRe
   switch (value.kind) {
     case "element": {
       const foreign = isForeignComponent(value.type) ? value.type : undefined
-      const elementIdentity = foreign && foreign.key !== undefined ? keyedViewIdentity(identity, foreign.key) : identity
-      return renderer.element(value.type, value.props, ...value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...elementIdentity, "element", index])))
+      const elementIdentity = foreign && foreign.key !== undefined ? [...keyedViewIdentity(identity, foreign.key)] : identity
+      const children = new Array<Output>(value.children.length)
+      const base = elementIdentity.length
+      for (let index = 0; index < value.children.length; index += 1) {
+        elementIdentity.push("element", index)
+        children[index] = renderViewNodeStack(value.children[index] as ViewGraphValue, renderer, elementIdentity)
+        elementIdentity.length = base
+      }
+      return renderer.element(value.type, value.props, ...children)
     }
-    case "fragment":
-      return renderer.fragment(value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "fragment", index])))
+    case "fragment": {
+      const children = new Array<Output>(value.children.length)
+      const base = identity.length
+      for (let index = 0; index < value.children.length; index += 1) {
+        identity.push("fragment", index)
+        children[index] = renderViewNodeStack(value.children[index] as ViewGraphValue, renderer, identity)
+        identity.length = base
+      }
+      return renderer.fragment(children)
+    }
     case "template": {
-      const renderSlot = (index: number): Output => renderViewNodeAt(value.slots[index] ?? null, renderer, [...identity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])])
+      // Template renderers may retain the slot callback, so snapshot only at
+      // this real identity boundary instead of for every static host below it.
+      const templateIdentity = [...identity]
+      const renderSlot = (index: number): Output => renderViewNodeStack(
+        value.slots[index] ?? null,
+        renderer,
+        [...templateIdentity, ...(value.template.slotIdentities[index] ?? ["template-slot", index])],
+      )
       return renderer.template
-        ? renderer.template(value, renderSlot, identity)
+        ? renderer.template(value, renderSlot, templateIdentity)
         : renderCompiledTemplateValue(value.template.root, renderer, renderSlot)
     }
     case "collection": {
-      const renderEntry = (entry: ReturnType<typeof keyedCollectionEntries>[number]): Output => renderViewNodeAt(
-        value.content(entry.item, entry.index, entry.key), renderer, [...identity, "fragment", entry.index])
+      // Collection renderers own row lifetime and may invoke renderEntry after
+      // this traversal returns. Give that boundary one stable base identity;
+      // generic element traversal inside each row still reuses its own stack.
+      const collectionIdentity = [...identity]
+      const renderEntry = (entry: ReturnType<typeof keyedCollectionEntries>[number]): Output => renderViewNodeStack(
+        value.content(entry.item, entry.index, entry.key), renderer, [...collectionIdentity, "fragment", entry.index])
       return renderer.collection
-        ? renderer.collection(value, renderEntry, identity)
+        ? renderer.collection(value, renderEntry, collectionIdentity)
         : renderer.fragment(keyedCollectionEntries(value).map(renderEntry))
     }
     case "modified": {
-      let contentIdentity = identity
+      let contentIdentity: ViewIdentity = identity
       for (const item of value.modifiers) {
-        if (item.name === "keyed") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
+        if (item.name === "keyed" || item.name === "id") contentIdentity = keyedViewIdentity(contentIdentity, item.arguments[0] as string | number)
       }
-      let rendered = renderViewNodeAt(value.content, renderer, contentIdentity)
-      for (const item of value.modifiers) rendered = renderer.modifier(rendered, item)
+      let rendered = renderViewNodeStack(value.content, renderer, contentIdentity === identity ? identity : [...contentIdentity])
+      for (const [modifierIndex, item] of value.modifiers.entries()) {
+        const renderArgument = (argumentIndex: number): Output => renderViewNodeStack(
+          item.arguments[argumentIndex] as ViewGraphValue,
+          renderer,
+          [...contentIdentity, "modifier", modifierIndex, "argument", argumentIndex],
+        )
+        rendered = renderer.modifier(rendered, item, renderArgument)
+      }
       return rendered
     }
     case "view": {
       const typeIdentity = viewTypeIdentity(value.host, value.name)
       const viewIdentity: ViewIdentity = [...identity, "view-type", typeIdentity, "view", value.name]
-      const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeAt(value.render(props), renderer, [...viewIdentity, "body"])
+      const bodyIdentity: ViewIdentity = [...viewIdentity, "body"]
+      const renderWithProps = (props: Record<string, unknown> = value.props): Output => renderViewNodeStack(value.render(props), renderer, [...bodyIdentity])
       if (renderer.view) return renderer.view(value, renderWithProps, viewIdentity)
       const state = value.state?.(value.props) ?? {}
       return renderWithProps({ ...value.props, ...state })
     }
-    case "geometry":
+    case "geometry": {
+      const geometryIdentity: ViewIdentity = [...identity, "geometry"]
       return renderer.geometry
-        ? renderer.geometry(value, geometry => renderViewNodeAt(value.content(geometry), renderer, [...identity, "geometry"]))
-        : renderViewNodeAt(value.content(zeroGeometry), renderer, [...identity, "geometry"])
+        ? renderer.geometry(value, geometry => renderViewNodeStack(value.content(geometry), renderer, [...geometryIdentity]))
+        : renderViewNodeStack(value.content(zeroGeometry), renderer, [...geometryIdentity])
+    }
     case "lazy": {
+      const lazyIdentity = [...identity]
       const renderChildren = (range?: LazyViewRange): Output => {
         const start = Math.max(0, range?.start ?? 0)
         const end = Math.min(value.children.length, range?.end ?? value.children.length)
-        return renderer.fragment(value.children.slice(start, end).map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", start + index])))
+        const children = new Array<Output>(Math.max(0, end - start))
+        const rowIdentity = [...lazyIdentity]
+        const base = rowIdentity.length
+        for (let index = start; index < end; index += 1) {
+          rowIdentity.push("lazy", index)
+          children[index - start] = renderViewNodeStack(value.children[index] as ViewGraphValue, renderer, rowIdentity)
+          rowIdentity.length = base
+        }
+        return renderer.fragment(children)
       }
       const renderItem = (index: number): Output => {
         if (!Number.isSafeInteger(index) || index < 0 || index >= value.children.length) return renderer.fragment([])
         const child = value.children[index]
-        return renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])
+        return renderViewNodeStack(child as ViewGraphValue, renderer, [...lazyIdentity, "lazy", index])
       }
       return renderer.lazy
-        ? renderer.lazy(value, renderChildren, identity, renderItem)
-        : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeAt(child as ViewGraphValue, renderer, [...identity, "lazy", index])))
+        ? renderer.lazy(value, renderChildren, lazyIdentity, renderItem)
+        : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeStack(child as ViewGraphValue, renderer, [...lazyIdentity, "lazy", index])))
     }
   }
 }

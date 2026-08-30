@@ -1,5 +1,70 @@
-import { domContentContainer, type DomRenderContext } from "./shared.js"
+import {
+  classNameOf,
+  domContentContainer,
+  htmlAttributeName,
+  isBooleanHtmlAttribute,
+  isEnumeratedBooleanAttribute,
+  styleAttribute,
+  type DomRenderContext,
+} from "./shared.js"
 import { rememberDomProps, setDomEvent, synchronizeDomSelectValue } from "./props.js"
+
+const HTML_NS = "http://www.w3.org/1999/xhtml"
+
+/**
+ * Verify that live SSR attributes already equal the final renderer-owned prop
+ * snapshot. The speculative live-node hydration path is deliberately strict:
+ * unsupported/custom/form-control shapes fall back to candidate hydration
+ * instead of mutating the server tree before structural validation completes.
+ */
+export function hydratedPropsMatch(
+  element: Element,
+  props: Record<string, unknown> | null | undefined,
+): boolean {
+  if (element.namespaceURI !== HTML_NS || element.localName.includes("-")) return false
+  if (!props) return !element.hasAttributes()
+  const tag = element.localName.toLowerCase()
+  let expectedCount = 0
+  for (const key in props) {
+    if (!Object.prototype.hasOwnProperty.call(props, key)) continue
+    const value = props[key]
+    if (key === "children" || key === "key" || key === "ref" || /^on[A-Za-z]/.test(key)
+      || value === undefined || value === null || typeof value === "function") continue
+    if ((tag === "textarea" || tag === "select") && htmlAttributeName(key).toLowerCase() === "value") return false
+    if (typeof value === "object" && key !== "style" && key !== "className" && key !== "class") return false
+    const name = htmlAttributeName(key)
+    if (name !== key && Object.prototype.hasOwnProperty.call(props, name)) return false
+    const serialized = key === "style"
+      ? styleAttribute(value)
+      : key === "className" || key === "class"
+        ? classNameOf(value)
+        : String(value)
+    if (serialized === undefined) continue
+    if (isBooleanHtmlAttribute(name)) {
+      if (value) {
+        expectedCount += 1
+        if (element.getAttribute(name) !== "") return false
+      }
+      continue
+    }
+    if (value === false || value === true) {
+      if (name.startsWith("aria-") || name.startsWith("data-") || isEnumeratedBooleanAttribute(name)) {
+        expectedCount += 1
+        if (element.getAttribute(name) !== String(value)) return false
+      } else if (value) {
+        expectedCount += 1
+        if (element.getAttribute(name) !== "") return false
+      } else {
+        expectedCount += 1
+        if (element.getAttribute(name) !== "false") return false
+      }
+      continue
+    }
+    expectedCount += 1
+    if (element.getAttribute(name) !== serialized) return false
+  }
+  return element.attributes.length === expectedCount
+}
 
 function synchronizeAttributes(source: Element, target: Element): void {
   // Server markup normally already matches the candidate tree exactly. Avoid
@@ -40,9 +105,9 @@ function synchronizeAttributes(source: Element, target: Element): void {
   }
 }
 
-function activateHydratedProps(source: Element, target: Element, context: DomRenderContext): void {
+function activateHydratedProps(source: Element, target: Element, context: DomRenderContext, attributesAlreadyMatch = false): void {
   const props = context.hydrationProps.get(source)
-  synchronizeAttributes(source, target)
+  if (!attributesAlreadyMatch) synchronizeAttributes(source, target)
   rememberDomProps(target, props, context, false)
   const tag = context.domTags.get(source)
   if (tag) context.domTags.set(target, tag)
@@ -61,30 +126,63 @@ function activateHydratedProps(source: Element, target: Element, context: DomRen
 export function hydrateNode(source: Node, target: Node, context: DomRenderContext): boolean {
   if (source.nodeType !== target.nodeType) return false
   if (source.nodeType === 3) {
-    target.nodeValue = source.nodeValue
+    // Matching SSR text is overwhelmingly the common case. Avoid turning a
+    // no-op hydration check into a DOM mutation for every text node.
+    if (target.nodeValue !== source.nodeValue) target.nodeValue = source.nodeValue
     return true
   }
   if (source.nodeType !== 1 || target.nodeType !== 1) return source.nodeType === target.nodeType
   const sourceElement = source as Element
   const targetElement = target as Element
   if (sourceElement.namespaceURI !== targetElement.namespaceURI || sourceElement.tagName !== targetElement.tagName) return false
-  const sourceChildren = [...domContentContainer(sourceElement).childNodes]
-  const targetChildren = [...domContentContainer(targetElement).childNodes]
-  if (sourceChildren.length !== targetChildren.length) return false
+  const sourceContent = domContentContainer(sourceElement)
+  const targetContent = domContentContainer(targetElement)
   activateHydratedProps(sourceElement, targetElement, context)
   const key = context.domKeys.get(sourceElement)
   if (key !== undefined) context.domKeys.set(targetElement, key)
   const lazyKey = context.lazyKeys.get(sourceElement)
   if (lazyKey) context.lazyKeys.set(targetElement, lazyKey)
-  const hydrated = sourceChildren.every((child, index) => hydrateNode(child, targetChildren[index], context))
-  if (hydrated) synchronizeDomSelectValue(targetElement, context.hydrationProps.get(sourceElement))
-  return hydrated
+  let sourceChild = sourceContent.firstChild
+  let targetChild = targetContent.firstChild
+  while (sourceChild && targetChild) {
+    if (!hydrateNode(sourceChild, targetChild, context)) return false
+    sourceChild = sourceChild.nextSibling
+    targetChild = targetChild.nextSibling
+  }
+  if (sourceChild || targetChild) return false
+  synchronizeDomSelectValue(targetElement, context.hydrationProps.get(sourceElement))
+  return true
 }
 
 function activateHydratedTree(node: Node, context: DomRenderContext): void {
   if (node.nodeType !== 1) return
   const element = node as Element
-  activateHydratedProps(element, element, context)
-  domContentContainer(element).childNodes.forEach(child => activateHydratedTree(child, context))
+  activateHydratedProps(element, element, context, true)
+  const content = domContentContainer(element)
+  for (let child = content.firstChild; child; child = child.nextSibling) activateHydratedTree(child, context)
 }
 export { activateHydratedTree }
+
+/**
+ * Successful speculative hydration already proved structure and attributes.
+ * Activate live props and bind renderer metadata in one tree walk instead of
+ * running the generic compare pass followed by a second binding pass.
+ */
+export function activateReusedHydratedTree(
+  node: Node,
+  context: DomRenderContext,
+  bind: (node: Node) => void,
+): void {
+  if (node.nodeType !== 1) {
+    bind(node)
+    return
+  }
+  const element = node as Element
+  activateHydratedProps(element, element, context)
+  bind(node)
+  const content = domContentContainer(element)
+  for (let child = content.firstChild; child; child = child.nextSibling) {
+    activateReusedHydratedTree(child, context, bind)
+  }
+  synchronizeDomSelectValue(element, context.hydrationProps.get(element))
+}

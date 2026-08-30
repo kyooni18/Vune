@@ -17,6 +17,14 @@
       "types": "./dist/motion-abi.d.ts",
       "import": "./dist/motion-abi.js"
     },
+    "./internal/runtime": {
+      "types": "./dist/internal-runtime.d.ts",
+      "import": "./dist/internal-runtime.js"
+    },
+    "./web-primitives": {
+      "types": "./dist/web-primitives.d.ts",
+      "import": "./dist/web-primitives.js"
+    },
     "./corners": {
       "types": "./dist/corners.d.ts",
       "import": "./dist/corners.js"

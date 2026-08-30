@@ -64,6 +64,7 @@ import {
   viewFragment,
   viewHost,
 } from "../packages/core/dist/index.js"
+import { mapStateArrayData } from "../packages/core/dist/internal-runtime.js"
 
 function inspectGraph(value) {
   return renderViewNode(value, {
@@ -653,6 +654,51 @@ test("State primitive nested mutations do not rescan unrelated reactive ownershi
   unsubscribe()
 })
 
+test("State shallow array replacement preserves retained row ownership without rescanning it", () => {
+  let ownKeysCalls = 0
+  const tracked = Array.from({ length: 64 }, (_, index) => new Proxy({ count: index }, {
+    ownKeys(value) {
+      ownKeysCalls += 1
+      return Reflect.ownKeys(value)
+    },
+  }))
+  const state = State(tracked)
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+  const removed = state.value[0]
+  const retained = state.value[31]
+  ownKeysCalls = 0
+
+  state.value = [{ count: 100 }, ...state.value.slice(1)]
+
+  assert.equal(notifications, 1)
+  assert.equal(ownKeysCalls, 0)
+  notifications = 0
+  retained.count += 1
+  assert.equal(notifications, 1)
+  notifications = 0
+  removed.count += 1
+  assert.equal(notifications, 0)
+  unsubscribe()
+})
+
+test("compiler State array map helper preserves State semantics while avoiding row proxy reads", () => {
+  const state = State([{ id: 0, value: "0" }, { id: 1, value: "1" }, { id: 2, value: "2" }])
+  let notifications = 0
+  const unsubscribe = subscribeState(state, () => { notifications += 1 })
+
+  const next = mapStateArrayData(state, (item, index) => ({ ...item, value: `next-${index}` }))
+  assert.deepEqual(next.map(item => item.value), ["next-0", "next-1", "next-2"])
+  assert.deepEqual(state.value.map(item => item.value), ["next-0", "next-1", "next-2"])
+  assert.equal(notifications, 1)
+
+  notifications = 0
+  state.value[1].value = "nested"
+  assert.equal(notifications, 1)
+  assert.equal(state.value[1].value, "nested")
+  unsubscribe()
+})
+
 test("State reuses reactive ownership for additional subscribers", () => {
   let ownKeysCalls = 0
   const tracked = new Proxy({ nested: { count: 0 } }, {
@@ -671,6 +717,24 @@ test("State reuses reactive ownership for additional subscribers", () => {
   assert.equal(secondCalls, 1)
   unsubscribeSecond()
   unsubscribeFirst()
+})
+
+test("State promotes lightweight shallow-row ownership when rows are shared across States", () => {
+  const shared = { id: "shared", value: "A" }
+  const first = State([shared])
+  const second = State([shared])
+  let firstCalls = 0
+  let secondCalls = 0
+  const stopFirst = subscribeState(first, () => { firstCalls += 1 })
+  const stopSecond = subscribeState(second, () => { secondCalls += 1 })
+
+  first.value[0].value = "B"
+
+  assert.equal(firstCalls, 1)
+  assert.equal(secondCalls, 1)
+  assert.equal(second.value[0].value, "B")
+  stopSecond()
+  stopFirst()
 })
 
 test("State incrementally owns appended subtrees and batches native array mutators", () => {
@@ -740,6 +804,27 @@ test("State array mutator wrappers preserve method identity and generic calls", 
   assert.equal(secondCalls, 1)
   unsubscribeSecond()
   unsubscribeFirst()
+})
+
+test("State array map preserves reactive rows holes callback receiver and borrowed calls", () => {
+  const state = State([{ value: 1 }, , { value: 3 }])
+  assert.equal(state.value.map, state.value.map)
+  let calls = 0
+  const unsubscribe = subscribeState(state, () => { calls += 1 })
+  const mapped = state.value.map((row, index, array) => {
+    assert.strictEqual(array, state.value)
+    if (index === 0) row.value = 2
+    return row.value * 2
+  })
+  assert.equal(calls, 1)
+  assert.equal(mapped[0], 4)
+  assert.equal(1 in mapped, false)
+  assert.equal(mapped[2], 6)
+
+  const map = state.value.map
+  const borrowed = map.call({ 0: 4, length: 1 }, value => value + 1)
+  assert.deepEqual(borrowed, [5])
+  unsubscribe()
 })
 
 test("State array batching does not delay unrelated State notifications", () => {

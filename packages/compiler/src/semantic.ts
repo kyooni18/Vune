@@ -309,12 +309,27 @@ function collectCalls(program: VuneBuilderProgram, output: VuneSemanticCall[]): 
   for (const node of program.statements) visit(node)
 }
 
-function canonicalViewSymbols(): Map<string, SemanticViewTypeSymbol> {
+function runtimeViewSymbols(): Map<string, SemanticViewTypeSymbol> {
   const result = new Map<string, SemanticViewTypeSymbol>()
   for (const [name, value] of Object.entries(Core)) {
     if (typeof value !== "function") continue
     const symbol = (value as { readonly viewType?: { readonly semanticSymbol?: SemanticViewTypeSymbol } }).viewType?.semanticSymbol
     if (symbol) result.set(name, symbol)
+  }
+  return result
+}
+
+function canonicalViewSymbols(): Map<string, SemanticViewTypeSymbol> {
+  const result = runtimeViewSymbols()
+  // Keep IDE/diagnostic resolution on the same SDK-audited source contract as
+  // the compiler. Runtime ViewTypes may intentionally expose extra JavaScript
+  // compatibility overloads, but those must not leak back into SwiftUI-style
+  // authoring or override trailing-closure roles from the manifest.
+  for (const name of Core.swiftUIViewNames()) {
+    const initializers = Core.swiftUIInitializerSymbols(name)
+    const runtime = result.get(name)
+    if (!initializers || !runtime) continue
+    result.set(name, { ...runtime, initializers })
   }
   return result
 }
@@ -388,8 +403,12 @@ function resolvedCalls(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): VuneSemanticCall[] {
-  const symbols = canonicalViewSymbols()
-  for (const view of views) symbols.set(view.name, view.symbol)
+  const runtimeSymbols = runtimeViewSymbols()
+  const canonicalSymbols = canonicalViewSymbols()
+  for (const view of views) {
+    runtimeSymbols.set(view.name, view.symbol)
+    canonicalSymbols.set(view.name, view.symbol)
+  }
   const declaredTypes = new Map<string, string>()
   for (const view of views) for (const field of view.fields) if (field.type) declaredTypes.set(field.name, field.type)
   return calls.map(call => {
@@ -399,9 +418,10 @@ function resolvedCalls(
         ? { label: "key", type: "function" }
         : compilerSemanticArgument(argument.source, argument.label, checker, sourceFile, declaredTypes))
     if (call.trailingClosure) arguments_.push({ type: "function", trailing: true })
+    const swiftStyleSource = call.trailingClosure || call.arguments.some(argument => argument.label !== undefined)
     return {
       ...call,
-      resolution: resolveSemanticCall(symbols.get(call.callee), arguments_),
+      resolution: resolveSemanticCall((swiftStyleSource ? canonicalSymbols : runtimeSymbols).get(call.callee), arguments_),
     }
   })
 }

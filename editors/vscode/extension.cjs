@@ -93,6 +93,28 @@ function htmlTagAtPosition(document, position) {
   return match?.[1]
 }
 
+function semanticInitializerLabel(viewName, initializer) {
+  if (Array.isArray(initializer.parameters)) {
+    const parameters = initializer.parameters.map(parameter => {
+      const role = parameter.kind === 'viewBuilder' ? '@ViewBuilder '
+        : parameter.kind === 'action' ? '@Action '
+          : parameter.kind === 'binding' ? '@Binding '
+            : ''
+      const type = parameter.type && !['function', 'binding'].includes(parameter.type) ? `: ${parameter.type}` : ''
+      if (parameter.trailing) return `${role}${parameter.name}${type}`
+      if (parameter.labelRequired && parameter.label) {
+        if (role) return `${parameter.label}: ${role.trim()}${type ? ` ${type.slice(2)}` : ''}`
+        return `${parameter.label}${type || `: ${parameter.name}`}`
+      }
+      return `${parameter.label === undefined ? '_ ' : ''}${role}${parameter.name}${type}`
+    })
+    return `${viewName}(${parameters.join(', ')})`
+  }
+  if (initializer.signature.startsWith(`${viewName}(`)) return initializer.signature
+  const swift = /^init(\(.*\))$/.exec(initializer.signature)
+  return swift ? `${viewName}${swift[1]}` : `${viewName}(${initializer.signature})`
+}
+
 function signatureMap(document) {
   const signatures = {}
   let usedSemanticModel = false
@@ -103,9 +125,7 @@ function signatureMap(document) {
       usedSemanticModel = true
       for (const symbol of semantic.model.symbols ?? []) {
         if (symbol.kind !== 'view' || !symbol.initializers?.length) continue
-        signatures[symbol.name] = symbol.initializers.map(initializer => initializer.signature.startsWith(`${symbol.name}(`)
-          ? initializer.signature
-          : `${symbol.name}(${initializer.signature})`)
+        signatures[symbol.name] = symbol.initializers.map(initializer => semanticInitializerLabel(symbol.name, initializer))
       }
       continue
     }

@@ -17,6 +17,22 @@ test("@vune-ui/compiler lowers .vune.ts builders through declaration-neutral syn
   assert.equal(ts.createSourceFile("Builder.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
+test("SwiftUI modifier labels preserve argument slots and gesture closure roles", () => {
+  const source = `Text("x")
+  .shadow(color: "black", radius: 4, x: 1, y: 2)
+  .blur(radius: 3, opaque: true)
+  .onTapGesture(count: 2, perform: { hit() })
+  .onLongPressGesture(perform: { hold() }, onPressingChanged: { pressing in press(pressing) })
+  .onHover(perform: { hovering in hover(hovering) })`
+  const output = transformVuneSource(source, "Modifiers.vune.ts")
+  assert.match(output, /\.shadow\("black", 4, 1, 2\)/)
+  assert.match(output, /\.blur\(3, true\)/)
+  assert.match(output, /\.onTapGesture\(2, \(\) => \{hit\(\)\}\)/)
+  assert.match(output, /\.onLongPressGesture\(undefined, undefined, \(\) => \{hold\(\)\}, \(pressing\) => \{press\(pressing\)\}\)/)
+  assert.match(output, /\.onHover\(\(hovering\) => \{hover\(hovering\)\}\)/)
+  assert.equal(ts.createSourceFile("Modifiers.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("@vune-ui/compiler keeps Vue imports separate when ensuring core imports", () => {
   const source = `import { VuneView } from "@vune-ui/vue"
 import { Element } from "@vune-ui/core"
@@ -175,9 +191,9 @@ Card(title: "Card")`
   const model = createVuneSemanticModel(source, "ResolvedCalls.vune.ts")
   const root = model.calls.find(call => call.callee === "VStack" && call.range.start >= source.indexOf("VStack(spacing: 12)"))
   assert.equal(root?.resolution.resolvedViewType?.name, "VStack")
-  assert.equal(root?.resolution.resolvedInitializer?.signature, "options, @ViewBuilder content")
+  assert.equal(root?.resolution.resolvedInitializer?.signature, "init(alignment:spacing:content:)")
   assert.deepEqual(root?.resolution.argumentTypes, ["number", "function"])
-  assert.deepEqual(root?.resolution.closureRoles, [undefined, "viewBuilder"])
+  assert.deepEqual(root?.resolution.closureRoles, ["value", "viewBuilder"])
   assert.deepEqual(root?.resolution.inferredGenerics, { Content: "View" })
   assert.deepEqual(root?.resolution.diagnostics, [])
 
@@ -285,11 +301,15 @@ test("the compiler enforces Button's two source forms and declaration order", ()
   assert.match(canonicalLabel, /Button\(namedArguments\(\{ action: \(\) => \{save\(\)\}, label: \(\) => \[HStack\(/)
   assert.doesNotMatch(canonicalLabel, /overloadClosure\(/)
 
+  const trailingLabel = transformVuneSource('Button(action: { save() }) { HStack() { Text("Save") } }', "Button.vune.ts")
+  assert.match(trailingLabel, /Button\(namedArguments\(\{ action: \(\) => \{save\(\)\} \}\), \(\) => \[HStack\(/)
+  assert.doesNotMatch(trailingLabel, /overloadClosure\(/)
+
   const service = createVuneLanguageService()
   assert.deepEqual(service.diagnose('Button() { save() }'), [{
     severity: "error",
     code: "VUNE_INITIALIZER",
-    message: 'Button requires a text label before its trailing action.\nUse:\nButton("Save") { ... }',
+    message: 'Button must use either Button("Title") { action } or Button(action: { ... }) { label }.',
     line: 1,
     column: 1,
   }])
@@ -300,7 +320,7 @@ test("the compiler enforces Button's two source forms and declaration order", ()
     line: 1,
     column: 1,
   }])
-  assert.match(service.diagnose('Button(action: { save() }) { Text("Save") }')[0].message, /custom-label initializer requires/)
+  assert.deepEqual(service.diagnose('Button(action: { save() }) { Text("Save") }'), [])
 })
 
 test("@vune-ui/compiler exposes source-ranged builder and struct ASTs", () => {
@@ -1086,9 +1106,45 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   const output = transformVuneSource(source, "CompiledCollection.vune.ts")
   assert.match(output, /compiledCollectionContent\(item => Element\("span"/)
   assert.match(output, /kind: "flat-text-host", indexIndependent: true/)
+  assert.match(output, /evaluateProps: \(item\) => \(\{ title: item\.value \}\)/)
   assert.match(output, /evaluate: \(item\) => \(\{ type: "span", props: \{ title: item\.value \}, text: item\.value \}\)/)
-  assert.match(output, /import \{[^}]*compiledCollectionContent[^}]*\} from "@vune-ui\/core"/)
+  assert.match(output, /import \{[^}]*compiledCollectionContent[^}]*\} from "@vune-ui\/core\/internal\/runtime"/)
   assert.equal(ts.createSourceFile("CompiledCollection.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler specializes ordinary Text rows inside keyed collections", () => {
+  const source = `import { State, Text, ForEach, defineView, initializer } from "@vune-ui/core"
+const items = State([{ id: "a", value: "A" }])
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => ForEach(items.value, item => item.id, item => Text(item.value)) })`
+  const output = transformVuneSource(source, "TextCompiledCollection.vune.ts")
+  assert.match(output, /compiledCollectionContent\(/)
+  assert.match(output, /evaluateKey: item => item\.id/)
+  assert.match(output, /hostType: "span"/)
+  assert.match(output, /staticProps: null/)
+  assert.match(output, /evaluateText: \(item\) => item\.value/)
+  assert.match(output, /evaluate: \(item\) => \(\{ type: "span", props: null, text: item\.value \}\)/)
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+})
+
+test("compiler lowers proven pure State array maps to the internal runtime ABI", () => {
+  const source = `import { State } from "@vune-ui/core"
+const items = State([{ id: 1, value: "A" }])
+items.value = items.value.map((item, index) => ({ ...item, value: item.value + index }))`
+  const output = transformVuneSource(source, "StateArrayMap.vune.ts")
+  assert.match(output, /mapStateArrayData\(items, \(item, index\) => \(\{ \.\.\.item, value: item\.value \+ index \}\)\)/)
+  assert.match(output, /import \{[^}]*mapStateArrayData[^}]*\} from "@vune-ui\/core\/internal\/runtime"/)
+})
+
+test("compiler keeps effectful or ambient-property State array maps on normal JavaScript semantics", () => {
+  const cases = [
+    `import { State } from "@vune-ui/core"\nconst settings = { suffix: "!" }\nconst items = State([{ id: 1, value: "A" }])\nitems.value = items.value.map(item => ({ ...item, value: item.value + settings.suffix }))`,
+    `import { State } from "@vune-ui/core"\nconst items = State([{ id: 1, value: "A" }])\nitems.value = items.value.map(item => ({ ...item, value: format(item.value) }))`,
+    `import { State } from "@vune-ui/core"\nconst items = State([{ id: 1, value: "A" }])\nitems.value = items.value.map(item => { item.value = "B"; return item })`,
+  ]
+  for (const [index, source] of cases.entries()) {
+    const output = transformVuneSource(source, `UnsafeStateArrayMap${index}.vune.ts`)
+    assert.doesNotMatch(output, /mapStateArrayData/)
+  }
 })
 
 test("compiler emits data-only collection descriptors for primitive attributes class and style", () => {
@@ -1210,6 +1266,59 @@ export const App = defineView("App", { initializers: [initializer("App()", args 
   const output = transformVuneSource(source, "StateOwnedCollection.vune.ts")
   assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
   assert.match(output, /evaluateKey: item => item\.id/)
+})
+
+test("compiler keeps keyed struct @State collections owned by the collection executor", () => {
+  const source = `import { Element, ForEach } from "@vune-ui/core"
+struct StateList: View {
+  @State var items: any = [{ id: "a", value: "A" }]
+  var body: some View { ForEach(items.value, item => item.id, item => Element("span", { title: item.value }, item.value)) }
+}`
+  const output = transformVuneSource(source, "StructStateCollection.vune.ts")
+  assert.match(output, /ForEach\.viewType\.createNodeCompiled\(1, \[items, item => item\.id, compiledCollectionContent/)
+  assert.match(output, /evaluateKey: item => item\.id/)
+})
+
+test("compiler lowers pure immutable State array maps to the internal runtime helper", () => {
+  const source = `import { State } from "@vune-ui/core"
+const items = State([{ id: 0, value: "0" }])
+export function update() { items.value = items.value.map((item, index) => ({ ...item, value: \`next-\${index}\` })) }`
+  const output = transformVuneSource(source, "StateArrayMap.vune.ts")
+  assert.match(output, /mapStateArrayData\(items, \(item, index\) => \(\{ \.\.\.item, value: `next-\$\{index\}` \}\)\)/)
+  assert.match(output, /import \{[^}]*mapStateArrayData[^}]*\} from "@vune-ui\/core\/internal\/runtime"/)
+  assert.doesNotMatch(output, /items\.value\s*=\s*items\.value\.map/)
+
+  const conditional = `import { State } from "@vune-ui/core"
+const items = State([{ id: 0, value: "0" }])
+export function update(selectedId, nextValue) { items.value = items.value.map(item => item.id === selectedId ? ({ ...item, value: nextValue }) : item) }`
+  const conditionalOutput = transformVuneSource(conditional, "ConditionalStateArrayMap.vune.ts")
+  assert.match(conditionalOutput, /mapStateArrayData\(items, item => item\.id === selectedId \? \(\{ \.\.\.item, value: nextValue \}\) : item\)/)
+
+  const structState = `struct StateList: View {
+  @State var items: any = [{ id: 0, value: "0" }]
+  var body: some View { Button("Update") { items.value = items.value.map(item => item.id === 0 ? ({ ...item, value: "next" }) : item) } }
+}`
+  const structOutput = transformVuneSource(structState, "StructStateArrayMap.vune.ts")
+  assert.match(structOutput, /mapStateArrayData\(items, item => item\.id === 0 \? \(\{ \.\.\.item, value: "next" \}\) : item\)/)
+  assert.match(structOutput, /from "@vune-ui\/core\/internal\/runtime"/)
+})
+
+test("compiler keeps effectful or ambiguous State array maps on ordinary JavaScript semantics", () => {
+  const effectful = `import { State } from "@vune-ui/core"
+const items = State([{ id: 0, value: "0" }])
+const format = value => String(value)
+export function update() { items.value = items.value.map(item => ({ ...item, value: format(item.value) })) }`
+  assert.doesNotMatch(transformVuneSource(effectful, "EffectfulStateArrayMap.vune.ts"), /mapStateArrayData/)
+
+  const mutated = `import { State } from "@vune-ui/core"
+const items = State([{ id: 0, value: "0" }])
+export function update() { items.value = items.value.map(item => { item.value = "x"; return { ...item, value: "y" } }) }`
+  assert.doesNotMatch(transformVuneSource(mutated, "MutatingStateArrayMap.vune.ts"), /mapStateArrayData/)
+
+  const shadowed = `import { State } from "@vune-ui/core"
+const items = State([{ id: 0, value: "0" }])
+export function update(items) { items.value = items.value.map(item => ({ ...item, value: "x" })) }`
+  assert.doesNotMatch(transformVuneSource(shadowed, "ShadowedStateArrayMap.vune.ts"), /mapStateArrayData/)
 })
 
 test("compiler recognizes aliased State constructors for keyed collection ownership", () => {

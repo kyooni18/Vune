@@ -79,6 +79,25 @@ test("frame creates the same alignment host across React, Vue, and Web renderers
   }
 })
 
+test("SwiftUI-derived padding and ideal frame inputs have observable renderer semantics", async () => {
+  const value = Text("Ideal").padding().frame({ idealWidth: 140, idealHeight: 52, alignment: "bottomTrailing" })
+  const outputs = [
+    renderToStaticMarkup(renderReact(value)),
+    await renderToString(createSSRApp({ render: () => renderVue(value) })),
+    renderToHTML(value),
+  ]
+
+  for (const html of outputs) {
+    const document = new JSDOM(html).window.document
+    const frame = document.body.firstElementChild
+    assert.ok(frame)
+    assert.equal(frame.style.width, "140px")
+    assert.equal(frame.style.height, "52px")
+    assert.equal(frame.style.placeItems, "end end")
+    assert.equal(frame.firstElementChild?.style.padding, "16px")
+  }
+})
+
 test("layout primitives omit invalid numeric CSS values in every renderer", async () => {
   const value = VStack({ spacing: Number.NaN },
     Text("Finite").padding(Number.NaN).margin(Number.POSITIVE_INFINITY).frame({

@@ -11,7 +11,12 @@
     "outDir": "dist",
     "rootDir": "src",
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@vune-ui/react": ["packages/react/dist/index.d.ts"],
+      "@vune-ui/react/*": ["packages/react/dist/*"]
+    }
   },
   "files": [
     "src/index.ts",

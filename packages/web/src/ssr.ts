@@ -172,10 +172,28 @@ const htmlRenderer: VuneRenderer<string> = {
     }
     return factory(renderSlot)
   },
-  modifier(content, modifier) {
+  modifier(content, modifier, renderArgument) {
     if (modifier.name === "frame") {
       const style = styleText(styleOf(modifier))
       return `<div${style ? ` style="${escapeAttribute(style)}"` : ""}>${content}</div>`
+    }
+    if ((modifier.name === "background" || modifier.name === "overlay" || modifier.name === "listRowBackground")
+      && typeof modifier.arguments[0] !== "string" && modifier.arguments[0] != null && renderArgument) {
+      const layer = renderArgument(0)
+      const alignment = modifier.arguments[1]
+      const place = alignment === "leading" ? "center start"
+        : alignment === "trailing" ? "center end"
+          : alignment === "top" ? "start center"
+            : alignment === "bottom" ? "end center"
+              : alignment === "topLeading" ? "start start"
+                : alignment === "topTrailing" ? "start end"
+                  : alignment === "bottomLeading" ? "end start"
+                    : alignment === "bottomTrailing" ? "end end"
+                      : "center"
+      const layerStyle = `grid-area:1 / 1;place-self:${place}${modifier.name === "overlay" ? "" : ";pointer-events:none"}`
+      const contentLayer = `<div style="grid-area:1 / 1;min-width:0;min-height:0">${content}</div>`
+      const modifierLayer = `<div style="${escapeAttribute(layerStyle)}">${layer}</div>`
+      return `<div style="display:grid;position:relative">${modifier.name !== "overlay" ? `${modifierLayer}${contentLayer}` : `${contentLayer}${modifierLayer}`}</div>`
     }
     const extraStyle = styleText(styleOf(modifier))
     const modifierProps = propsOf(modifier)

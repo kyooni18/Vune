@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 const jsdomModule = await import("jsdom").catch(() => null)
 import { Animation, State, Text, Transition, defineView, initializer, viewFragment } from "../packages/core/dist/index.js"
-import { mount, transitionDurationMs, transitionFrames } from "../packages/web/dist/index.js"
+import { mount, playWebTransition, transitionDurationMs, transitionFrames } from "../packages/web/dist/index.js"
 
 test("transition descriptors compose insertion and removal effects without renderer state", () => {
   const transition = Transition.opacity
@@ -17,6 +17,31 @@ test("transition descriptors compose insertion and removal effects without rende
   assert.match(String(from.transform), /rotate\(2deg\).*scale\(0.9\).*translate3d/)
   assert.equal(to.opacity, 0.8)
   assert.equal(to.transform, "rotate(2deg)")
+})
+
+test("delayed web transitions hold their inactive frame before playback", () => {
+  const events = new Map()
+  let options
+  const element = {
+    ownerDocument: {
+      defaultView: {
+        matchMedia: () => ({ matches: false }),
+        getComputedStyle: () => ({ opacity: "1", transform: "none" }),
+      },
+    },
+    animate(_frames, received) {
+      options = received
+      return {
+        cancel() {},
+        addEventListener(type, listener) { events.set(type, listener) },
+      }
+    },
+  }
+  const transition = Transition.opacity.animation(Animation.linear(0.2).delay(0.4))
+  const { cancel } = playWebTransition(element, transition, true)
+  assert.equal(options.fill, "backwards")
+  assert.equal(options.delay, 400)
+  cancel()
 })
 
 test("exit transitions leave the live reconciliation tree immediately and clean their overlay", { skip: jsdomModule == null }, async () => {

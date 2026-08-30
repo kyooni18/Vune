@@ -18,6 +18,15 @@ function fakeElement(initial = {}) {
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
+async function waitUntil(predicate, timeout = 250) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await sleep(5)
+  }
+  return predicate()
+}
+
 test("Vune reuses precompiled motion specs across persistent scalar retargets", async () => {
   const element = fakeElement({ opacity: "0" })
   const animation = Animation.linear(0.012)
@@ -38,18 +47,18 @@ test("Vune forwards spring blendDuration into the precompiled engine plan", () =
   assert.equal(spec.blendDuration, 0.06)
 })
 
-test("Vune motion plan applies delay and finite autoreversing repeats without rebuilding the channel", async () => {
+test("Vune motion plan applies delay and finite autoreversing iterations without rebuilding the channel", async () => {
   const element = fakeElement({ opacity: "0" })
   const animation = Animation.linear(0.008).delay(0.02).repeatCount(2, true)
   assert.equal(animateDomStyle(element, "opacity", "0", 1, animation), true)
   await sleep(10)
   assert.equal(element.value("opacity"), "0")
   await sleep(180)
-  assert.equal(Number(element.value("opacity")), 1)
+  assert.equal(Number(element.value("opacity")), 0)
   cancelDomAnimations(element)
 })
 
-test("interpolated motion repeats count forward passes exactly once and autoreverses", async () => {
+test("interpolated motion uses repeatCount as iteration count and autoreverses", async () => {
   const history = []
   const values = new Map([["transform", "translateX(0px)"]])
   const element = {
@@ -64,7 +73,8 @@ test("interpolated motion repeats count forward passes exactly once and autoreve
   assert.equal(animateDomStyle(element, "transform", "translateX(0px)", "translateX(10px)", animation), true)
   await sleep(160)
   assert.ok(history.some(value => value === "none" || /\b0(?:\.0+)?px\b/.test(value)), `expected an autoreverse pass: ${history.join(" -> ")}`)
-  assert.match(history.at(-1) ?? "", /10(?:\.0+)?px/)
+  assert.ok(history.some(value => /10(?:\.0+)?px/.test(value)), `expected a forward pass: ${history.join(" -> ")}`)
+  assert.ok((history.at(-1) ?? "") === "none" || /\b0(?:\.0+)?px\b/.test(history.at(-1) ?? ""), `expected the even autoreverse to end at origin: ${history.join(" -> ")}`)
   cancelDomAnimations(element)
 })
 
@@ -112,17 +122,20 @@ test("multi-style motion launches independent channels together without cross-ca
   ])
   assert.deepEqual([...started].sort(), ["opacity", "scale", "translate"])
 
-  await sleep(28)
+  assert.equal(await waitUntil(() => {
+    const value = Number(element.value("opacity"))
+    return value > 0 && value < 1
+  }, 140), true)
   const opacityBeforeScaleRetarget = Number(element.value("opacity"))
   assert.ok(opacityBeforeScaleRetarget > 0 && opacityBeforeScaleRetarget < 1)
   // Retarget only scale with a fourth curve. The opacity and position drivers
   // must keep running because every CSS property owns an independent channel.
   assert.equal(animateDomStyle(element, "scale", element.value("scale") ?? "1", "0.75", Animation.easeOut(0.035)), true)
-  await sleep(35)
+  assert.equal(await waitUntil(() => Number(element.value("opacity")) > opacityBeforeScaleRetarget, 140), true)
   const opacityAfterScaleRetarget = Number(element.value("opacity"))
   assert.ok(opacityAfterScaleRetarget > opacityBeforeScaleRetarget, `${opacityBeforeScaleRetarget} -> ${opacityAfterScaleRetarget}`)
 
-  await sleep(150)
+  assert.equal(await waitUntil(() => Number(element.value("opacity")) === 1 && Number(element.value("scale")) === 0.75, 260), true)
   assert.equal(Number(element.value("opacity")), 1)
   assert.equal(Number(element.value("scale")), 0.75)
   assert.match(element.value("translate") ?? "", /^30(?:\.0+)?px -12(?:\.0+)?px$/)

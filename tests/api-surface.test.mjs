@@ -11,10 +11,10 @@ import * as vue from "../packages/vue/dist/index.js"
 import * as web from "../packages/web/dist/index.js"
 
 const coreRuntimeExports = [
-  "Action", "Alert", "Binding", "BindingValue", "Box", "Button", "Capsule", "Circle", "Divider", "Element", "ElementRef", "ForEach",
+  "Action", "Alert", "Binding", "BindingValue", "Box", "Button", "Capsule", "Circle", "ContentTransition", "Divider", "Element", "ElementRef", "ForEach",
   "ForeignComponent", "GeometryReader", "Grid", "Group", "HStack", "Image", "Key", "Label", "LazyGrid", "LazyHStack", "LazyVStack", "Link", "List", "Menu",
-  "VuneInitializerAmbiguityError", "VuneInitializerError", "NavigationLink", "NavigationStack", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
-  "Section", "Sheet", "Slider", "Spacer", "State", "Stepper", "Switch", "Text", "TextArea", "TextField", "Toggle", "VStack", "ViewBuilder",
+  "VuneInitializerAmbiguityError", "VuneInitializerError", "NavigationLink", "NavigationStack", "Path", "Picker", "ProgressView", "Rectangle", "RoundedRectangle", "SafeArea", "ScrollView",
+  "Section", "Sheet", "Slider", "Spacer", "State", "Stepper", "Switch", "SymbolEffect", "Text", "TextArea", "TextEditor", "TextField", "Toggle", "Transition", "VStack", "VectorSymbol", "ViewBuilder",
   "ViewIdentityStore", "ViewType", "ZStack", "actionClosure", "assertInitializerCall", "classNameOf", "closureForKind", "closureKindOf",
   "closureVariantsOf", "collectLogicalViewIdentities", "collectStateReads", "compiledTemplate", "createViewIdentityStore", "createViewNode", "defineBuiltinView", "defineCompiledTemplate", "defineView", "edgeInsetsFromCss",
   "flattenViewBuilder", "frameStyle", "geometryView", "initializer", "initializerKinds", "initializersOf", "isBinding", "isForeignComponent", "isStateRef", "isViewNode",
@@ -28,17 +28,17 @@ const coreRuntimeExports = [
 ].sort()
 
 const coreTypeOnlyExports = [
-  "AlertProps", "BindingRef", "BoxProps", "ClassValue", "CompiledTemplateDescriptor", "CompiledTemplateElement", "CompiledTemplateFragment", "CompiledTemplateSlot", "CompiledTemplateValue", "CompiledTemplateViewNode", "EdgeInsets", "ElementViewNode", "FragmentViewNode", "FrameAlignment", "FrameOptions",
+  "AlertProps", "BindingRef", "BoxProps", "ClassValue", "CompiledTemplateDescriptor", "CompiledTemplateElement", "CompiledTemplateFragment", "CompiledTemplateSlot", "CompiledTemplateValue", "CompiledTemplateViewNode", "ContentTransitionDescriptor", "Edge", "EdgeInsets", "EdgeSet", "ElementViewNode", "FragmentViewNode", "FrameAlignment", "FrameOptions",
   "GeometryFrame", "GeometryProxy", "GeometryReaderCall", "GeometryReaderProps", "GeometryViewNode", "GridOptions", "GridProps", "HStackOptions",
   "HStackProps", "ImageOptions", "ImageProps", "InitializerMatch", "InitializerParameter", "InitializerParameterKind", "InitializerResolution",
-  "LabelProps", "LazyGridOptions", "LazyGridProps", "LazyHStackOptions", "LazyHStackProps", "LazyOptions", "LazyVStackOptions", "LazyVStackProps", "LazyViewNode", "LazyViewRange", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "VuneClosure", "VuneClosureKind",
+  "LabelProps", "LayoutEdgeInsets", "LazyGridOptions", "LazyGridProps", "LazyHStackOptions", "LazyHStackProps", "LazyOptions", "LazyVStackOptions", "LazyVStackProps", "LazyViewNode", "LazyViewRange", "Length", "LinkProps", "MenuProps", "ModifiableViewNode", "ModifiedContent", "Modifiers", "VuneClosure", "VuneClosureKind",
   "ForeignComponentDescriptor", "ForeignComponentOptions", "ForeignComponentSchema", "ForeignComponentSlot", "VuneClosureVariants", "VuneCustomElementAttributes", "VuneDOMEvent", "VuneEventHandler", "VuneEventTarget", "VuneGlobalHtmlAttributes", "NamedArguments",
   "SemanticArgument", "SemanticArgumentKind", "SemanticBindingSymbol", "SemanticBuilderTypeSymbol", "SemanticCallResolution", "SemanticClosureRole", "SemanticFieldSymbol", "SemanticForeignComponentTypeSymbol", "SemanticHtmlAttributeCategory", "SemanticHtmlAttributeSpec", "SemanticHtmlAttributeSymbol", "SemanticHtmlAttributeValueType", "SemanticHtmlElementSymbol", "SemanticHtmlTagSpec", "SemanticInitializerParameter", "SemanticInitializerParameterKind", "SemanticInitializerResolution", "SemanticInitializerResolutionFailure", "SemanticInitializerResolutionResult", "SemanticInitializerSymbol", "SemanticResolutionDiagnostic", "SemanticStateSymbol", "SemanticStructSymbol", "SemanticSymbol", "SemanticViewTypeSymbol",
   "VuneHtmlAttributes", "VuneHtmlEventAttributes", "VuneHtmlTagName", "VuneRenderer", "VuneStyleProperties", "VuneStyleValue", "NavigationLinkProps",
-  "NavigationStackProps", "PickerOption", "PickerProps", "ProgressViewOptions", "ProgressViewProps", "RoundedRectangleProps", "SafeAreaCall",
+  "NavigationStackProps", "PathProps", "PickerOption", "PickerProps", "ProgressViewOptions", "ProgressViewProps", "RoundedRectangleProps", "SafeAreaCall",
   "SafeAreaEdge", "SafeAreaProps", "ScrollAxis", "ScrollViewCall", "ScrollViewProps", "SheetProps", "SliderOptions", "SliderProps", "SpacerCall",
-  "SpacerProps", "StackCall", "StateRef", "StepperProps", "SwitchOptions", "SwitchProps", "TextAreaProps", "TextFieldProps", "ToggleProps", "TypedViewConstructor",
-  "VStackOptions", "VStackProps", "Value", "View", "ViewBuilderClosure", "ViewBuilderContent", "ViewBuilderResult", "ViewConstructor",
+  "SpacerProps", "StackCall", "StateRef", "StepperProps", "SwitchOptions", "SwitchProps", "SymbolEffectDescriptor", "SymbolReplacementFallback", "SymbolReplacementMode", "TextAreaProps", "TextEditorProps", "TextFieldProps", "TextTransitionDirection", "ToggleProps", "TransitionDescriptor", "TransitionEdge", "TransitionEffect", "TypedViewConstructor",
+  "LucideIconDataLike", "SVGIconAttributeValue", "SVGIconNode", "SVGIconOptions", "VStackOptions", "VStackProps", "Value", "VectorSymbolDescriptor", "VectorSymbolLayer", "VectorSymbolOptions", "View", "ViewBuilderClosure", "ViewBuilderContent", "ViewBuilderResult", "ViewConstructor",
   "ViewConstructorMetadata", "ViewDefinition", "ViewFieldDefinition", "ViewGraphChild", "ViewGraphLeaf", "ViewGraphValue", "ViewHostNode",
   "ViewIdentity", "ViewIdentitySegment", "ViewModifier", "ViewModifierNode", "ViewNode", "ViewValue", "ZStackOptions", "ZStackProps",
   "AnimationCSSStyle", "AnimationDescriptor", "AnimationKind", "OffsetValue", "Point", "ScaleEffectValue", "Size", "SwiftUIApiKind",
@@ -76,7 +76,7 @@ test("Vue, Web, and compiler renderer surfaces remain intentionally narrow", () 
   assert.deepEqual(Object.keys(vue).sort(), ["Component", "VuneView", "createVueView", "foreignComponent", "fromVueRef", "mount", "render", "toVueRef", "vueComponent"])
   assert.deepEqual(Object.keys(web).sort(), ["mount", "renderToHTML"])
   assert.deepEqual(Object.keys(compiler).sort(), [
-    "SemanticModel", "compileVuneFile", "createVuneLanguageService", "createVuneSemanticModel", "createVuneVitePlugin", "diagnoseVuneSource", "formatVuneSource", "lowerVuneBuilderAst",
+    "SemanticModel", "compileVuneFile", "createVuneLanguageService", "createVuneSemanticModel", "createVuneVitePlugin", "diagnoseVuneSource", "formatVuneSource", "generateVueHostModule", "lowerVuneBuilderAst",
     "mapGeneratedPosition", "mapOriginalPosition", "parseVuneBuilder", "parseVuneStructs", "resolveSemanticCall", "resolveSemanticInitializer", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "transformVuneSource",
   ])
 })
@@ -118,8 +118,8 @@ test("the 1.0 candidate declaration surface includes type-only exports in the fr
     "VuneConditionalExpression", "VuneDiagnostic", "VuneLanguageService", "VuneRawExpression", "VuneSemanticCall", "VuneSemanticField",
     "VuneSemanticForeignComponent", "VuneSemanticHtmlDiagnostic", "VuneSemanticHtmlElement", "VuneSemanticImport", "VuneSemanticInitializer", "VuneSemanticModel", "VuneSemanticView", "VuneSourceMap", "VuneSourceMapAnchor",
     "VuneSourcePosition", "VuneSourceRange", "VuneStructDeclaration", "VuneStructField", "VuneStructInitializer", "VuneTransformResult",
-    "VuneVitePluginOptions", "SemanticArgument", "SemanticArgumentKind", "SemanticBindingSymbol", "SemanticBuilderTypeSymbol", "SemanticCallResolution", "SemanticClosureRole", "SemanticFieldSymbol", "SemanticForeignComponentTypeSymbol", "SemanticHtmlAttributeCategory", "SemanticHtmlAttributeSpec", "SemanticHtmlAttributeSymbol", "SemanticHtmlAttributeValueType", "SemanticHtmlElementSymbol", "SemanticHtmlTagSpec", "SemanticInitializerParameter", "SemanticInitializerParameterKind", "SemanticInitializerResolution", "SemanticInitializerResolutionFailure", "SemanticInitializerResolutionResult", "SemanticInitializerSymbol", "SemanticModel", "SemanticResolutionDiagnostic", "SemanticStateSymbol", "SemanticStructSymbol", "SemanticSymbol", "SemanticViewTypeSymbol",
-    "compileVuneFile", "createVuneLanguageService", "createVuneSemanticModel", "createVuneVitePlugin", "diagnoseVuneSource", "formatVuneSource",
+    "VuneVitePluginOptions", "VuneVueHostGenerationOptions", "VuneVueHostGenerationResult", "SemanticArgument", "SemanticArgumentKind", "SemanticBindingSymbol", "SemanticBuilderTypeSymbol", "SemanticCallResolution", "SemanticClosureRole", "SemanticFieldSymbol", "SemanticForeignComponentTypeSymbol", "SemanticHtmlAttributeCategory", "SemanticHtmlAttributeSpec", "SemanticHtmlAttributeSymbol", "SemanticHtmlAttributeValueType", "SemanticHtmlElementSymbol", "SemanticHtmlTagSpec", "SemanticInitializerParameter", "SemanticInitializerParameterKind", "SemanticInitializerResolution", "SemanticInitializerResolutionFailure", "SemanticInitializerResolutionResult", "SemanticInitializerSymbol", "SemanticModel", "SemanticResolutionDiagnostic", "SemanticStateSymbol", "SemanticStructSymbol", "SemanticSymbol", "SemanticViewTypeSymbol",
+    "compileVuneFile", "createVuneLanguageService", "createVuneSemanticModel", "createVuneVitePlugin", "diagnoseVuneSource", "formatVuneSource", "generateVueHostModule",
     "lowerVuneBuilderAst", "mapGeneratedPosition", "mapOriginalPosition", "parseVuneBuilder", "parseVuneStructs", "resolveSemanticCall", "resolveSemanticInitializer", "semanticHtmlAttributeNames", "semanticHtmlAttributeSpec", "semanticHtmlTagNames", "semanticHtmlTagSpec", "transformVuneSource",
   ].sort())
 })

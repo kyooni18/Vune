@@ -266,16 +266,90 @@ function topLevelStateBindings(sourceFile: ts.SourceFile): ReadonlySet<string> {
   return states
 }
 
+interface ScopedStateBinding {
+  readonly body: ts.ArrowFunction | ts.FunctionExpression
+  readonly localName: string
+}
+
+function generatedStructStateBindings(sourceFile: ts.SourceFile): readonly ScopedStateBinding[] {
+  const result: ScopedStateBinding[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(unwrapExpression(node.expression))
+      && (unwrapExpression(node.expression) as ts.Identifier).text === "defineView" && node.arguments.length >= 2) {
+      const options = unwrapExpression(node.arguments[1])
+      if (ts.isObjectLiteralExpression(options)) {
+        const property = (name: string) => options.properties.find((candidate): candidate is ts.PropertyAssignment =>
+          ts.isPropertyAssignment(candidate) && staticPropertyName(candidate.name) === name)
+        const stateProperty = property("state")
+        const bodyProperty = property("body")
+        const stateFactory = stateProperty && unwrapExpression(stateProperty.initializer)
+        const body = bodyProperty && unwrapExpression(bodyProperty.initializer)
+        const stateObject = stateFactory && (ts.isArrowFunction(stateFactory) || ts.isFunctionExpression(stateFactory))
+          ? closureResult(stateFactory)
+          : undefined
+        if (stateObject && ts.isObjectLiteralExpression(stateObject)
+          && body && (ts.isArrowFunction(body) || ts.isFunctionExpression(body))
+          && body.parameters.length >= 1 && ts.isIdentifier(body.parameters[0].name) && ts.isBlock(body.body)) {
+          const stateFields = new Set<string>()
+          for (const candidate of stateObject.properties) {
+            if (!ts.isPropertyAssignment(candidate)) continue
+            const field = staticPropertyName(candidate.name)
+            const initializer = unwrapExpression(candidate.initializer)
+            if (field && ts.isCallExpression(initializer) && ts.isIdentifier(unwrapExpression(initializer.expression))
+              && (unwrapExpression(initializer.expression) as ts.Identifier).text === "State") stateFields.add(field)
+          }
+          const propsName = body.parameters[0].name.text
+          for (const statement of body.body.statements) {
+            if (!ts.isVariableStatement(statement)) continue
+            for (const declaration of statement.declarationList.declarations) {
+              const initializer = declaration.initializer && unwrapExpression(declaration.initializer)
+              if (!initializer || !ts.isIdentifier(initializer) || initializer.text !== propsName || !ts.isObjectBindingPattern(declaration.name)) continue
+              for (const element of declaration.name.elements) {
+                if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
+                const field = element.propertyName ? staticPropertyName(element.propertyName) : element.name.text
+                if (field && stateFields.has(field)) result.push({ body, localName: element.name.text })
+              }
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return result
+}
+
+function nestedScopeShadowsIdentifier(identifier: ts.Identifier, boundary: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  const target = identifier.text
+  let current: ts.Node | undefined = identifier.parent
+  while (current && current !== boundary.body && current !== boundary) {
+    if (ts.isFunctionLike(current) && current.parameters.some(parameter => bindingContains(parameter.name, target))) return true
+    if (ts.isBlock(current) && current.statements.some(statement => statementDeclaresName(statement, target))) return true
+    if (ts.isCatchClause(current) && current.variableDeclaration && bindingContains(current.variableDeclaration.name, target)) return true
+    current = current.parent
+  }
+  return false
+}
+
 function provenStateRefSource(
   expression: ts.Expression,
   sourceFile: ts.SourceFile,
   stateBindings: ReadonlySet<string>,
+  scopedStateBindings: readonly ScopedStateBinding[],
 ): ts.Identifier | undefined {
   const value = unwrapExpression(expression)
   if (!ts.isPropertyAccessExpression(value) || value.name.text !== "value") return undefined
   const owner = unwrapExpression(value.expression)
-  if (!ts.isIdentifier(owner) || !stateBindings.has(owner.text) || scopeShadowsIdentifier(owner, sourceFile)) return undefined
-  return owner
+  if (!ts.isIdentifier(owner)) return undefined
+  if (stateBindings.has(owner.text) && !scopeShadowsIdentifier(owner, sourceFile)) return owner
+  for (const scoped of scopedStateBindings) {
+    if (scoped.localName !== owner.text || nestedScopeShadowsIdentifier(owner, scoped.body)) continue
+    let current: ts.Node | undefined = owner
+    while (current && current !== scoped.body) current = current.parent
+    if (current === scoped.body) return owner
+  }
+  return undefined
 }
 
 function isImportedElementCall(
@@ -295,6 +369,7 @@ function collectionRowPlan(
   closure: ts.Expression,
   sourceFile: ts.SourceFile,
   elements: ImportedBindings,
+  texts: ImportedBindings,
 ): CollectionRowPlan | undefined {
   const value = unwrapExpression(closure)
   if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return undefined
@@ -306,11 +381,24 @@ function collectionRowPlan(
   const result = closureResult(value)
   if (!result) return undefined
   const row = singleBuilderResult(result)
+  const itemName = item.name.text
+  const indexName = index && ts.isIdentifier(index.name) ? index.name.text : undefined
+  if (ts.isCallExpression(row) && importedApiCall(row, "Text", texts, sourceFile) && row.arguments.length === 1) {
+    const text = row.arguments[0]
+    const textAnalysis = analyzeScalarRowExpression(text, itemName, indexName)
+    if (!textAnalysis.pure) return undefined
+    return {
+      typeSource: '"span"',
+      propsSource: "null",
+      textSource: text.getText(sourceFile),
+      itemName,
+      ...(indexName ? { indexName } : {}),
+      indexIndependent: !textAnalysis.indexDependent,
+    }
+  }
   if (!ts.isCallExpression(row) || !isImportedElementCall(row, elements, sourceFile) || row.arguments.length !== 3) return undefined
   const [type, props, text] = row.arguments
   if (!ts.isStringLiteral(type) || type.text.includes("-") || unsafeCompiledCollectionTags.has(type.text.toLowerCase())) return undefined
-  const itemName = item.name.text
-  const indexName = index && ts.isIdentifier(index.name) ? index.name.text : undefined
   const propsValue = unwrapExpression(props)
   if (propsValue.kind !== ts.SyntaxKind.NullKeyword && !ts.isObjectLiteralExpression(propsValue)) return undefined
   const propsAnalysis = propsValue.kind === ts.SyntaxKind.NullKeyword
@@ -405,9 +493,12 @@ function compiledContentSource(
 ): string {
   const parameters = rowPlan.indexName ? `${rowPlan.itemName}, ${rowPlan.indexName}` : rowPlan.itemName
   const compiledKey = keyPlan ? `, evaluateKey: ${keyPlan.source}` : ""
+  const directHost = `, hostType: ${rowPlan.typeSource}${rowPlan.propsSource === "null"
+    ? ", staticProps: null"
+    : `, evaluateProps: (${parameters}) => (${rowPlan.propsSource})`}, evaluateText: (${parameters}) => ${rowPlan.textSource}`
   const indexIndependent = rowPlan.indexIndependent
     && (compiled.key ? keyPlan?.indexIndependent === true : true)
-  return `compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${indexIndependent}${compiledKey}, evaluate: (${parameters}) => ({ type: ${rowPlan.typeSource}, props: ${rowPlan.propsSource}, text: ${rowPlan.textSource} }) })`
+  return `compiledCollectionContent(${compiled.content.getText(sourceFile)}, { kind: "flat-text-host", indexIndependent: ${indexIndependent}${compiledKey}${directHost}, evaluate: (${parameters}) => ({ type: ${rowPlan.typeSource}, props: ${rowPlan.propsSource}, text: ${rowPlan.textSource} }) })`
 }
 
 export function lowerCompiledCollections(source: string): string {
@@ -416,18 +507,20 @@ export function lowerCompiledCollections(source: string): string {
   const foreach = importedBindings(sourceFile, "ForEach")
   if (foreach.names.size === 0 && foreach.namespaces.size === 0) return source
   const elements = importedBindings(sourceFile, "Element")
+  const texts = importedBindings(sourceFile, "Text")
   const states = topLevelStateBindings(sourceFile)
+  const scopedStates = generatedStructStateBindings(sourceFile)
   const edits: Array<{ start: number; end: number; replacement: string }> = []
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const compiled = compiledForEachCall(node, foreach, sourceFile) ?? directForEachCall(node, foreach, sourceFile)
       if (compiled) {
-        const rowPlan = elements.names.size > 0 || elements.namespaces.size > 0
-          ? collectionRowPlan(compiled.content, sourceFile, elements)
+        const rowPlan = elements.names.size > 0 || elements.namespaces.size > 0 || texts.names.size > 0 || texts.namespaces.size > 0
+          ? collectionRowPlan(compiled.content, sourceFile, elements, texts)
           : undefined
         const keyPlan = compiled.key ? collectionKeyPlan(compiled.key) : undefined
         const stateRef = rowPlan && keyPlan?.indexIndependent
-          ? provenStateRefSource(compiled.items, sourceFile, states)
+          ? provenStateRefSource(compiled.items, sourceFile, states, scopedStates)
           : undefined
         if (rowPlan) {
           const contentSource = compiledContentSource(compiled, rowPlan, keyPlan, sourceFile)

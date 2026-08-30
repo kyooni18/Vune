@@ -13,6 +13,7 @@ import {
 } from "o0o0o"
 import type { Animation } from "@vune-ui/core"
 import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
+import { svgPathInterpolatorOptions } from "./path-interpolation.js"
 
 export type StyleValue = unknown
 
@@ -55,7 +56,7 @@ interface CompiledMotionPlan {
   /** Public/raw spec retained for compatibility and diagnostics. */
   readonly spec: VuneMotionSpec
   readonly delayMs: number
-  /** Number of forward passes. Infinity means repeat forever. */
+  /** Number of animation iterations. Infinity means repeat forever. */
   readonly repeatCount: number
   readonly autoreverses: boolean
 }
@@ -72,8 +73,11 @@ const compiledMotionPlans = new WeakMap<Animation, CompiledMotionPlan>()
 const compiledDescriptorPlans = new Map<string, CompiledMotionPlan>()
 const maximumCompiledDescriptorPlans = 128
 const activeChannels = new WeakMap<Element, Map<string, MotionChannel>>()
+const activeAttributeChannels = new WeakMap<Element, Map<string, AttributeMotionChannel>>()
 const pendingStyleWrites = new Map<Element, Map<string, string>>()
+const pendingAttributeWrites = new Map<Element, Map<string, string>>()
 let styleWriteScheduled = false
+let attributeWriteScheduled = false
 
 function queueStyleWrite(element: Element, property: string, value: string): void {
   let writes = pendingStyleWrites.get(element)
@@ -105,6 +109,36 @@ function removePendingStyleWrite(element: Element, property?: string): void {
   }
   writes.delete(property)
   if (writes.size === 0) pendingStyleWrites.delete(element)
+}
+
+function queueAttributeWrite(element: Element, name: string, value: string): void {
+  let writes = pendingAttributeWrites.get(element)
+  if (!writes) {
+    writes = new Map()
+    pendingAttributeWrites.set(element, writes)
+  }
+  writes.set(name, value)
+  if (attributeWriteScheduled) return
+  attributeWriteScheduled = true
+  queueMicrotask(() => {
+    attributeWriteScheduled = false
+    const batch = [...pendingAttributeWrites]
+    pendingAttributeWrites.clear()
+    for (const [target, attributes] of batch) {
+      for (const [name, next] of attributes) target.setAttribute(name, next)
+    }
+  })
+}
+
+function removePendingAttributeWrite(element: Element, name?: string): void {
+  const writes = pendingAttributeWrites.get(element)
+  if (!writes) return
+  if (name === undefined) {
+    pendingAttributeWrites.delete(element)
+    return
+  }
+  writes.delete(name)
+  if (writes.size === 0) pendingAttributeWrites.delete(element)
 }
 
 function channelsFor(element: Element): Map<string, MotionChannel> {
@@ -305,22 +339,19 @@ class ScalarMotionChannel implements MotionChannel {
     const run = async () => {
       if (generation !== this.#generation) return
       const origin = this.#value.get()
-      let forwardPass = 0
+      let cycle = 0
       try {
-        while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || forwardPass < plan.repeatCount)) {
+        while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || cycle < plan.repeatCount)) {
+          const reverse = plan.autoreverses && cycle % 2 === 1
           // Calling animate() on the same MotionValue deliberately avoids a
           // pre-cancel here: o0o0o retargets a live spring in-place and carries
           // its velocity into the new target.
-          this.#control = animate(this.#value, target.value, plan.spec)
-          const forward = await this.#control.finished
-          if (generation !== this.#generation || forward.status !== "finished") return
-          forwardPass += 1
-          if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
-          if (plan.autoreverses) {
-            this.#control = animate(this.#value, origin, plan.spec)
-            const reverse = await this.#control.finished
-            if (generation !== this.#generation || reverse.status !== "finished") return
-          } else {
+          this.#control = animate(this.#value, reverse ? origin : target.value, plan.spec)
+          const result = await this.#control.finished
+          if (generation !== this.#generation || result.status !== "finished") return
+          cycle += 1
+          if (!plan.autoreverses
+            && (plan.repeatCount === Number.POSITIVE_INFINITY || cycle < plan.repeatCount)) {
             this.#value.set(origin, 0)
           }
         }
@@ -409,20 +440,15 @@ class InterpolatedMotionChannel implements MotionChannel {
         return
       }
       this.#progress.set(0, 0)
-      let forwardPass = 0
+      let cycle = 0
       try {
-        while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || forwardPass < plan.repeatCount)) {
-          this.#progress.set(0, 0)
-          this.#control = animate(this.#progress, 1, plan.spec)
-          const forward = await this.#control.finished
-          if (generation !== this.#generation || forward.status !== "finished") return
-          forwardPass += 1
-          if (plan.repeatCount !== Number.POSITIVE_INFINITY && forwardPass >= plan.repeatCount) return
-          if (plan.autoreverses) {
-            this.#control = animate(this.#progress, 0, plan.spec)
-            const reverse = await this.#control.finished
-            if (generation !== this.#generation || reverse.status !== "finished") return
-          }
+        while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || cycle < plan.repeatCount)) {
+          const reverse = plan.autoreverses && cycle % 2 === 1
+          this.#progress.set(reverse ? 1 : 0, 0)
+          this.#control = animate(this.#progress, reverse ? 0 : 1, plan.spec)
+          const result = await this.#control.finished
+          if (generation !== this.#generation || result.status !== "finished") return
+          cycle += 1
         }
       } finally {
         if (generation === this.#generation && plan.repeatCount !== Number.POSITIVE_INFINITY) this.#active = false
@@ -445,6 +471,162 @@ class InterpolatedMotionChannel implements MotionChannel {
     this.#control = undefined
     this.#unsubscribe()
     removePendingStyleWrite(this.element, this.property)
+  }
+}
+
+interface AttributeMotionChannel {
+  currentValue(): string
+  isActive(): boolean
+  retarget(to: StyleValue, plan: CompiledMotionPlan, options: InterpolatorOptions): boolean
+  dispose(): void
+}
+
+class InterpolatedAttributeMotionChannel implements AttributeMotionChannel {
+  readonly #progress = motionValue(0)
+  readonly #unsubscribe: () => void
+  #control: AnimationControls | undefined
+  #timer: ReturnType<typeof setTimeout> | undefined
+  #generation = 0
+  #active = false
+  #interpolate: (progress: number) => unknown
+  #current: string
+
+  constructor(
+    private readonly element: Element,
+    private readonly name: string,
+    from: StyleValue,
+    to: StyleValue,
+    options: InterpolatorOptions,
+  ) {
+    this.#interpolate = createInterpolator(from, to, options)
+    this.#current = String(from)
+    this.#unsubscribe = this.#progress.subscribeValue(progress => {
+      this.#current = String(this.#interpolate(progress))
+      queueAttributeWrite(this.element, this.name, this.#current)
+    }, { emitCurrent: false })
+  }
+
+  currentValue(): string { return this.#current }
+  isActive(): boolean { return this.#active }
+
+  retarget(to: StyleValue, plan: CompiledMotionPlan, options: InterpolatorOptions): boolean {
+    const generation = ++this.#generation
+    this.#active = true
+    if (this.#timer !== undefined) clearTimeout(this.#timer)
+    this.#timer = undefined
+    const origin = this.#current
+    const target = String(to)
+    let interpolate: (progress: number) => unknown
+    try { interpolate = createInterpolator(this.#current, to, options) }
+    catch { this.#active = false; return false }
+
+    const run = async () => {
+      if (generation !== this.#generation) return
+      this.#control?.cancel()
+      this.#interpolate = interpolate
+      this.#progress.set(0, 0)
+      let cycle = 0
+      try {
+        while (generation === this.#generation && (plan.repeatCount === Number.POSITIVE_INFINITY || cycle < plan.repeatCount)) {
+          const reverse = plan.autoreverses && cycle % 2 === 1
+          this.#progress.set(reverse ? 1 : 0, 0)
+          this.#control = animate(this.#progress, reverse ? 0 : 1, plan.spec)
+          const result = await this.#control.finished
+          if (generation !== this.#generation || result.status !== "finished") return
+          cycle += 1
+        }
+      } finally {
+        if (generation === this.#generation && plan.repeatCount !== Number.POSITIVE_INFINITY) {
+          this.#active = false
+          const finishesAtOrigin = plan.autoreverses && plan.repeatCount > 1 && plan.repeatCount % 2 === 0
+          this.#current = finishesAtOrigin ? origin : target
+          queueAttributeWrite(this.element, this.name, this.#current)
+        }
+      }
+    }
+    this.#timer = startAfterDelay(plan.delayMs, () => {
+      this.#timer = undefined
+      void run()
+    })
+    return true
+  }
+
+  dispose(): void {
+    this.#generation += 1
+    this.#active = false
+    if (this.#timer !== undefined) clearTimeout(this.#timer)
+    this.#timer = undefined
+    this.#control?.cancel()
+    this.#control = undefined
+    this.#unsubscribe()
+    removePendingAttributeWrite(this.element, this.name)
+  }
+}
+
+function attributeInterpolatorOptions(name: string, from: StyleValue, to: StyleValue): InterpolatorOptions | undefined {
+  if (name === "d" && typeof from === "string" && typeof to === "string") {
+    try { return svgPathInterpolatorOptions(from, to) }
+    catch { return undefined }
+  }
+  if ((name === "fill" || name === "stroke" || name.endsWith("color")) && typeof from === "string" && typeof to === "string") {
+    return { type: "color", color: { space: "oklab" } }
+  }
+  if (typeof from === "string" || typeof from === "number") {
+    if (typeof to === "string" || typeof to === "number") return numericCssInterpolatorOptions(String(from), String(to))
+  }
+  return undefined
+}
+
+function dropAttributeChannel(element: Element, name: string): void {
+  const channels = activeAttributeChannels.get(element)
+  const channel = channels?.get(name)
+  channel?.dispose()
+  channels?.delete(name)
+  if (channels?.size === 0) activeAttributeChannels.delete(element)
+}
+
+/** Stop one animated DOM attribute before a direct patch. */
+export function cancelDomAttributeAnimation(element: Element, name: string): void {
+  dropAttributeChannel(element, name)
+}
+
+/**
+ * Animate a DOM attribute through the same Vune/o0o0o clock as style motion.
+ * SVG path data uses o0o0o's cubic-normalizing path interpolator and keeps its
+ * current presentation value when interrupted and retargeted.
+ */
+export function animateDomAttribute(
+  element: Element,
+  name: string,
+  from: StyleValue,
+  to: StyleValue,
+  animation: Animation,
+): boolean {
+  const options = attributeInterpolatorOptions(name, from, to)
+  if (!options) {
+    dropAttributeChannel(element, name)
+    return false
+  }
+  let channels = activeAttributeChannels.get(element)
+  if (!channels) {
+    channels = new Map()
+    activeAttributeChannels.set(element, channels)
+  }
+  let existing = channels.get(name)
+  if (existing && !existing.isActive() && String(from) !== existing.currentValue()) {
+    existing.dispose()
+    channels.delete(name)
+    existing = undefined
+  }
+  if (existing?.retarget(to, compileMotionPlan(animation), options)) return true
+  existing?.dispose()
+  try {
+    const channel = new InterpolatedAttributeMotionChannel(element, name, existing?.currentValue() ?? from, to, options)
+    channels.set(name, channel)
+    return channel.retarget(to, compileMotionPlan(animation), options)
+  } catch {
+    channels.delete(name)
+    return false
   }
 }
 
@@ -625,4 +807,11 @@ export function cancelDomAnimations(element: Element): void {
     activeChannels.delete(element)
   }
   removePendingStyleWrite(element)
+  const attributeChannels = activeAttributeChannels.get(element)
+  if (attributeChannels) {
+    attributeChannels.forEach(channel => channel.dispose())
+    attributeChannels.clear()
+    activeAttributeChannels.delete(element)
+  }
+  removePendingAttributeWrite(element)
 }

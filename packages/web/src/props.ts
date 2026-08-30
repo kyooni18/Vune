@@ -1,6 +1,6 @@
 import { classNameOf, type Animation } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, normalizedTextAreaValue, type DomRenderContext } from "./shared.js"
-import { animateDomStyles, cancelDomAnimations, cancelDomStyleAnimation, type DomStyleMotionChange } from "./motion.js"
+import { animateDomAttribute, animateDomStyles, cancelDomAnimations, cancelDomAttributeAnimation, cancelDomStyleAnimation, type DomStyleMotionChange } from "./motion.js"
 import { syncFocusScope } from "./focus.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -12,6 +12,11 @@ export interface DomStyleMotionPolicy {
    * null to force a discrete patch, or undefined to inherit the transaction.
    */
   animationForProperty(property: string, from: unknown, to: unknown): Animation | null | undefined
+}
+
+export interface DomAttributeMotionPolicy {
+  /** Return the animation for one changing DOM attribute, or undefined for a direct patch. */
+  animationForAttribute(attribute: string, from: unknown, to: unknown): Animation | null | undefined
 }
 
 function styleDeclaration(element: Element): CSSStyleDeclaration | undefined {
@@ -217,6 +222,16 @@ function renderableDomProps(props: Record<string, unknown> | null | undefined): 
   return filtered
 }
 
+function trackDomRef(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext): void {
+  const reference = props?.ref
+  if (reference !== undefined && reference !== null) {
+    context.hasRefs = true
+    context.refElements.add(element)
+  } else {
+    context.refElements.delete(element)
+  }
+}
+
 function stageDomProps(element: Element, props: Record<string, unknown>, context: DomRenderContext): void {
   rememberDomKey(element, props, context)
   const renderable = renderableDomProps(props)
@@ -248,14 +263,17 @@ function stageDomProps(element: Element, props: Record<string, unknown>, context
     }
     context.domProps.set(element, remembered)
   }
-  if (renderable.ref !== undefined && renderable.ref !== null) context.hasRefs = true
+  trackDomRef(element, context.domProps.get(element), context)
 }
 
 export function rememberDomProps(element: Element, props: Record<string, unknown> | null | undefined, context: DomRenderContext, merge = true): void {
   rememberDomKey(element, props, context)
   const renderable = renderableDomProps(props)
   if (!renderable) {
-    if (!merge) context.domProps.delete(element)
+    if (!merge) {
+      context.domProps.delete(element)
+      context.refElements.delete(element)
+    }
     return
   }
   const previousStored = merge ? context.domProps.get(element) : undefined
@@ -264,6 +282,7 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
     // Core graph props are immutable snapshots, so a fresh node can retain the
     // record directly instead of cloning it merely for future reconciliation.
     context.domProps.set(element, renderable)
+    trackDomRef(element, renderable, context)
     return
   }
   const previous = previousStored ?? {}
@@ -279,6 +298,7 @@ export function rememberDomProps(element: Element, props: Record<string, unknown
     delete remembered.className
   }
   context.domProps.set(element, remembered)
+  trackDomRef(element, remembered, context)
 }
 
 function applyDomPropsNow(
@@ -288,6 +308,15 @@ function applyDomPropsNow(
   remember: boolean,
 ): void {
   if (context.hydrating) context.hydrationProps.set(element, props)
+  if (context.hydrating && context.hydrationLiveNodes?.has(element)) {
+    // A speculative hydration pass must not mutate the SSR DOM before the
+    // entire graph has been structurally and semantically validated. Keep the
+    // same staged prop merge semantics used by detached candidates, then let
+    // the successful hydration activation attach events/properties in one pass.
+    if (props) stageDomProps(element, props, context)
+    context.hydrationProps.set(element, context.domProps.get(element) ?? props)
+    return
+  }
   if (!props) return
   if (context.stagingProps && !context.hydrating) {
     stageDomProps(element, props, context)
@@ -384,14 +413,17 @@ export function patchDomProps(
   next: Record<string, unknown> | null | undefined,
   context: DomRenderContext,
   motionPolicy?: DomStyleMotionPolicy,
+  attributeMotionPolicy?: DomAttributeMotionPolicy,
 ): void {
   rememberDomKey(element, next, context)
   const renderable = renderableDomProps(next)
-  if (renderable?.ref !== undefined && renderable.ref !== null) context.hasRefs = true
   const previousStored = context.domProps.get(element)
   const nextKeys = renderable ? Object.keys(renderable) : []
-  if (!previousStored && nextKeys.length === 0) return
-  if (previousStored && renderable && nextKeys.length === 1) {
+  if (!previousStored && nextKeys.length === 0) {
+    context.refElements.delete(element)
+    return
+  }
+  if (!attributeMotionPolicy && previousStored && renderable && nextKeys.length === 1) {
     const key = nextKeys[0]
     const previousKeys = Object.keys(previousStored)
     if (previousKeys.length === 1 && previousKeys[0] === key
@@ -401,6 +433,7 @@ export function patchDomProps(
       if (renderable[key] === undefined || renderable[key] === null) {
         removeDomProp(element, key)
         context.domProps.delete(element)
+        context.refElements.delete(element)
       } else {
         applyAttributeValue(element, key, renderable[key])
         context.domProps.set(element, renderable)
@@ -416,6 +449,7 @@ export function patchDomProps(
     if (/^on[A-Za-z]/.test(key)) setDomEvent(element, key, undefined, context, false)
     else {
       if (key === "style") cancelDomAnimations(element)
+      else cancelDomAttributeAnimation(element, htmlAttributeName(key))
       removeDomProp(element, key)
     }
   }
@@ -499,9 +533,22 @@ export function patchDomProps(
     }
     if (key === "ref") continue
     if (Object.is(previous[key], value)) continue
+    const attributeName = htmlAttributeName(key)
+    const attributeAnimation = attributeMotionPolicy?.animationForAttribute(attributeName, previous[key], value)
+    if (attributeAnimation && !context.activeTransaction?.disablesAnimations) {
+      const current = element.getAttribute(attributeName) ?? previous[key]
+      if (current !== undefined && current !== null
+        && animateDomAttribute(element, attributeName, current, value, attributeAnimation)) continue
+    }
+    cancelDomAttributeAnimation(element, attributeName)
     applyAttributeValue(element, key, value)
   }
-  if (!renderable || nextKeys.length === 0) context.domProps.delete(element)
-  else context.domProps.set(element, renderable)
+  if (!renderable || nextKeys.length === 0) {
+    context.domProps.delete(element)
+    context.refElements.delete(element)
+  } else {
+    context.domProps.set(element, renderable)
+    trackDomRef(element, renderable, context)
+  }
   syncFocusScope(element, renderable?.["data-vune-focus-scope"])
 }

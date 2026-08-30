@@ -14,13 +14,14 @@ import {
   SafeArea,
   ScrollView,
   State,
+  Transition,
   compiledTemplate,
-  compiledCollectionContent,
   defineCompiledTemplate,
   viewElement,
   viewFragment,
   withAnimation,
 } from "../packages/core/dist/index.js"
+import { compiledCollectionContent } from "../packages/core/dist/internal-runtime.js"
 import { mount, renderToHTML } from "../packages/web/dist/index.js"
 
 const Text = defineBuiltinView(
@@ -253,6 +254,76 @@ test("@vune-ui/web preserves animation transactions on direct compiled modifier 
   dom.window.close()
 })
 
+test("@vune-ui/web snapshots one animated sibling neighborhood once per animation policy", async () => {
+  const dom = new JSDOM("<div id=app></div>", { pretendToBeVisual: true })
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const width = State(10)
+  const rowCount = 48
+  const App = defineView("WideAnimatedSiblingSnapshot", {
+    initializers: [initializer("WideAnimatedSiblingSnapshot()", args => args.length === 0)],
+    body: () => Element("div", null,
+      Array.from({ length: rowCount }, (_, index) => Element("span", {
+        style: { display: "inline-block", width: `${width.value}px` },
+      }, String(index))),
+    ),
+  })
+  const unmount = mount(App(), container)
+  const parent = container.firstElementChild
+  assert.ok(parent)
+  const liveChildren = parent.children
+  let siblingCollectionReads = 0
+  Object.defineProperty(parent, "children", {
+    configurable: true,
+    get() {
+      siblingCollectionReads += 1
+      return liveChildren
+    },
+  })
+
+  withAnimation(Animation.linear(0.05), () => { width.value = 20 })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.ok(siblingCollectionReads <= 2, `expected one sibling snapshot scan, got ${siblingCollectionReads}`)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web host animation suppression bypasses explicit style and lifecycle motion", async () => {
+  const dom = new JSDOM("<body><div id=app></div></body>", { pretendToBeVisual: true })
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const visible = State(true)
+  const opacity = State(0)
+  const App = defineView("AnimationSuppressionHost", {
+    initializers: [initializer("AnimationSuppressionHost()", args => args.length === 0)],
+    body: () => visible.value
+      ? Element("div", { style: { opacity: opacity.value } }, "motion")
+          .animation(Animation.linear(0.2), opacity.value)
+          .transition(Transition.opacity.animation(Animation.linear(0.2)))
+      : null,
+  })
+  const unmount = mount(App(), container, { disablesAnimations: true })
+  const element = container.firstElementChild
+  assert.ok(element)
+
+  opacity.value = 1
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(element.style.opacity, "1")
+  assert.equal(element.style.transitionDuration, "")
+
+  visible.value = false
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(container.firstElementChild, null)
+  assert.equal(dom.window.document.querySelector("[data-vune-transition-layer]"), null)
+
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web keeps property-scoped animation domains independent on the direct compiled path", async () => {
   let opacity
   let scale
@@ -370,9 +441,9 @@ test("@vune-ui/web infers intrinsic text-size motion from real geometry changes"
   await Promise.resolve()
   assert.equal(bodyRuns, 1)
   assert.equal(element.textContent, "A considerably longer label")
-  assert.match(element.style.transform, /scale\(/, "intrinsic width delta should produce a FLIP scale channel")
+  assert.notEqual(element.style.scale, "", "intrinsic width delta should produce an independent FLIP scale channel")
   await new Promise(resolve => setTimeout(resolve, 130))
-  assert.equal(element.style.transform, "none")
+  assert.match(element.style.scale, /^1(?:\.0+)? 1(?:\.0+)?$/)
 
   unmount()
   dom.window.close()
@@ -1440,6 +1511,54 @@ test("@vune-ui/web batches synchronous State writes into one View reevaluation",
   dom.window.close()
 })
 
+test("@vune-ui/web patches wide flat host rows without materializing candidate DOM", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const values = State(Array.from({ length: 64 }, (_, index) => `row-${index}`))
+  const clicks = []
+  const firstRef = { current: null }
+  const App = defineView("FlatHostPatchApp", {
+    initializers: [initializer("App()", args => args.length === 0)],
+    body: () => Element("section", { "data-version": values.value[0] },
+      values.value.map((value, index) => Element("button", {
+        "data-row": index,
+        onclick: () => clicks.push(value),
+        ...(index === 0 ? { ref: firstRef } : {}),
+      }, value)),
+    ),
+  })
+
+  const unmount = mount(App(), container)
+  const original = [...container.querySelectorAll("button")]
+  assert.strictEqual(firstRef.current, original[0])
+  const createElement = dom.window.document.createElement.bind(dom.window.document)
+  const createTextNode = dom.window.document.createTextNode.bind(dom.window.document)
+  let candidateNodes = 0
+  dom.window.document.createElement = (...args) => {
+    candidateNodes += 1
+    return createElement(...args)
+  }
+  dom.window.document.createTextNode = (...args) => {
+    candidateNodes += 1
+    return createTextNode(...args)
+  }
+
+  values.value = values.value.map((_, index) => `next-${index}`)
+  await Promise.resolve()
+  assert.equal(candidateNodes, 0)
+  assert.ok([...container.querySelectorAll("button")].every((node, index) => node === original[index]))
+  assert.strictEqual(firstRef.current, original[0])
+  assert.equal(container.querySelector("section")?.getAttribute("data-version"), "next-0")
+  assert.equal(container.querySelector("[data-row=32]")?.textContent, "next-32")
+  container.querySelector("[data-row=32]")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+  assert.deepEqual(clicks, ["next-32"])
+
+  unmount()
+  assert.equal(firstRef.current, null)
+  dom.window.close()
+})
+
 test("@vune-ui/web isolates row-local invalidation and reuses unchanged keyed View bodies", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
@@ -1507,7 +1626,7 @@ test("@vune-ui/web isolates row-local invalidation and reuses unchanged keyed Vi
   dom.window.close()
 })
 
-test("@vune-ui/web patches flat keyed host rows in place and preserves generic fallback behavior", async () => {
+test("@vune-ui/web patches flat keyed host rows in place including events and refs", async () => {
   const dom = new JSDOM("<div id=app></div>")
   const container = dom.window.document.querySelector("#app")
   assert.ok(container)
@@ -1585,7 +1704,7 @@ test("@vune-ui/web patches flat keyed host rows in place and preserves generic f
   candidateNodes = 0
   attachRefs.value = true
   await Promise.resolve()
-  assert.ok(candidateNodes > 0)
+  assert.equal(candidateNodes, 0)
   assert.deepEqual([...container.querySelectorAll("span")].map(node => node.dataset.row), ["c", "a", "d"])
 
   dom.window.document.createElement = createElement
@@ -1793,6 +1912,52 @@ test("@vune-ui/web wakes nested empty View boundaries in one scheduler turn", as
   visible.value = true
   await Promise.resolve()
   assert.equal(container.querySelector("[data-visible]")?.textContent, "visible")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web flushes dirty boundaries parent-first with stable updates", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const parentValue = State(0)
+  const childValue = State(0)
+  let parentRuns = 0
+  let childRuns = 0
+  const updateOrder = []
+  const Child = defineView("CachedDepthChild", {
+    initializers: [initializer("Child()", args => args.length === 0)],
+    body: () => {
+      childRuns += 1
+      updateOrder.push("child")
+      return Element("span", { "data-value": childValue.value }, String(childValue.value))
+    },
+  })
+  const Parent = defineView("CachedDepthParent", {
+    initializers: [initializer("Parent()", args => args.length === 0)],
+    body: () => {
+      parentRuns += 1
+      updateOrder.push("parent")
+      return Element("section", { "data-parent-value": parentValue.value }, Child())
+    },
+  })
+
+  const unmount = mount(Parent(), container)
+  parentRuns = 0
+  childRuns = 0
+  updateOrder.length = 0
+  // Subscribe the child first so the scheduler must use the cached depth to
+  // process the parent before the already-dirty descendant.
+  childValue.value = 1
+  parentValue.value = 1
+  await Promise.resolve()
+
+  assert.equal(parentRuns, 1)
+  assert.equal(childRuns, 1)
+  assert.deepEqual(updateOrder, ["parent", "child"])
+  assert.equal(container.querySelector("[data-value]")?.textContent, "1")
+  assert.equal(container.querySelector("[data-parent-value]")?.getAttribute("data-parent-value"), "1")
 
   unmount()
   dom.window.close()
@@ -2283,7 +2448,9 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
 
   rowRuns = 0
   keyRuns = 0
-  items.value[1].value = "B2"
+  const next = [...items.value]
+  next[1] = { id: "b", value: "B2" }
+  items.value = next
   await Promise.resolve(); await Promise.resolve()
   assert.equal(parentRuns, 1)
   assert.equal(rowRuns, 1)
@@ -2291,6 +2458,109 @@ test("@vune-ui/web lets a compiled keyed collection own its State subscription",
   assert.strictEqual(container.querySelector("[data-row=b]"), before)
   assert.equal(container.querySelector("[data-row=b]")?.textContent, "B2")
 
+  rowRuns = 0
+  keyRuns = 0
+  items.value[1].value = "B3"
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
+  assert.strictEqual(container.querySelector("[data-row=b]"), before)
+  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B3")
+
+  const aBeforeFull = container.querySelector("[data-row=a]")
+  const bBeforeFull = container.querySelector("[data-row=b]")
+  const cBeforeFull = container.querySelector("[data-row=c]")
+  rowRuns = 0
+  keyRuns = 0
+  items.value = items.value.map(item => ({ ...item, value: `${item.value}-full` }))
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 3)
+  assert.equal(keyRuns, 3)
+  assert.strictEqual(container.querySelector("[data-row=a]"), aBeforeFull)
+  assert.strictEqual(container.querySelector("[data-row=b]"), bBeforeFull)
+  assert.strictEqual(container.querySelector("[data-row=c]"), cBeforeFull)
+  assert.deepEqual([...container.querySelectorAll("span")].map(node => node.textContent), ["A-full", "B3-full", "C-full"])
+
+  rowRuns = 0
+  keyRuns = 0
+  items.value[0].value = "A-after-full"
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(keyRuns, 1)
+  assert.strictEqual(container.querySelector("[data-row=a]"), aBeforeFull)
+  assert.equal(container.querySelector("[data-row=a]")?.textContent, "A-after-full")
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web lets compiled collections override conservative declared struct dependencies", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }])
+  let parentRuns = 0
+  let rowRuns = 0
+  const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => item.id,
+    evaluate: item => { rowRuns += 1; return { type: "span", props: { "data-row": item.id }, text: item.value } },
+  })
+  const App = defineView("DeclaredOwnedCollectionApp", {
+    initializers: [initializer("DeclaredOwnedCollectionApp()", args => args.length === 0)],
+    dependencies: () => [items],
+    dependenciesComplete: true,
+    body: () => {
+      parentRuns += 1
+      return Element("section", null, ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content]))
+    },
+  })
+  const unmount = mount(App(), container)
+  assert.equal(parentRuns, 1)
+
+  rowRuns = 0
+  items.value[1].value = "B2"
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(parentRuns, 1)
+  assert.equal(rowRuns, 1)
+  assert.equal(container.querySelector("[data-row=b]")?.textContent, "B2")
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web retains a declared State dependency when the parent body also reads it", async () => {
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const items = State([{ id: "a", value: "A" }, { id: "b", value: "B" }])
+  let parentRuns = 0
+  const content = compiledCollectionContent(item => Element("span", { "data-row": item.id }, item.value), {
+    kind: "flat-text-host",
+    indexIndependent: true,
+    evaluateKey: item => item.id,
+    evaluate: item => ({ type: "span", props: { "data-row": item.id }, text: item.value }),
+  })
+  const App = defineView("ObservedOwnedCollectionApp", {
+    initializers: [initializer("ObservedOwnedCollectionApp()", args => args.length === 0)],
+    dependencies: () => [items],
+    dependenciesComplete: true,
+    body: () => {
+      parentRuns += 1
+      return Element("section", null,
+        Element("output", { "data-count": true }, items.value.length),
+        ForEach.viewType.createNodeCompiled(1, [items, item => item.id, content]),
+      )
+    },
+  })
+  const unmount = mount(App(), container)
+  items.value.push({ id: "c", value: "C" })
+  await Promise.resolve(); await Promise.resolve()
+  assert.ok(parentRuns >= 2)
+  assert.equal(container.querySelector("[data-count]")?.textContent, "3")
   unmount()
   dom.window.close()
 })

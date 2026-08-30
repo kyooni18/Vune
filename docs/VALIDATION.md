@@ -36,6 +36,10 @@ Showcase) in Chromium.
 A local system Chromium may be unavailable or policy-restricted; that is not a
 reason to skip the CI Playwright gate.
 
+The standalone browser benchmark prefers Playwright's bundled Chromium, then
+falls back to an installed Chrome or Edge channel. Set `VUNE_BROWSER_EXECUTABLE`
+when validation needs to use a specific compatible Chromium binary.
+
 ## Package/release gate
 
 Run `pnpm run test:release`. It verifies every package's declared exports, type
@@ -52,7 +56,10 @@ root compatibility package plus the eight workspace packages.
 multiple chain depths. `benchmark:performance:ci` guards compiler transforms,
 View/ForEach construction, State propagation, Web DOM reconciliation, keyed
 updates, hydration, React/Vue rerenders, conditional subtrees, burst updates,
-and LazyVStack scrolling.
+and LazyVStack scrolling. `benchmark:browser:ci` builds a minified production
+bundle and measures the same hot collection paths in headless Chromium at 5,000
+rows, including raw DOM, raw React/Vue, generic Vune, compiler-owned Vune,
+precise State mutations, full replacements, keyed reverse, and Web hydration.
 
 Client renderer measurements include matching raw React and raw Vue fixtures
 for three update shapes: a full-tree value change, a single-item change, and a
@@ -67,9 +74,20 @@ fallback rendering, native renderer-hook dispatch, custom-View slot fallback,
 and identity parity.
 
 DOM benchmark rounds run sequentially so independent JSDOM instances do not
-contend for the same event loop, microtask queue, and garbage collector. In the
-final CI-mode validation the 1,000-node Web reconciliation ratio remained around
-8–10x its raw-DOM baseline across repeated runs, below the 25x guard.
+contend for the same event loop, microtask queue, and garbage collector. Timed
+synchronous measurements do not run forced GC inside their timing window;
+retained-heap measurement owns its GC separately. The raw DOM text-update
+fixture retains the original Text nodes and updates `nodeValue`, so it measures
+a meaningful lower bound instead of reconstructing element text content.
+
+The Chromium suite validates the final DOM after every measured update and uses
+an explicit raw-DOM floor for single-row text updates, wide text replacement,
+and reorder. It is the authoritative renderer-performance regression gate;
+JSDOM remains useful for deterministic logic coverage and relative development
+microbenchmarks, but its large keyed-reorder timings are not treated as browser
+performance. The browser gate also asserts that compiler-owned paths do not
+regress behind the corresponding generic Vune path by more than the configured
+noise allowance.
 
 These numbers are regression budgets, not cross-framework marketing claims;
 they are intended to catch unexpectedly nonlinear or catastrophic changes.

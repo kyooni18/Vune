@@ -495,6 +495,81 @@ Slider(volume, { min: 0, max: 1, step: 0.05 })
 Stepper(quantity, { min: 0, max: 10 })
 ```
 
+### Symbol and content transitions
+
+`VectorSymbol` accepts both authored symbols and real icon-pack geometry.
+Ordinary SVG primitives are normalized to paths, while explicit layer ids keep
+semantic identity separate from rendered SVG geometry. `@lucide/icons` data can
+be used directly without a Vune/Lucide runtime bridge:
+
+```ts
+import { Pause, Play } from '@lucide/icons'
+
+const play = VectorSymbol.fromLucide(Play)
+const pause = VectorSymbol.fromLucide(Pause)
+
+Image(isPlaying.value ? pause : play)
+  .contentTransition(ContentTransition.symbolEffect(SymbolEffect.automatic))
+  .animation(Animation.spring(0.48, 0.7), isPlaying.value)
+```
+
+Custom icons do not need hand-normalized `d` strings either:
+
+```ts
+const search = VectorSymbol.fromSVGNodes([
+  ['circle', { cx: 11, cy: 11, r: 6.5, stroke: 'currentColor', fill: 'none' }],
+  ['line', { x1: 16, y1: 16, x2: 21, y2: 21, stroke: 'currentColor' }],
+], { name: 'search', viewBox: '0 0 24 24' })
+```
+
+Generated ordinal layers such as `layer:0` are treated as geometry, not
+semantic identity. Standard icon source keys are retained when available
+(including Lucide node keys), so genuinely shared geometry stays live across
+related symbols. Unnamed layers are globally assigned by geometry and
+presentation instead of array order; compound contours are paired by shape
+role before split/merge duplication. Added stroke-only layers draw on/off,
+while unrelated topology can still split or converge continuously. Differing
+viewBoxes and nested SVG transforms are normalized as part of the transition.
+
+Vune source accepts the matching Swift-style shorthand:
+
+```ts
+Image(icon)
+  .contentTransition(.symbolEffect(.magicReplace(fallback: .downUp)))
+  .animation(.spring(response: 0.28, dampingFraction: 0.86), value: active)
+
+Text(status)
+  .contentTransition(.interpolate)
+  .animation(.spring(response: 0.42, dampingFraction: 0.78), value: status)
+
+Text(status)
+  .contentTransition(.blurReplace(radius: 8))
+  .animation()
+
+Text(status)
+  .contentTransition(.push(from: .trailing))
+  .animation()
+
+Text(status)
+  .contentTransition(.scale(scale: 0.84))
+  .animation()
+
+Text(String(count))
+  .contentTransition(.numericText(value: count))
+  .animation()
+```
+
+`ContentTransition` changes content inside a stable View; `Transition` remains
+the insertion/removal lifecycle API. `Path(d).animation()` also morphs SVG path
+data directly without requiring a `VectorSymbol` wrapper. Web path morphing
+normalizes path topology once, preserves active presentation state during
+retargeting, and keeps path, color, opacity, transform, and layout motion on
+independent ownership channels. The path parser accepts compact SVG arc syntax
+used by production icon packs. High-confidence geometry preserves spring
+overshoot; uncertain correspondence clamps the silhouette to monotonic progress
+while the surrounding transform can still spring, reducing self-intersection
+and inside-out intermediate shapes.
+
 ## Collections
 
 ```ts

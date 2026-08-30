@@ -28,6 +28,18 @@ function readJSON(path) {
   return JSON.parse(readFileSync(path, "utf8"))
 }
 
+function localPackagePath(name) {
+  const direct = resolve(root, "node_modules", name)
+  if (existsSync(resolve(direct, "package.json"))) return direct
+  const pnpmStore = resolve(root, "node_modules", ".pnpm")
+  const entry = readdirSync(pnpmStore).find(candidate => candidate.startsWith(`${name}@`))
+  const nested = entry ? resolve(pnpmStore, entry, "node_modules", name) : undefined
+  assert.ok(nested && existsSync(resolve(nested, "package.json")), `local dependency ${name} is unavailable for offline release verification`)
+  return nested
+}
+
+const localDependency = name => `file:${localPackagePath(name)}`
+
 const releaseVersion = readJSON(resolve(root, "package.json")).version
 
 function exportTargets(exportsValue, output = []) {
@@ -135,6 +147,13 @@ try {
     dependencies: {
       "vune-ui": `file:${packedTarballs.get("vune-ui")}`,
       "@vune-ui/core": `file:${packedTarballs.get("@vune-ui/core")}`,
+      // Satisfy external dependencies/peers from this workspace so the
+      // canonical packed-install smoke test is genuinely cache-independent.
+      react: localDependency("react"),
+      "react-dom": localDependency("react-dom"),
+      vue: localDependency("vue"),
+      typescript: localDependency("typescript"),
+      o0o0o: localDependency("o0o0o"),
     },
   }, null, 2))
   const install = spawnSync("npm", [
@@ -178,10 +197,11 @@ try {
       "@vune-ui/vue": dependency("@vune-ui/vue"),
       "@vune-ui/web": dependency("@vune-ui/web"),
       "@vune-ui/vite": dependency("@vune-ui/vite"),
-      react: `file:${resolve(root, "node_modules/react")}`,
-      "react-dom": `file:${resolve(root, "node_modules/react-dom")}`,
-      vue: `file:${resolve(root, "node_modules/vue")}`,
-      typescript: `file:${resolve(root, "node_modules/typescript")}`,
+      react: localDependency("react"),
+      "react-dom": localDependency("react-dom"),
+      vue: localDependency("vue"),
+      typescript: localDependency("typescript"),
+      o0o0o: localDependency("o0o0o"),
     },
   }
   writeFileSync(resolve(installDir, "package.json"), JSON.stringify(installManifest, null, 2))

@@ -1,11 +1,12 @@
 import type { Animation } from "../animation.js"
-import type { FrameOptions } from "../layout.js"
+import type { EdgeSet, FrameAlignment, FrameOptions, LayoutEdgeInsets } from "../layout.js"
 import type { VuneStyleProperties } from "../html.js"
 import type { ViewIdentity, ViewIdentitySegment } from "../identity.js"
 import type { StateRef } from "../state.js"
 import type { ViewType } from "./initializers.js"
 import type { vuneForeignComponent, vuneInitializers, vuneView } from "./symbols.js"
 import type { Transition } from "../transition.js"
+import type { ContentTransition } from "../content-transition.js"
 
 export type ViewGraphLeaf = string | number | bigint | boolean | null | undefined
 export type ViewGraphValue = ViewGraphLeaf | ViewNode | readonly ViewGraphValue[]
@@ -13,11 +14,32 @@ export type ViewGraphChild = ViewGraphValue
 export type ViewValue = ViewGraphValue
 export type Length = number | string
 export type ClassValue = string | false | null | undefined | readonly ClassValue[]
+export type Axis = "horizontal" | "vertical"
+export type AxisSet = Axis | "all" | readonly Axis[]
+export type ContentMode = "fit" | "fill"
+export type TextAlignment = "leading" | "center" | "trailing"
+export type TruncationMode = "head" | "middle" | "tail"
+export type TextCase = "uppercase" | "lowercase" | null
+export type FontWeight = "ultraLight" | "thin" | "light" | "regular" | "medium" | "semibold" | "bold" | "heavy" | "black" | number
+export type FontDesign = "default" | "serif" | "rounded" | "monospaced"
+export type FontWidth = "compressed" | "condensed" | "standard" | "expanded"
+export type BlendMode = "normal" | "multiply" | "screen" | "overlay" | "darken" | "lighten" | "colorDodge" | "colorBurn" | "softLight" | "hardLight" | "difference" | "exclusion" | "hue" | "saturation" | "color" | "luminosity" | "plusDarker" | "plusLighter"
+export type Visibility = "automatic" | "visible" | "hidden"
+export interface AffineTransform {
+  readonly a: number
+  readonly b: number
+  readonly c: number
+  readonly d: number
+  readonly tx: number
+  readonly ty: number
+}
+export interface Axis3D { readonly x: number; readonly y: number; readonly z: number }
 
 export interface Point { readonly x: number; readonly y: number }
 export interface Size { readonly width: number; readonly height: number }
 export type ScaleEffectValue = number | Point | Size
 export type OffsetValue = Point | Size
+export type UnitPointName = FrameAlignment
 
 export interface GeometryFrame {
   readonly x: number
@@ -187,8 +209,20 @@ export interface CompiledCollectionPlan {
   readonly kind: "flat-text-host"
   /** True when moving an existing item cannot change its row output. */
   readonly indexIndependent: boolean
-  /** Compiler-proven stable key evaluator. Required for collection-owned State invalidation. */
+  /** Compiler-proven pure stable-key evaluator. Required for collection-owned State invalidation. */
   readonly evaluateKey?: (item: unknown, index: number) => string | number
+  /** Static ordinary host tag emitted by the compiler for allocation-light adapters. */
+  readonly hostType?: string
+  /** Static host props when no row-local evaluation is necessary. */
+  readonly staticProps?: Record<string, unknown> | null
+  /** Row-local props evaluator paired with hostType when props are dynamic. */
+  readonly evaluateProps?: (item: unknown, index: number) => Record<string, unknown> | null
+  /** Row-local primitive text evaluator paired with hostType. */
+  readonly evaluateText?: (item: unknown, index: number) => ViewGraphLeaf
+  /**
+   * Pure row-local evaluator. Renderers may memoize its result and skip calls
+   * for items proven unchanged by State mutation metadata.
+   */
   readonly evaluate: (item: unknown, index: number) => CompiledCollectionRow
 }
 
@@ -262,24 +296,128 @@ export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateView
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
 type MaskValue = ViewNode | string
+type StructuralModifierValue = ViewGraphValue | (() => ViewGraphValue)
 
 export interface Modifiers {
-  padding(value?: Length): ModifiableViewNode
+  padding(value?: Length | LayoutEdgeInsets): ModifiableViewNode
+  padding(edges: EdgeSet, length?: Length): ModifiableViewNode
   margin(value?: Length): ModifiableViewNode
   gap(value: Length): ModifiableViewNode
-  frame(options: FrameOptions): ModifiableViewNode
+  frame(options?: FrameOptions): ModifiableViewNode
   font(value: string): ModifiableViewNode
   fontSize(value: Length): ModifiableViewNode
   bold(isActive?: boolean): ModifiableViewNode
+  fontWeight(value: FontWeight | null): ModifiableViewNode
+  fontDesign(value: FontDesign | null): ModifiableViewNode
+  fontWidth(value: FontWidth): ModifiableViewNode
+  italic(isActive?: boolean): ModifiableViewNode
+  underline(isActive?: boolean, pattern?: string, color?: string | null): ModifiableViewNode
+  strikethrough(isActive?: boolean, pattern?: string, color?: string | null): ModifiableViewNode
+  monospaced(isActive?: boolean): ModifiableViewNode
+  monospacedDigit(): ModifiableViewNode
+  kerning(value: number): ModifiableViewNode
+  tracking(value: number): ModifiableViewNode
+  baselineOffset(value: number): ModifiableViewNode
+  lineSpacing(value: number): ModifiableViewNode
+  lineLimit(value: number | null, reservesSpace?: boolean): ModifiableViewNode
+  minimumScaleFactor(value: number): ModifiableViewNode
+  multilineTextAlignment(value: TextAlignment): ModifiableViewNode
+  truncationMode(value: TruncationMode): ModifiableViewNode
+  textCase(value: TextCase): ModifiableViewNode
+  allowsTightening(value: boolean): ModifiableViewNode
   foreground(value: string): ModifiableViewNode
-  foregroundStyle(value: string): ModifiableViewNode
-  background(value: string, alignment?: string): ModifiableViewNode
+  foregroundStyle(primary: string, secondary?: string, tertiary?: string): ModifiableViewNode
+  background(value: string | ViewNode, alignment?: FrameAlignment): ModifiableViewNode
+  background(alignment: FrameAlignment, content: () => ViewGraphValue): ModifiableViewNode
+  overlay(value: StructuralModifierValue, alignment?: FrameAlignment): ModifiableViewNode
   opacity(value: number): ModifiableViewNode
-  scaleEffect(value: ScaleEffectValue, anchor?: string): ModifiableViewNode
-  rotationEffect(value: number, anchor?: string): ModifiableViewNode
+  aspectRatio(ratio: number | Size | null, contentMode: ContentMode): ModifiableViewNode
+  scaledToFit(): ModifiableViewNode
+  scaledToFill(): ModifiableViewNode
+  fixedSize(): ModifiableViewNode
+  fixedSize(horizontal: boolean, vertical: boolean): ModifiableViewNode
+  layoutPriority(value: number): ModifiableViewNode
+  position(value: Point): ModifiableViewNode
+  position(x: number, y: number): ModifiableViewNode
+  zIndex(value: number): ModifiableViewNode
+  ignoresSafeArea(regions?: string, edges?: EdgeSet, alignment?: FrameAlignment): ModifiableViewNode
+  safeAreaPadding(value?: Length): ModifiableViewNode
+  safeAreaPadding(edges: EdgeSet, length?: Length): ModifiableViewNode
+  gridCellColumns(count: number): ModifiableViewNode
+  gridCellUnsizedAxes(axes: AxisSet): ModifiableViewNode
+  gridCellAnchor(anchor: UnitPointName): ModifiableViewNode
+  gridColumnAlignment(alignment: "leading" | "center" | "trailing"): ModifiableViewNode
+  scaleEffect(value: ScaleEffectValue, anchor?: UnitPointName): ModifiableViewNode
+  rotationEffect(value: number, anchor?: UnitPointName): ModifiableViewNode
+  rotation3DEffect(angle: number, axis: Axis3D, anchor?: UnitPointName, anchorZ?: number, perspective?: number): ModifiableViewNode
+  transformEffect(transform: AffineTransform): ModifiableViewNode
+  projectionEffect(transform: string | readonly number[]): ModifiableViewNode
   offset(value: OffsetValue): ModifiableViewNode
   offset(x: number, y: number): ModifiableViewNode
-  mask(value: MaskValue): ModifiableViewNode
+  mask(value: MaskValue, alignment?: FrameAlignment): ModifiableViewNode
+  clipShape(value: MaskValue, style?: unknown): ModifiableViewNode
+  clipped(antialiased?: boolean): ModifiableViewNode
+  border(style: string, width?: Length): ModifiableViewNode
+  shadow(color: string | undefined, radius: number, x?: number, y?: number): ModifiableViewNode
+  blur(radius: number, opaque?: boolean): ModifiableViewNode
+  brightness(value: number): ModifiableViewNode
+  contrast(value: number): ModifiableViewNode
+  saturation(value: number): ModifiableViewNode
+  grayscale(value: number): ModifiableViewNode
+  hueRotation(value: number): ModifiableViewNode
+  colorInvert(): ModifiableViewNode
+  colorMultiply(value: string): ModifiableViewNode
+  blendMode(value: BlendMode): ModifiableViewNode
+  compositingGroup(): ModifiableViewNode
+  drawingGroup(opaque?: boolean, colorMode?: string): ModifiableViewNode
+  luminanceToAlpha(): ModifiableViewNode
+  tint(value: string | null): ModifiableViewNode
+  backgroundStyle(value: string): ModifiableViewNode
+  dynamicTypeSize(value: string): ModifiableViewNode
+  disabled(value: boolean): ModifiableViewNode
+  hidden(): ModifiableViewNode
+  allowsHitTesting(value: boolean): ModifiableViewNode
+  onTapGesture(action: () => void): ModifiableViewNode
+  onTapGesture(count: number, action: () => void): ModifiableViewNode
+  onTapGesture(count: undefined, action: () => void): ModifiableViewNode
+  onLongPressGesture(minimumDuration: number | undefined, maximumDistance: number | undefined, action: () => void, onPressingChanged?: (pressing: boolean) => void): ModifiableViewNode
+  onHover(action: (hovering: boolean) => void): ModifiableViewNode
+  onSubmit(action: () => void): ModifiableViewNode
+  focusable(isFocusable?: boolean, onFocusChange?: (focused: boolean) => void): ModifiableViewNode
+  id(value: string | number): ModifiableViewNode
+  preferredColorScheme(value: "light" | "dark" | null): ModifiableViewNode
+  controlSize(value: string): ModifiableViewNode
+  buttonStyle(value: string): ModifiableViewNode
+  toggleStyle(value: string): ModifiableViewNode
+  pickerStyle(value: string): ModifiableViewNode
+  textFieldStyle(value: string): ModifiableViewNode
+  textEditorStyle(value: string): ModifiableViewNode
+  listStyle(value: string): ModifiableViewNode
+  labelStyle(value: string): ModifiableViewNode
+  progressViewStyle(value: string): ModifiableViewNode
+  scrollDisabled(value: boolean): ModifiableViewNode
+  scrollIndicators(value: Visibility, axes?: AxisSet): ModifiableViewNode
+  scrollBounceBehavior(value: string, axes?: AxisSet): ModifiableViewNode
+  scrollClipDisabled(value?: boolean): ModifiableViewNode
+  scrollDismissesKeyboard(value: string): ModifiableViewNode
+  listRowInsets(value: LayoutEdgeInsets | null): ModifiableViewNode
+  listRowInsets(edges: EdgeSet, length?: Length): ModifiableViewNode
+  listRowBackground(value: StructuralModifierValue | null): ModifiableViewNode
+  listRowSeparator(value: Visibility, edges?: string): ModifiableViewNode
+  listSectionSeparator(value: Visibility, edges?: string): ModifiableViewNode
+  symbolRenderingMode(value: string | null): ModifiableViewNode
+  symbolVariant(value: string): ModifiableViewNode
+  draggable(payload: unknown): ModifiableViewNode
+  dropDestination(payloadType: unknown, action: (items: unknown[], point: Point) => boolean, isTargeted?: (targeted: boolean) => void): ModifiableViewNode
+  accessibilityLabel(value: string): ModifiableViewNode
+  accessibilityHint(value: string): ModifiableViewNode
+  accessibilityValue(value: string): ModifiableViewNode
+  accessibilityHidden(value: boolean): ModifiableViewNode
+  accessibilityIdentifier(value: string): ModifiableViewNode
+  accessibilityHeading(value?: string): ModifiableViewNode
+  accessibilitySortPriority(value: number): ModifiableViewNode
+  accessibilityElement(children?: string): ModifiableViewNode
+  accessibilityAction(kind: string, action: () => void): ModifiableViewNode
   /**
    * Animate changes owned by the modifiers before this call. With no value,
    * Vune automatically derives the changed factors and timing domain.
@@ -288,6 +426,7 @@ export interface Modifiers {
   animation(animation: Animation | null): ModifiableViewNode
   animation(animation: Animation | null, value: unknown): ModifiableViewNode
   transition(transition: Transition): ModifiableViewNode
+  contentTransition(transition: ContentTransition): ModifiableViewNode
   style(value: VuneStyleProperties): ModifiableViewNode
   className(value: ClassValue): ModifiableViewNode
   withProps(value: Record<string, unknown>): ModifiableViewNode
@@ -302,7 +441,7 @@ export interface VuneRenderer<Output = unknown> {
   element(type: unknown, props: Record<string, unknown> | null, ...children: Output[]): Output
   fragment(children: Output[]): Output
   value?(value: unknown): Output
-  modifier(content: Output, modifier: ViewModifierNode): Output
+  modifier(content: Output, modifier: ViewModifierNode, renderArgument?: (index: number) => Output): Output
   /** Materialize a compiler-generated static template without generic graph traversal. */
   template?(node: CompiledTemplateViewNode, renderSlot: (index: number) => Output, identity: ViewIdentity): Output
   /**

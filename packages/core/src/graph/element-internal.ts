@@ -2,13 +2,12 @@ import { decorate, snapshotRecord } from "./modifiers.js"
 import type { ModifiableViewNode, ViewGraphChild } from "./types.js"
 
 export function snapshotElementProps(type: unknown, props: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = snapshotRecord(props, true) as Record<string, unknown>
-  if (typeof type !== "string" || type.includes("-")) return snapshot
+  if (typeof type !== "string" || type.includes("-")) return snapshotRecord(props, true) as Record<string, unknown>
   try {
     const normalized: Record<string, unknown> = {}
-    for (const key of Reflect.ownKeys(snapshot)) {
+    for (const key of Reflect.ownKeys(props)) {
       if (typeof key !== "string") continue
-      const descriptor = Object.getOwnPropertyDescriptor(snapshot, key)
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
       if (!descriptor || !("value" in descriptor)) continue
       const value = descriptor.value
       const primitive = value === undefined || value === null || typeof value === "string" || typeof value === "boolean"
@@ -17,7 +16,11 @@ export function snapshotElementProps(type: unknown, props: Record<string, unknow
         || (key === "style" && typeof value === "object" && value !== null)
         || (key === "ref" && (typeof value === "object" || typeof value === "function"))
         || (/^on[A-Za-z]/.test(key) && typeof value === "function")
-      if (supported) Object.defineProperty(normalized, key, { ...descriptor, configurable: true })
+      if (!supported) continue
+      const normalizedValue = key === "style" && typeof value === "object" && value !== null
+        ? (snapshotRecord({ style: value }, true) as Record<string, unknown>).style
+        : value
+      Object.defineProperty(normalized, key, { ...descriptor, value: normalizedValue, configurable: true })
     }
     return Object.freeze(normalized)
   } catch {

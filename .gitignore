@@ -13,5 +13,10 @@ parity-react-dist/
 parity-vue-dist/
 parity-web-dist/
 showcase-dist/
+browser-benchmark-dist/
+symbol-animation-dist/
+.playwright-cli/
+output/
+*.cpuprofile
 local-packages/*.tgz
 local-packages/manifest.json
