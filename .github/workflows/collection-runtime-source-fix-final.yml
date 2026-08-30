@@ -8,8 +8,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: collection-runtime-source-fix-final
+  cancel-in-progress: false
+
 jobs:
   validate:
+    if: ${{ !contains(github.event.head_commit.message, '[skip source-fix]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -25,7 +30,7 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
 
-      - name: Restore generic collection reactivity without touching the direct executor
+      - name: Fix collection fast-path eligibility and generic fallback ownership
         shell: bash
         run: |
           set -euo pipefail
@@ -40,109 +45,62 @@ jobs:
               return source
             raise SystemExit(f'{label}: expected one match, found {count}')
 
-          views_path = Path('packages/core/src/views.ts')
-          views = views_path.read_text()
-          helper = '''function reactiveCollectionItem(
-            source: StateRef<readonly unknown[]> | undefined,
-            snapshotItem: unknown,
-            index: number,
-          ): unknown {
-            if (!source) return snapshotItem
-            try {
-              const current = source.value
-              if (arrayCheck(current) !== true) return snapshotItem
-              const descriptor = Object.getOwnPropertyDescriptor(current, String(index))
-              if (!descriptor || !("value" in descriptor) || !Object.is(descriptor.value, snapshotItem)) return snapshotItem
-              return current[index]
-            } catch {
-              return snapshotItem
-            }
-          }
+          path = Path('packages/web/src/dom.ts')
+          source = path.read_text()
 
-          '''
-          anchor = '''function requireCollectionItems(value: unknown): readonly unknown[] {
-            const snapshot = snapshotCollectionItems(value)
-            if (snapshot === undefined) throw new TypeError("ForEach items must be a data-only array")
-            return snapshot
-          }
-
-          '''
-          if helper not in views:
-            if anchor not in views:
-              raise SystemExit('missing requireCollectionItems anchor')
-            views = views.replace(anchor, anchor + helper, 1)
-          views = replace_once(
-            views,
-            '        appendKeyedCollectionChildren(children, content(item, index), entryKey)',
-            '        appendKeyedCollectionChildren(children, content(reactiveCollectionItem(stateSource, item, index), index), entryKey)',
-            'ForEach content callback',
-          )
-          views_path.write_text(views)
-
-          dom_path = Path('packages/web/src/dom.ts')
-          dom = dom_path.read_text()
-          dom = replace_once(
-            dom,
+          source = replace_once(
+            source,
             'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null): boolean {',
             'function directKeyedPatchPropsSafe(props: Record<string, unknown> | null, allowEvents = true): boolean {',
-            'directKeyedPatchPropsSafe signature',
+            'direct keyed prop predicate signature',
           )
-          lines = dom.splitlines()
-          marker = '// Event listener lifecycle is renderer state, not a data-only host prop.'
-          branch = 'if (/^on[A-Za-z]/.test(key)) return false'
-          if not any('if (!allowEvents) return false' in line for line in lines):
-            marker_index = next((i for i, line in enumerate(lines) if line.strip() == marker), None)
-            branch_index = next((i for i, line in enumerate(lines) if line.strip() == branch), None)
-            if marker_index is None or branch_index is None or branch_index < marker_index:
-              raise SystemExit('missing event prop safety branch')
-            indent = lines[branch_index][:-len(lines[branch_index].lstrip())]
-            lines[marker_index:branch_index + 1] = [
-              f'{indent}if (/^on[A-Za-z]/.test(key)) {{',
-              f'{indent}  if (!allowEvents) return false',
-              f'{indent}  if (value !== undefined && value !== null && typeof value !== "function") return false',
-              f'{indent}  continue',
-              f'{indent}}}',
-            ]
-          dom = '\n'.join(lines) + ('\n' if dom.endswith('\n') else '')
-          dom = replace_once(
-            dom,
+
+          old_event = '''      // Event listener lifecycle is renderer state, not a data-only host prop.
+                // Keep it on the generic graph path even when a manually supplied
+                // compiled plan happens to return a function.
+                if (/^on[A-Za-z]/.test(key)) return false
+          '''
+          new_event = '''      // Raw keyed-host patching owns listener lifecycle through patchDomProps.
+                // Compiler-owned collection executors stay data-only so a runtime plan
+                // that produces effects falls back to the generic renderer instead.
+                if (/^on[A-Za-z]/.test(key)) {
+                  if (!allowEvents) return false
+                  if (value !== undefined && value !== null && typeof value !== "function") return false
+                  continue
+                }
+          '''
+          source = replace_once(source, old_event, new_event, 'event prop safety branch')
+
+          source = replace_once(
+            source,
             '      || !directKeyedPatchPropsSafe(evaluated.props)) return undefined',
             '      || !directKeyedPatchPropsSafe(evaluated.props, false)) return undefined',
-            'compiled collection prop safety call',
+            'compiled collection prop predicate',
           )
-          dom_path.write_text(dom)
 
-          react_path = Path('tests/react-client.test.mjs')
-          react = react_path.read_text()
-          react = replace_once(
-            react,
-            "test('React collection fallback keeps source and row State dependencies below the parent View', async () => {",
-            "test('React collection fallback keeps row State dependencies below the parent while preserving generic source invalidation', async () => {",
-            'React fallback test name',
-          )
-          react = replace_once(
-            react,
-            "    await act(async () => { items.value.push({ id: 'b' }) })\n    assert.equal(parentRuns, 1)\n    assert.equal(rowRuns, 4)",
-            "    await act(async () => { items.value.push({ id: 'b' }) })\n    assert.equal(parentRuns, 2)\n    assert.equal(rowRuns, 4)",
-            'React generic source invalidation expectation',
-          )
-          react_path.write_text(react)
+          old_subscription = '''  registerDomCollection(runtime, instance)
+            subscribeDomCollection(instance, context, runtime)
+          }
 
-          vue_path = Path('tests/vue-live.test.mjs')
-          vue = vue_path.read_text()
-          vue = replace_once(
-            vue,
-            'test("Vue collection fallback keeps source and row State dependencies below the parent View", async () => {',
-            'test("Vue collection fallback keeps row State dependencies below the parent while preserving generic source invalidation", async () => {',
-            'Vue fallback test name',
-          )
-          vue = replace_once(
-            vue,
-            '    items.value.push({ id: "b" })\n    await nextTick()\n    assert.equal(parentRuns, 1)\n    assert.equal(rowRuns, 4)',
-            '    items.value.push({ id: "b" })\n    await nextTick()\n    assert.equal(parentRuns, 2)\n    assert.equal(rowRuns, 4)',
-            'Vue generic source invalidation expectation',
-          )
-          vue_path.write_text(vue)
+          function collectionMutationEffects(
+          '''
+          new_subscription = '''  registerDomCollection(runtime, instance)
+            const source = node.source as StateRef<unknown>
+            // Generic fallback must invalidate the owning View, not run the direct
+            // collection patcher with an empty row index. Keeping this ownership in
+            // the DOM renderer also avoids leaking the source dependency into React
+            // and Vue collection boundaries.
+            instance.unsubscribe = subscribeState(source, (transaction, batch) => {
+              if (runtime.collections.get(instance.key) !== instance) return
+              runtime.invalidateBoundary?.(instance.ownerKey, transaction, batch.mutations)
+            })
+          }
+
+          function collectionMutationEffects(
+          '''
+          source = replace_once(source, old_subscription, new_subscription, 'generic collection subscription')
+
+          path.write_text(source)
           PY
           git diff --check
 
@@ -188,9 +146,7 @@ jobs:
           git worktree remove --force /tmp/vune-checkpoint
           trap - EXIT
           node benchmarks/collection-runtime.mjs > /tmp/vune-validation/optimized.json
-          echo 'Checkpoint benchmark:'
           cat /tmp/vune-validation/checkpoint.json
-          echo 'Optimized benchmark:'
           cat /tmp/vune-validation/optimized.json
 
       - uses: actions/upload-artifact@v4
@@ -200,11 +156,11 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-      - name: Rebase over diagnostic-only commits and commit the validated product tree
+      - name: Commit validated product tree and remove diagnostics
         shell: bash
         run: |
           set -euo pipefail
-          git diff -- packages/core/src/views.ts packages/web/src/dom.ts tests/react-client.test.mjs tests/vue-live.test.mjs > /tmp/collection-source-fix.patch
+          git diff -- packages/web/src/dom.ts > /tmp/collection-source-fix.patch
           git reset --hard HEAD
           git clean -fd
           git fetch origin codex/collection-runtime-finalize-20260830
@@ -222,18 +178,19 @@ jobs:
           while IFS= read -r -d '' path; do
             git rm -f --ignore-unmatch -- "$path"
           done < <(find .github/workflows -mindepth 1 -maxdepth 1 -name 'collection-*' -print0)
-          if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-)'; then
+          git rm -f --ignore-unmatch .github/workflows/runtime-regression-fix.yml
+          if git ls-files '.github/**' | grep -E '(^\.github/collection-|^\.github/workflows/collection-|^\.github/workflows/runtime-regression-fix\.yml$)'; then
             echo 'Temporary collection diagnostics remain after cleanup.' >&2
             exit 1
           fi
           checkpoint=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/checkpoint.json','utf8'))))")
           optimized=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync('/tmp/vune-validation/optimized.json','utf8'))))")
-          git add packages/core/src/views.ts packages/web/src/dom.ts tests/react-client.test.mjs tests/vue-live.test.mjs
+          git add packages/web/src/dom.ts
           git diff --cached --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit \
-            -m 'perf: finalize collection runtime hot paths' \
+            -m 'perf: finalize collection runtime hot paths [skip source-fix]' \
             -m "checkpoint-benchmark=$checkpoint" \
             -m "optimized-benchmark=$optimized" \
             -m 'validation=build,state-core,collection-web,compiler,react-vue,full-web,pnpm-test'
