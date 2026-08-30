@@ -5,7 +5,7 @@ import {
   markVuneClosure,
   type VuneClosureKind,
 } from "../closures.js"
-import { isBinding, isStateRef, type StateRef } from "../state.js"
+import { collectStateReads, isBinding, isStateRef, type StateRef } from "../state.js"
 import {
   resolveSemanticInitializer,
   type SemanticArgument,
@@ -62,8 +62,8 @@ function specializationShape(value: unknown, depth = 0): string | undefined {
   if (depth > 3) return undefined
   if (value === undefined) return "undefined"
   if (value === null) return "null"
-  if (isBinding(value)) return `binding:${specializationShape((value as { value: unknown }).value, depth + 1) ?? "unknown"}`
-  if (isStateRef(value)) return `state:${specializationShape((value as { value: unknown }).value, depth + 1) ?? "unknown"}`
+  if (isBinding(value)) return `binding:${specializationShape(referenceValue(value), depth + 1) ?? "unknown"}`
+  if (isStateRef(value)) return `state:${specializationShape(referenceValue(value), depth + 1) ?? "unknown"}`
   if (typeof value === "function") {
     const variants = closureVariantsOf(value)
     const variantNames = variants ? Object.keys(variants).sort().join(",") : ""
@@ -257,8 +257,14 @@ function semanticInitializerSymbol(initializer: InitializerMatch, index: number)
 }
 
 function semanticRuntimeArgument(value: unknown): SemanticArgument {
-  if (isBinding(value)) return { value, kind: "binding", type: "binding", underlyingType: typeof value.value }
-  if (isStateRef(value)) return { value, kind: "value", type: "state", underlyingType: arrayCheck(value.value) === true ? "array" : typeof value.value }
+  if (isBinding(value)) {
+    const reference = referenceValue(value)
+    return { value, kind: "binding", type: "binding", underlyingType: typeof reference }
+  }
+  if (isStateRef(value)) {
+    const reference = referenceValue(value)
+    return { value, kind: "value", type: "state", underlyingType: arrayCheck(reference) === true ? "array" : typeof reference }
+  }
   const closureKind = closureKindOf(value)
   if (closureKind === "action" || closureKind === "viewBuilder") {
     return { value, kind: closureKind, closureRole: closureKind, type: "function" }
@@ -437,7 +443,9 @@ function splitTypeAlternatives(type: string): string[] {
 }
 
 function referenceValue(value: unknown): unknown {
-  if (isStateRef(value) || isBinding(value)) return (value as { value: unknown }).value
+  if (isStateRef(value) || isBinding(value)) {
+    return collectStateReads(() => (value as { value: unknown }).value, () => undefined)
+  }
   return value
 }
 
