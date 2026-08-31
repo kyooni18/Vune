@@ -4,10 +4,11 @@ import { JSDOM } from "jsdom"
 import { renderToStaticMarkup } from "react-dom/server"
 import { createSSRApp } from "vue"
 import { renderToString } from "@vue/server-renderer"
-import { Divider, Element, Grid, Group, HStack, LazyGrid, LazyVStack, RoundedRectangle, SafeArea, ScrollView, Spacer, Text, VStack, ZStack, defineView, initializer } from "../packages/core/dist/index.js"
+import { Capsule, Divider, Element, Grid, Group, HStack, LazyGrid, LazyVStack, RoundedRectangle, SafeArea, ScrollView, Spacer, Text, VStack, ZStack, defineView, initializer } from "../packages/core/dist/index.js"
+import { continuousCornerPath } from "../packages/core/dist/corners.js"
 import { render as renderReact } from "../packages/react/dist/index.js"
 import { render as renderVue } from "../packages/vue/dist/index.js"
-import { renderToHTML } from "../packages/web/dist/index.js"
+import { mount as mountWeb, renderToHTML } from "../packages/web/dist/index.js"
 
 test("migrated layout primitives keep the graph-first contract", () => {
   const value = HStack(Text("Left"), Spacer(24), Text("Right")).padding(8)
@@ -17,6 +18,66 @@ test("migrated layout primitives keep the graph-first contract", () => {
   assert.match(html, /justify-content:center/)
   assert.match(html, /flex-grow:1/)
   assert.match(html, /padding:8px/)
+})
+
+test("Capsule and RoundedRectangle opt into measured continuous corners in every renderer", async () => {
+  const values = [
+    Capsule().frame({ width: 180, height: 64 }),
+    RoundedRectangle(24).frame({ width: 120, height: 80 }),
+  ]
+  for (const value of values) {
+    const outputs = [
+      renderToStaticMarkup(renderReact(value)),
+      await renderToString(createSSRApp({ render: () => renderVue(value) })),
+      renderToHTML(value),
+    ]
+    for (const html of outputs) {
+      assert.match(html, /--vune-corner-style:\s*continuous/)
+      assert.match(html, /--vune-corner-smoothing:\s*0\.65/)
+      assert.match(html, /corner-shape:\s*squircle/)
+    }
+  }
+})
+
+test("continuous corner paths match the Lisse capsule control geometry", () => {
+  const radii = { topLeft: 50, topRight: 50, bottomRight: 50, bottomLeft: 50 }
+  const path = continuousCornerPath(300, 100, radii, 0.5, true)
+  assert.match(path, /^M 75 0 L 225 0/)
+  assert.match(path, /c 23\.2971 0 34\.9456 0 44\.1342 3\.806/)
+  assert.match(path, /a 50 50 0 0 1 30\.8658 46\.194/)
+  assert.match(path, /a 50 50 0 0 1 -30\.8658 46\.194/)
+  assert.doesNotMatch(path, /NaN|Infinity/)
+})
+
+test("continuous corner paths blend smoothly before the capsule regime", () => {
+  const radii = { topLeft: 50, topRight: 50, bottomRight: 50, bottomLeft: 50 }
+  const path = continuousCornerPath(300, 130, radii, 0.6, true)
+  assert.match(path, /^M 80 0/)
+  assert.match(path, /L 300 65/)
+  assert.match(path, /L 0 65/)
+  assert.doesNotMatch(path, /NaN|Infinity/)
+})
+
+test("the Web renderer materializes a measured continuous clip path for Capsule", () => {
+  const dom = new JSDOM("<div id=app></div>", { pretendToBeVisual: true })
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get() { return this.getAttribute("data-vune") === "Capsule" ? 180 : 0 },
+  })
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() { return this.getAttribute("data-vune") === "Capsule" ? 64 : 0 },
+  })
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mountWeb(Capsule(), container)
+  const capsule = container.firstElementChild
+  assert.ok(capsule)
+  assert.match(capsule.style.clipPath, /^path\("M /)
+  assert.match(capsule.style.clipPath, /a 32 32/)
+  assert.doesNotMatch(capsule.style.clipPath, /NaN|Infinity/)
+  unmount()
+  dom.window.close()
 })
 
 test("Group, ZStack, Element, and Divider compose without React elements in core", () => {

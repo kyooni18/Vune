@@ -108,10 +108,58 @@ React, Vue, or DOM APIs. Each renderer owns the final native materialization of
 that IR. This is deliberately preferable to three compiler backends that could
 quietly redefine Vune semantics.
 
-The next frontier is richer slot kinds (dynamic host props/styles, event/action
-slots, keyed collection templates, and eventually direct Web patch locations).
-Those extensions must preserve the same rule: code the compiler cannot prove
-remains a normal Vune graph and is handled by the existing traversal.
+The template path now also carries dependency-to-patch metadata for exhaustive
+State-backed text slots. Direct Web resolves those compiler prop names to the
+mounted State identities once and reuses a packed dirty mask, so changing one
+independent State can evaluate only the slots that depend on it. The full slot
+evaluator remains the exact fallback when dependency ownership cannot be proven.
+
+The next frontier is the same mechanism for dynamic host props/styles,
+event/action slots, and keyed collection templates. Those extensions must
+preserve the same rule: code the compiler cannot prove remains a normal Vune
+graph and is handled by the existing traversal.
+
+## Compute planning and Kernel IR
+
+The compiler now has one shared syntax-level effect analysis for data-oriented
+specializations. Collection rows and immutable State array maps no longer keep
+separate definitions of scalar purity. The common proof records row/index
+dependencies, ambient scalar captures, access depth, dynamic element access,
+and intrinsic blockers such as calls, assignments, ambient member reads, and
+unsupported expressions. Each consumer still applies its own stricter policy.
+
+Proven scalar/map expressions can additionally lower into a small
+backend-neutral Kernel IR. The initial instruction set covers constants, row
+loads, index and captured scalar inputs, unary/binary operations, conditional
+select, and map field outputs. Kernel coverage alone does not establish a
+Resident Compute region: object-backed State maps and DOM collection rows keep
+their ordinary JavaScript execution and report packed/native backends blocked.
+
+The Vite compiler can expose a post-specialization execution plan through the
+opt-in `onExecutionPlan` hook. Planning is skipped entirely when the hook is not
+configured. Each region records its effect facts, Kernel IR coverage, output
+sink, explicit input/output residency, and hypothetical backend suitability.
+Those backend entries are diagnostic planning hints only and do not activate a
+native runtime path. A separate packed-to-packed `ResidentRegionIR` can be
+lowered into a fused TypedArray loop with `emitResidentRegionJS`. This is the
+mandatory baseline for future native promotion; see
+[RESIDENT_COMPUTE.md](RESIDENT_COMPUTE.md).
+
+Resident fusion now optimizes that shared IR before backend lowering. A backward
+field-liveness pass removes writes that are overwritten before the sink, safe
+constant/algebraic folding reduces arithmetic, and captures are narrowed to the
+retained expressions. The same optimized region can feed packed JS, direct
+scalar/SIMD WASM, or the experimental SoA Kernel IR to WGSL emitter. WGSL
+lowering remains compute-only until the compiler can prove a GPU-resident render
+consumer; a DOM consumer still blocks WebGPU promotion.
+
+Eligible dense-`f32` resident regions additionally carry an experimental
+region-specific WebAssembly module generated directly from Kernel IR. Its row
+loop hoists column bases and executes the fused arithmetic without bytecode
+dispatch. The bytecode form remains as the generic compatibility and shared
+Worker representation. Native selection remains measurement-driven because a
+specialized scalar WASM loop can still lose to a JIT-optimized packed-JS loop
+on a particular engine or workload.
 
 ## Performance measurement
 

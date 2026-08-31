@@ -97,6 +97,9 @@
     "bench:scroll": "node bench/scroll.mjs",
     "bench:renderers": "node bench/renderers.mjs"
   },
+  "dependencies": {
+    "@vune-ui/execution": "workspace:*"
+  },
   "engines": {
     "node": ">=20.19.0"
   },

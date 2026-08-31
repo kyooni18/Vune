@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tsc = resolve(root, 'node_modules/typescript/bin/tsc')
 const targets = [
+  ['execution', 'packages/execution/tsconfig.json'],
   ['core', 'packages/core/tsconfig.json'],
   ['compiler', 'packages/compiler/tsconfig.json'],
   ['legacy-react', 'packages/legacy-react/tsconfig.json'],

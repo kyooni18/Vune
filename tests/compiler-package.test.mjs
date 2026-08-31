@@ -404,6 +404,66 @@ test("the Vite adapter compiles native .vune modules and resolves their extensio
   assert.deepEqual(plugin.config?.().resolve.extensions.slice(0, 3), [".vune", ".vune.ts", ".vune.tsx"])
 })
 
+test("the Vite adapter exposes opt-in execution plans for compiler-owned compute regions", () => {
+  const plans = []
+  const plugin = createVuneVitePlugin({
+    sourceMap: false,
+    onExecutionPlan: (plan, id) => plans.push({ plan, id }),
+  })
+  const source = `import { State, Element, ForEach, defineView, initializer } from "@vune-ui/core"
+const scale = 2
+const items = State([{ id: 1, value: 2 }])
+items.value = items.value.map(item => ({ ...item, value: item.value * scale }))
+export const App = defineView("App", { initializers: [initializer("App()", args => args.length === 0)], body: () => ForEach(items.value, item => item.id, item => Element("span", { title: item.value }, item.value)) })`
+  const transformed = plugin.transform(source, "/src/ExecutionPlan.vune.ts")
+  assert.ok(transformed)
+  assert.equal(plans.length, 1)
+  assert.equal(plans[0].id, "/src/ExecutionPlan.vune.ts")
+  assert.deepEqual(plans[0].plan.regions.map(region => region.kind).sort(), ["collection-row", "state-array-map"])
+  assert.equal(plans[0].plan.summary.residentRegions, 0)
+  assert.equal(plans[0].plan.summary.packedJsCandidates, 0)
+  assert.equal(plans[0].plan.summary.wasmCandidates, 0)
+  assert.equal(plans[0].plan.summary.workerCandidates, 0)
+  assert.equal(plans[0].plan.summary.webgpuCandidates, 0)
+  assert.equal(plans[0].plan.summary.gpuBlockedByCpuSink, 2)
+  assert.deepEqual(plans[0].plan.residentRegions, [])
+  const stateRegion = plans[0].plan.regions.find(region => region.kind === "state-array-map")
+  assert.deepEqual(stateRegion.effects.captures, ["scale"])
+  assert.deepEqual(stateRegion.residency, { input: "js-object", output: "cpu-state", gpuResident: false, webgpuReadbackRequired: true })
+  assert.equal(stateRegion.kernels.length, 1)
+  assert.equal(stateRegion.kernels[0].kind, "map")
+  assert.deepEqual(stateRegion.kernels[0].captures, ["scale"])
+  assert.equal(stateRegion.kernels[0].outputs[0].value.op, "binary")
+  assert.equal(stateRegion.resident, null)
+  assert.equal(stateRegion.backends.find(backend => backend.backend === "packed-js")?.status, "blocked")
+  assert.match(stateRegion.backends.find(backend => backend.backend === "packed-js")?.reason ?? "", /object-backed State/)
+  assert.equal(stateRegion.backends.find(backend => backend.backend === "wasm")?.status, "blocked")
+  assert.equal(stateRegion.backends.find(backend => backend.backend === "webgpu")?.status, "blocked")
+  const collectionRegion = plans[0].plan.regions.find(region => region.kind === "collection-row")
+  assert.equal(collectionRegion.sink, "dom")
+  assert.equal(collectionRegion.residency.output, "dom-patch")
+  assert.equal(collectionRegion.kernels.length, 3)
+  assert.equal(collectionRegion.resident, null)
+  assert.equal(collectionRegion.backends.find(backend => backend.backend === "wasm")?.status, "blocked")
+  assert.match(collectionRegion.backends.find(backend => backend.backend === "wasm")?.reason ?? "", /DOM sink/)
+})
+
+test("execution planning does not claim WASM portability without complete Kernel IR", () => {
+  const plans = []
+  const plugin = createVuneVitePlugin({ sourceMap: false, onExecutionPlan: plan => plans.push(plan) })
+  const source = `import { State } from "@vune-ui/core"
+const items = State([{ id: 1, value: "A" }])
+items.value = items.value.map((item, index) => ({ ...item, value: \`next-\${index}\` }))`
+  const transformed = plugin.transform(source, "/src/StringExecutionPlan.vune.ts")
+  assert.ok(transformed)
+  const region = plans[0].regions.find(candidate => candidate.kind === "state-array-map")
+  assert.ok(region)
+  assert.equal(region.effects.pure, true)
+  assert.equal(region.kernels.length, 0)
+  assert.equal(region.backends.find(backend => backend.backend === "wasm")?.status, "blocked")
+  assert.match(region.backends.find(backend => backend.backend === "wasm")?.reason ?? "", /Kernel IR/)
+})
+
 test("compiler source maps keep real tokens anchored after synthesized imports", () => {
   const result = compileVuneFile('VStack() {\n  Text("Hi")\n}', "Counter.vune.ts")
   const generatedLine = result.code.split("\n").findIndex(line => line.includes("Text")) + 1
@@ -662,8 +722,10 @@ struct Counter: View {
   const output = transformVuneSource(source, "StaticDependencies.vune.ts")
   assert.match(output, /dependencies: \(props: any\) => \[props\.count\], dependenciesComplete: true/)
   assert.match(output, /const __vuneTemplate0 = defineCompiledTemplate\(/)
-  assert.match(output, /defineCompiledTemplate\([^\n]+, 1, \["text"\]\)/)
-  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, evaluate: \(props: any\) => \{ const \{ count \} = props; return \(\{ slots: \[String\(count\.value\)\] \}\) \} \}/)
+  assert.match(output, /defineCompiledTemplate\([^\n]+, 1, \["text"\], \[\{ node: 1, kind: "text" \}\]\)/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, .*evaluate:/)
+  assert.match(output, /slots: \[String\(count\.value\)\]/)
+  assert.doesNotMatch(output, /new Uint32Array/)
   assert.match(output, /compiledTemplate\(__vuneTemplate0, \[String\(count\.value\)\]\)/)
   assert.equal(ts.createSourceFile("StaticDependencies.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
@@ -738,9 +800,26 @@ const count = State(0)
 export const App = view(() => Text(String(count.value)))`
   const output = transformVuneSource(source, "CompiledBodyPlan.vune.ts")
   assert.match(output, /dependenciesComplete: true/)
-  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, evaluate: \(\{ count \}\) => \(\(\(\) => \(\{ slots: \[String\(count\.value\)\] \}\)\)\(\)\) \}/)
+  assert.match(output, /compiledBody: \{ template: __vuneTemplate0, evaluate: \(\{ count \}\) =>/)
+  assert.match(output, /slots: \[String\(count\.value\)\]/)
+  assert.doesNotMatch(output, /new Uint32Array/)
   assert.match(output, /body: \(\{ count \}\) => \(\(\(\) => compiledTemplate\(__vuneTemplate0, \[String\(count\.value\)\]\)\)\(\)\)/)
   assert.equal(ts.createSourceFile("CompiledBodyPlan.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
+test("compiler maps independent State dependencies to sparse compiled text patches", () => {
+  const source = `import { Text, VStack, State } from "@vune-ui/core"
+struct Pair: View {
+  @State var left: number = 0
+  @State var right: number = 0
+  var body: some View { VStack() { Text(String(left.value)); Text(String(right.value)) } }
+}`
+  const output = transformVuneSource(source, "SparseCompiledPatch.vune.ts")
+  assert.match(output, /patchDependencyIndices: \{ "left": \[0\], "right": \[1\] \}/)
+  assert.match(output, /evaluatePatch:/)
+  assert.match(output, /& 1\) !== 0[^;]+String\(left\.value\)/)
+  assert.match(output, /& 2\) !== 0[^;]+String\(right\.value\)/)
+  assert.equal(ts.createSourceFile("SparseCompiledPatch.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })
 
 test("compiler keeps struct dependency discovery dynamic when body reads external State", () => {
@@ -954,6 +1033,17 @@ test("struct AST keeps stored fields declared after an initializer and ignores i
   assert.doesNotMatch(output, /name: "local"/)
 })
 
+test("struct fields may safely be named props", () => {
+  const source = `struct LegacyHost: View {
+  let props: { title: string }
+  init(_ props: { title: string }) { self.props = props }
+  var body: some View { Text(props.title) }
+}`
+  const output = transformVuneSource(source, "LegacyHost.vune.ts")
+  assert.match(output, /body: \(__vuneProps: any\) => \{ const \{ props \} = __vuneProps;/)
+  assert.equal(ts.createSourceFile("LegacyHost.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
+})
+
 test("nested View structs keep the outer body and local View scope", () => {
   const source = `struct Parent: View {
   struct Header: View {
@@ -1062,7 +1152,7 @@ test("AST-backed struct lowering preserves export boundaries and ignores initial
 }`
   const output = transformVuneSource(source, "Card.vune.ts")
   assert.match(output, /export const Card = defineView\("Card"/)
-  assert.match(output, /const \{ title \} = props/)
+  assert.match(output, /const \{ title \} = __vuneProps/)
   assert.doesNotMatch(output, /const \{[^}]*local/)
   assert.equal(ts.createSourceFile("Card.ts", output, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS).parseDiagnostics.length, 0)
 })

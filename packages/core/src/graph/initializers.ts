@@ -301,7 +301,24 @@ function sharedRuntimeResolution(target: unknown, candidates: readonly Initializ
   const genericParameters = genericParametersOf(target)
   const supplied = suppliedInitializerArguments(args)
   const runtimeArguments = semanticRuntimeArguments(candidates[0], supplied)
-  const result = resolveSemanticInitializer(symbols, runtimeArguments, genericParameters)
+  let result = resolveSemanticInitializer(symbols, runtimeArguments, genericParameters)
+  // The source compiler lowers SwiftUI-style trailing closures to the final
+  // JavaScript function argument. Imported/custom View metadata is not always
+  // available during that first syntax pass, so the runtime can receive the
+  // same `(value, closure)` shape as an ordinary positional call. Preserve the
+  // existing positional interpretation first; only if it fails, retry with
+  // the final function marked as the source-level trailing closure. This lets
+  // declarations with omitted optional middle parameters (for example MkA)
+  // route the closure to their final @ViewBuilder/@Action parameter without
+  // changing any call that already resolves positionally.
+  const lastRuntimeArgument = runtimeArguments.at(-1)
+  if (!result.ok && lastRuntimeArgument && typeof lastRuntimeArgument.value === "function" && !lastRuntimeArgument.trailing) {
+    const trailingArguments = runtimeArguments.map((argument, index) => index === runtimeArguments.length - 1
+      ? { ...argument, trailing: true }
+      : argument)
+    const trailingResult = resolveSemanticInitializer(symbols, trailingArguments, genericParameters)
+    if (trailingResult.ok) result = trailingResult
+  }
   if (!result.ok) {
     const signatures = result.failure.candidates.map(candidate => candidate.signature)
     if (result.failure.kind === "ambiguous") throw new VuneInitializerAmbiguityError(displayNameOf(target), supplied, signatures)

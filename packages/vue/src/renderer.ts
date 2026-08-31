@@ -53,6 +53,7 @@ import {
   type ViewValue,
   viewElement,
 } from "@vune-ui/core"
+import { APPLE_CONTINUOUS_CORNER_SMOOTHING } from "@vune-ui/core/corners"
 import { ignoresSafeAreaStyle, paddingStyle, safeAreaPaddingStyle } from "@vune-ui/core/internal/runtime"
 import {
   keyedCollectionEntryKey,
@@ -62,8 +63,69 @@ import {
   type KeyedCollectionViewNode,
   type StateMutationBatch,
 } from "@vune-ui/core/internal/runtime"
+import type { GPUIslandViewNode } from "@vune-ui/core/internal/runtime"
 
 import { geometryFromElement, sameGeometry } from "./geometry.js"
+
+function runVueParticleFallback(canvas: HTMLCanvasElement, node: GPUIslandViewNode): () => void {
+  const context = canvas.getContext("2d")
+  if (!context) return () => undefined
+  const count = node.ir.render.vertexCount
+  const data = node.options.initialData ? new Float32Array(node.options.initialData) : new Float32Array(count * 8)
+  if (!node.options.initialData) for (let index = 0; index < count; index += 1) {
+    const offset = index * 8
+    data[offset] = ((index * 37) % Math.max(1, count)) / Math.max(1, count - 1) * 2 - 1
+    data[offset + 1] = ((index * 53) % Math.max(1, count)) / Math.max(1, count - 1) * 2 - 1
+    data[offset + 2] = (((index * 17) % 31) - 15) / 150
+    data[offset + 3] = (((index * 23) % 29) - 14) / 150
+    data[offset + 4] = 0.7; data[offset + 5] = 0.8; data[offset + 6] = 1; data[offset + 7] = 1
+  }
+  let request = 0
+  let stopped = false
+  const draw = () => {
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 8
+      context.fillStyle = `rgba(${data[offset + 4]! * 255},${data[offset + 5]! * 255},${data[offset + 6]! * 255},${data[offset + 7]!})`
+      context.fillRect((data[offset]! + 1) * canvas.width / 2, (1 - data[offset + 1]!) * canvas.height / 2, 2, 2)
+      if (node.ir.fallback === "canvas") {
+        data[offset] = Math.max(-1, Math.min(1, data[offset]! + data[offset + 2]!))
+        data[offset + 1] = Math.max(-1, Math.min(1, data[offset + 1]! + data[offset + 3]!))
+      }
+    }
+    if (!stopped && node.ir.fallback === "canvas") request = requestAnimationFrame(draw)
+  }
+  draw()
+  return () => { stopped = true; if (request) cancelAnimationFrame(request) }
+}
+
+const VueGPUIslandCanvas = defineComponent({
+  name: "VuneGPUIslandCanvas",
+  props: { node: { type: Object as PropType<GPUIslandViewNode>, required: true } },
+  setup(props) {
+    const canvas = shallowRef<HTMLCanvasElement | null>(null)
+    let cleanup: (() => void) | undefined
+    onMounted(() => {
+      if (!canvas.value) return
+      canvas.value.dataset.vuneGpuBackend = props.node.ir.fallback === "canvas" ? "cpu-canvas" : "static"
+      cleanup = runVueParticleFallback(canvas.value, props.node)
+    })
+    onBeforeUnmount(() => cleanup?.())
+    return () => h("canvas", {
+      ref: canvas,
+      width: props.node.options.width,
+      height: props.node.options.height,
+      class: props.node.options.class,
+      style: props.node.options.style,
+      "aria-label": props.node.options.ariaLabel,
+      "data-vune-gpu-island": props.node.ir.id,
+      "data-vune-gpu-kind": props.node.ir.kind,
+      "data-vune-gpu-owner": "vue",
+      "data-vune-gpu-readback": "forbidden",
+      "data-vune-gpu-fallback": props.node.ir.fallback,
+    })
+  },
+})
 
 function alignmentCSSPosition(value: unknown, fallback = "center"): string {
   switch (value) {
@@ -357,8 +419,8 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "accessibilityElement": result = { role: value === "contain" ? "group" : undefined, "data-accessibility-children": String(value ?? "ignore") }; break
     case "accessibilityAction": result = typeof modifier.arguments[1] === "function" ? { "data-accessibility-action": String(value), onClick: modifier.arguments[1] } : {}; break
     case "continuousCorners": {
-      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
-      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing } }
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : APPLE_CONTINUOUS_CORNER_SMOOTHING
+      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing, "--vune-corner-preserve-smoothing": 1 } }
       break
     }
     case "style": result = value && typeof value === "object" ? { style: value } : {}; break
@@ -1016,6 +1078,9 @@ const renderer: VuneRenderer<VNodeChild> = {
   },
   value(value) {
     return value === null || value === undefined || value === false ? null : value as VNodeChild
+  },
+  gpuIsland(node, identity) {
+    return h(VueGPUIslandCanvas, { key: viewIdentityKey(identity), node })
   },
   template(node, renderSlot) {
     let factory = vueTemplateFactories.get(node.template)

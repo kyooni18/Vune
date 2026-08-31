@@ -17,6 +17,7 @@ import { layoutLength } from "./layout.js"
 import { requireOptionRecord, snapshotOptionRecord } from "./options.js"
 import { HStack, ScrollView, Text } from "./views.js"
 import { arrayCheck } from "./graph/arrays.js"
+import { APPLE_CONTINUOUS_CORNER_SMOOTHING } from "./corners.js"
 
 function flattenChildren(values: readonly ViewBuilderContent[]): ViewValue[] {
   return ViewBuilder.buildArray(values)
@@ -46,16 +47,27 @@ const emptyView = (name: string, style?: Record<string, unknown>) => defineBuilt
   () => viewElement("div", { "data-vune": name, style }),
 )
 
+const continuousCornerStyle = (borderRadius: string): Record<string, unknown> => ({
+  borderRadius,
+  cornerShape: "squircle",
+  "--vune-corner-style": "continuous",
+  "--vune-corner-smoothing": String(APPLE_CONTINUOUS_CORNER_SMOOTHING),
+  "--vune-corner-preserve-smoothing": "1",
+})
+
 export const Rectangle = emptyView("Rectangle") as TypedViewConstructor<Record<string, never>, { (): ModifiableViewNode }>
 export const Circle = emptyView("Circle", { borderRadius: "50%" }) as TypedViewConstructor<Record<string, never>, { (): ModifiableViewNode }>
-export const Capsule = emptyView("Capsule", { borderRadius: "9999px" }) as TypedViewConstructor<Record<string, never>, { (): ModifiableViewNode }>
+export const Capsule = emptyView("Capsule", continuousCornerStyle("9999px")) as TypedViewConstructor<Record<string, never>, { (): ModifiableViewNode }>
 
 export interface RoundedRectangleProps { readonly radius?: number | string }
 interface RoundedRectangleCall { (radius?: number | string): ModifiableViewNode }
 export const RoundedRectangle = defineBuiltinView<RoundedRectangleProps>(
   "RoundedRectangle",
   [initializer("RoundedRectangle(radius?)", args => args.length <= 1 && (args[0] === undefined || typeof args[0] === "number" || typeof args[0] === "string"), args => ({ radius: args[0] as number | string | undefined }), [initializerKinds.value(false, "radius", undefined, "number | string")])],
-  ({ radius = 8 }) => viewElement("div", { "data-vune": "RoundedRectangle", style: { borderRadius: layoutLength(radius) } }),
+  ({ radius = 8 }) => viewElement("div", {
+    "data-vune": "RoundedRectangle",
+    style: continuousCornerStyle(layoutLength(radius) ?? "8px"),
+  }),
 ) as TypedViewConstructor<RoundedRectangleProps, RoundedRectangleCall>
 
 export interface GridOptions { readonly columns?: number | string; readonly rows?: number | string; readonly autoFlow?: string }

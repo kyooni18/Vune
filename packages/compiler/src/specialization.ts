@@ -1361,6 +1361,38 @@ function compilerTemplateSource(value: CompilerTemplateIR): string | undefined {
   return staticTemplateDataSource(value)
 }
 
+/**
+ * Assign compiler text slots to the renderer's stable pre-order host-node
+ * table. A generic View slot may expand to an arbitrary node range, so no
+ * positional Patch IR is emitted when one is present.
+ */
+function compilerTemplateTextPatchLocations(plan: CompilerTemplatePlan): readonly { readonly node: number; readonly kind: "text" }[] {
+  if (plan.slots.length === 0 || plan.slots.some(slot => slot.kind !== "text")) return []
+  const locations: Array<{ readonly node: number; readonly kind: "text" } | undefined> = Array(plan.slots.length)
+  let nodeIndex = 0
+  const visit = (value: CompilerTemplateIR): void => {
+    if (value !== null && typeof value === "object") {
+      if (value.kind === "fragment") {
+        for (const child of value.children) visit(child)
+        return
+      }
+      if (value.kind === "slot") {
+        locations[value.index] = { node: nodeIndex, kind: "text" }
+        nodeIndex += 1
+        return
+      }
+      nodeIndex += 1
+      for (const child of value.children) visit(child)
+      return
+    }
+    nodeIndex += 1
+  }
+  visit(plan.root)
+  return locations.every(location => location !== undefined)
+    ? locations as readonly { readonly node: number; readonly kind: "text" }[]
+    : []
+}
+
 
 interface CompilerTemplateCost {
   readonly staticNodes: number
@@ -1496,6 +1528,51 @@ function compilerGeneratedViewDefinition(node: ts.ObjectLiteralExpression): bool
   if (call.expression.text === "view") return call.arguments[0] === node
   if (call.expression.text === "defineView" || call.expression.text === "structView") return call.arguments[1] === node
   return false
+}
+
+function compilerDependencyNames(property: ts.ObjectLiteralElementLike | undefined): readonly string[] | undefined {
+  if (!property || !ts.isPropertyAssignment(property)) return undefined
+  const initializer = exactReturnedExpression(property.initializer)
+  if (!initializer || !ts.isArrowFunction(initializer) || initializer.parameters.length !== 1) return undefined
+  const parameter = initializer.parameters[0]
+  if (!ts.isIdentifier(parameter.name)) return undefined
+  const returned = exactFunctionReturn(initializer)
+  if (!returned || !ts.isArrayLiteralExpression(returned)) return undefined
+  const names: string[] = []
+  for (const element of returned.elements) {
+    if (!ts.isPropertyAccessExpression(element)
+      || !ts.isIdentifier(element.expression)
+      || element.expression.text !== parameter.name.text) return undefined
+    names.push(element.name.text)
+  }
+  return names.length > 0 ? Object.freeze(names) : undefined
+}
+
+function compilerBodyHasOnlyPropsPrelude(fn: ts.ArrowFunction): boolean {
+  if (!ts.isBlock(fn.body)) return true
+  if (fn.parameters.length !== 1 || !ts.isIdentifier(fn.parameters[0].name)) return false
+  const parameter = fn.parameters[0].name.text
+  const statements = fn.body.statements.slice(0, -1)
+  return statements.every(statement => {
+    if (!ts.isVariableStatement(statement) || statement.declarationList.declarations.length !== 1) return false
+    const declaration = statement.declarationList.declarations[0]!
+    return ts.isObjectBindingPattern(declaration.name)
+      && declaration.initializer !== undefined
+      && ts.isIdentifier(declaration.initializer)
+      && declaration.initializer.text === parameter
+  })
+}
+
+function directSlotDependencyNames(source: string, dependencyNames: readonly string[]): readonly string[] {
+  const sourceFile = staticSyntaxSourceFile(source)
+  const available = new Set(dependencyNames)
+  const found = new Set<string>()
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && available.has(node.text)) found.add(node.text)
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return Object.freeze([...found])
 }
 
 /**
@@ -1674,8 +1751,13 @@ export function lowerCompiledViewTemplates(source: string): string {
   } => value !== undefined)
   if (compiledRoots.length === 0) return source
 
-  const declarations = compiledRoots.map(({ name, rootSource, plan }) =>
-    `const ${name} = defineCompiledTemplate(${rootSource}, ${plan.slots.length}, [${plan.slots.map(slot => JSON.stringify(slot.kind)).join(", ")}])`)
+  const declarations = compiledRoots.map(({ name, rootSource, plan }) => {
+    const locations = compilerTemplateTextPatchLocations(plan)
+    const patchSource = locations.length > 0
+      ? `, [${locations.map(location => `{ node: ${location.node}, kind: "text" }`).join(", ")}]`
+      : ""
+    return `const ${name} = defineCompiledTemplate(${rootSource}, ${plan.slots.length}, [${plan.slots.map(slot => JSON.stringify(slot.kind)).join(", ")}]${patchSource})`
+  })
   const edits: Array<{ start: number; end: number; replacement: string }> = compiledRoots.map(({ node, plan, name }) => ({
     start: node.getStart(sourceFile),
     end: node.end,
@@ -1726,14 +1808,44 @@ export function lowerCompiledViewTemplates(source: string): string {
           const replacementStart = replaceExpression.getStart(sourceFile)
           const bodySource = source.slice(functionStart, functionEnd)
           const slotArray = `[${root.plan.slots.map(slot => slot.source).join(", ")}]`
+          // Patch IR already declares every stable text sink. Do not allocate a
+          // fresh all-dirty bitset in generated code on every State update;
+          // direct Web keeps one immutable full-candidate mask per Patch IR and
+          // then filters it against the last committed values.
           const evaluation = `({ slots: ${slotArray}${modifiersSource ? `, modifiers: ${modifiersSource}` : ""} })`
           const evaluator = bodySource.slice(0, replacementStart - functionStart)
             + evaluation
             + bodySource.slice(replaceExpression.end - functionStart)
+          const patchLocations = compilerTemplateTextPatchLocations(root.plan)
+          const dependencyNames = compilerDependencyNames(properties.get("dependencies"))
+          let sparsePatchSource = ""
+          if (!modifiersSource && patchLocations.length === root.plan.slots.length
+            && dependencyNames && compilerBodyHasOnlyPropsPrelude(body.initializer)) {
+            const dependenciesBySlot = root.plan.slots.map(slot => directSlotDependencyNames(slot.source, dependencyNames))
+            const referencedDependencies = new Set(dependenciesBySlot.flatMap(names => [...names]))
+            if (dependenciesBySlot.every(names => names.length > 0)
+              && dependencyNames.every(name => referencedDependencies.has(name))) {
+              const indicesByDependency = new Map(dependencyNames.map(name => [name, [] as number[]]))
+              dependenciesBySlot.forEach((names, index) => names.forEach(name => indicesByDependency.get(name)!.push(index)))
+              const dirtyName = nextName()
+              const valuesName = nextName()
+              const propsName = nextName()
+              const patchBody = `(() => { ${root.plan.slots.map((slot, index) => {
+                const word = index >>> 5
+                const bit = 1 << (index & 31)
+                return `if ((${dirtyName}[${word}] & ${bit >>> 0}) !== 0) ${valuesName}[${index}] = ${slot.source};`
+              }).join(" ")} })()`
+              const sparseBody = bodySource.slice(0, replacementStart - functionStart)
+                + patchBody
+                + bodySource.slice(replaceExpression.end - functionStart)
+              const dependencyObject = `{ ${[...indicesByDependency].map(([name, indices]) => `${JSON.stringify(name)}: [${indices.join(", ")}]`).join(", ")} }`
+              sparsePatchSource = `, patchDependencyIndices: ${dependencyObject}, evaluatePatch: (${propsName}: any, ${dirtyName}: Uint32Array, ${valuesName}: unknown[]) => ((${sparseBody})(${propsName}))`
+            }
+          }
           edits.push({
             start: body.getStart(sourceFile),
             end: body.getStart(sourceFile),
-            replacement: `compiledBody: { template: ${root.name}${modifiersSource ? ", patchesModifiers: true" : ""}, evaluate: ${evaluator} }, `,
+            replacement: `compiledBody: { template: ${root.name}${modifiersSource ? ", patchesModifiers: true" : ""}${sparsePatchSource}, evaluate: ${evaluator} }, `,
           })
         }
       }

@@ -9,6 +9,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const out = resolve(root, 'local-packages')
 const targets = [
   root,
+  resolve(root, 'packages/execution'),
   resolve(root, 'packages/animation'),
   resolve(root, 'packages/core'),
   resolve(root, 'packages/compiler'),

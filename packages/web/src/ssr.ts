@@ -1,4 +1,5 @@
 import { isForeignComponent, renderViewNode, zeroGeometry, type CompiledTemplateValue, type VuneRenderer, type ViewGraphValue, type ViewHostNode } from "@vune-ui/core"
+import type { GPUIslandViewNode } from "@vune-ui/core/internal/runtime"
 import { assertHtmlName, classNameOf, escape, escapeAttribute, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, nativeElementProps, normalizedRawTextValue, normalizedTextAreaValue, propsOf, rawTextHtmlElements, styleAttribute, styleOf, styleText, validTableChildElements, voidHtmlElements } from "./shared.js"
 
 
@@ -164,6 +165,21 @@ const htmlRenderer: VuneRenderer<string> = {
   },
   fragment(children) { return children.join("") },
   value(value) { return value === null || value === undefined || value === false ? "" : escape(value) },
+  gpuIsland(node: GPUIslandViewNode) {
+    return htmlRenderer.element("canvas", {
+      ...(node.options.width === undefined ? {} : { width: node.options.width }),
+      ...(node.options.height === undefined ? {} : { height: node.options.height }),
+      ...(node.options.class === undefined ? {} : { class: node.options.class }),
+      ...(node.options.style === undefined ? {} : { style: node.options.style }),
+      ...(node.options.ariaLabel === undefined ? {} : { "aria-label": node.options.ariaLabel }),
+      "data-vune-gpu-island": node.ir.id,
+      "data-vune-gpu-kind": node.ir.kind,
+      "data-vune-gpu-owner": "web-ssr",
+      "data-vune-gpu-readback": "forbidden",
+      "data-vune-gpu-fallback": node.ir.fallback,
+      "data-vune-gpu-inert": "",
+    })
+  },
   template(node, renderSlot) {
     let factory = htmlTemplateFactories.get(node.template)
     if (!factory) {

@@ -67,6 +67,10 @@ source scanner and lowering pipeline. Its internal contracts are:
 | `compiler/scanner` | Quote/comment/regex-safe source scanning, builder/raw-HTML discovery, and top-level delimiter parsing |
 | `compiler/pipeline` | Binding shorthand, closures, builder/struct lowering, HTML expression lowering, and syntax detection |
 | `compiler/specialization` | Type-checker-backed AOT initializer lowering, compact modifier fusion, compiled template/slot lowering, and static-subtree hoisting |
+| `compiler/effect-analysis` | Shared syntax-level purity, capture, row/index dependency, and access-shape proof used by data-oriented optimizations |
+| `compiler/kernel-ir` | Small backend-neutral scalar/map compute IR that can later be typed and lowered to JS/WASM/WGSL without recovering semantics from generated closures |
+| `compiler/execution-plan` | Post-specialization compute-region plan, sink/residency classification, and backend eligibility exposed to opt-in build tooling |
+| `compiler/resident-js` | Compile-time lowering from proven packed ResidentRegionIR into a fused direct TypedArray loop |
 | `compiler/diagnostics` | Original-source syntax, TypeScript, and semantic HTML diagnostics |
 | `compiler/vite` | Vue SFC and `.vune`/`.vune.ts` Vite transformation orchestration |
 | `compiler/index` | Public API barrel, source maps, and language-service composition |
@@ -75,6 +79,12 @@ If static type resolution is not unique, the specialization pass leaves the
 source for the guarded or dynamic runtime resolver. These modules remain
 renderer-neutral; only the Vite adapter knows how to attach the compiler to a
 host build.
+
+Packed execution is an internal residency boundary, not an alternate View
+model. `core/resident-execution` owns packed layouts/storage and the shared IR
+contract. Only packed-to-packed regions qualify; object State and DOM sinks do
+not become native candidates merely because Kernel IR can describe their math.
+See [RESIDENT_COMPUTE.md](RESIDENT_COMPUTE.md).
 
 ### AOT specialization contract
 

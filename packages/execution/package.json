@@ -1,0 +1,35 @@
+{
+  "name": "@vune-ui/execution",
+  "version": "0.1.20",
+  "description": "Shared resident-buffer, execution telemetry, and frame-budget substrate for Vune runtimes.",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./resident-wasm": {
+      "types": "./dist/resident-wasm.d.ts",
+      "import": "./dist/resident-wasm.js"
+    },
+    "./resident-worker": {
+      "types": "./dist/resident-worker.d.ts",
+      "import": "./dist/resident-worker.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:wasm": "bash wasm/build.sh",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

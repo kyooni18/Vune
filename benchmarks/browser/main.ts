@@ -2,7 +2,7 @@ import { createElement, memo, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { flushSync } from "react-dom"
 import { createApp, h, nextTick, ref } from "vue"
-import { Element, ForEach, State, defineView, initializer, subscribeState } from "@vune-ui/core"
+import { Element, ForEach, State, compiledTemplate, defineCompiledTemplate, defineView, initializer, subscribeState } from "@vune-ui/core"
 import { compiledCollectionContent, mapStateArrayData } from "@vune-ui/core/internal/runtime"
 import { render as renderReact } from "@vune-ui/react"
 import { render as renderVue } from "@vune-ui/vue"
@@ -465,6 +465,59 @@ async function authoredVue(count: number, mode: "single" | "full"): Promise<numb
   return elapsed
 }
 
+async function misutgaruReactionSingle(count: number): Promise<number> {
+  const target = host()
+  const stateRows: Array<{ count: ReturnType<typeof State<number>>; status: ReturnType<typeof State<string>> }> = []
+  const template = defineCompiledTemplate({
+    kind: "element",
+    type: "span",
+    props: { "data-benchmark-reaction": "true" },
+    children: [
+      { kind: "slot", index: 0, identity: ["element", 0] },
+      ":",
+      { kind: "slot", index: 1, identity: ["element", 2] },
+    ],
+  }, 2, ["text", "text"], [
+    { node: 1, kind: "text" },
+    { node: 3, kind: "text" },
+  ])
+  const ReactionRow = defineView("MisutgaruReactionBenchmarkRow", {
+    initializers: [initializer("MisutgaruReactionBenchmarkRow()", args => args.length === 0)],
+    state: () => {
+      const countState = State(0)
+      const statusState = State("idle")
+      stateRows.push({ count: countState, status: statusState })
+      return { count: countState, status: statusState }
+    },
+    dependencies: ({ count, status }) => [count, status],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchDependencyIndices: { count: [0], status: [1] },
+      evaluatePatch: ({ count, status }, dirty, values) => {
+        if (dirty[0]! & 1) values[0] = String(count.value)
+        if (dirty[0]! & 2) values[1] = String(status.value)
+      },
+      evaluate: ({ count, status }) => ({ slots: [String(count.value), String(status.value)] }),
+    },
+    body: ({ count, status }) => compiledTemplate(template, [String(count.value), String(status.value)]),
+  })
+  const unmount = mount(Element("div", null, Array.from({ length: count }, () => ReactionRow())), target)
+  if (stateRows.length !== count) throw new Error(`reaction benchmark mounted ${stateRows.length} State rows; expected ${count}`)
+  const middle = Math.floor(count / 2)
+  const element = target.querySelectorAll<HTMLElement>("[data-benchmark-reaction]")[middle]
+  if (!element || element.textContent !== "0:idle") throw new Error("reaction benchmark did not mount the expected middle row")
+  const start = performance.now()
+  stateRows[middle]!.count.value = 1
+  await Promise.resolve()
+  await Promise.resolve()
+  const elapsed = performance.now() - start
+  if (element.textContent !== "1:idle") throw new Error("reaction benchmark did not commit the sparse State patch")
+  unmount()
+  target.remove()
+  return elapsed
+}
+
 async function run({ count = 5000, rounds = 7, warmups = 3, only }: { count?: number; rounds?: number; warmups?: number; only?: readonly string[] } = {}) {
   const result: Record<string, number> = {}
   const selected = only && only.length > 0 ? new Set(only) : undefined
@@ -496,6 +549,7 @@ async function run({ count = 5000, rounds = 7, warmups = 3, only }: { count?: nu
   await add("authored.web.single", () => authoredWeb(count, "single"))
   await add("authored.react.single", () => authoredReact(count, "single"))
   await add("authored.vue.single", () => authoredVue(count, "single"))
+  await add("misutgaru.web.reaction.single", () => misutgaruReactionSingle(count))
   await add("array.full", () => rawArray(count, "full"))
   await add("state.full", () => vuneState(count, "full"))
   await add("dom.full", () => rawDom(count, "full"))

@@ -32,12 +32,15 @@ import {
   renderViewNodeAt,
   type KeyedCollectionEntry,
   type KeyedCollectionViewNode,
+  type CompiledPatchValues,
+  type GPUIslandViewNode,
   type StateMutation,
 } from "@vune-ui/core/internal/runtime"
 import { compositorMotionPropertyMask, layoutMotionPropertyMask, motionPropertyBit, paintMotionPropertyMask } from "@vune-ui/core/internal/motion-abi"
 import { renderToHTML } from "./ssr.js"
 import { activateReusedHydratedTree, hydratedPropsMatch, hydrateNode } from "./hydration.js"
 import { applyDomProps, clearDomEvents, commitStagedDomProps, patchDomProps, setDomRef, synchronizeDomSelectValue, type DomAttributeMotionPolicy, type DomStyleMotionPolicy } from "./props.js"
+import { disposeContinuousCorners } from "./continuous-corners.js"
 import { animateDomLayout, cancelDomAnimations, type DomLayoutBox } from "./motion.js"
 import { recordVuneBoundaryDisposed, recordVuneBoundaryRender, recordVuneRuntimeEvent, vuneDevtoolsEnabled } from "./devtools.js"
 import { classNameOf, cssPropertyName, domContentContainer, nativeElementProps, normalizedRawTextValue, propsOf, rawTextHtmlElements, styleOf, validTableChildElements, voidHtmlElements, type DomRenderContext } from "./shared.js"
@@ -46,6 +49,8 @@ import { LazyMeasurementIndex, lazyViewportOffset } from "./lazy-index.js"
 import { playWebTransition, type WebTransitionPlayback } from "./transition.js"
 import { activateWebPresentation, disposeWebPresentation } from "./presentation.js"
 import { cancelWebContentTransition, playWebTextContentTransition, prepareWebSymbolContentTransition } from "./content-transition.js"
+import { applyPatchIR, definePatchIR, type PatchIR } from "./patch-ir.js"
+import { disposeParticleFieldGPUIslandCanvas, mountParticleFieldGPUIslandCanvas } from "./gpu-island.js"
 
 interface DomViewBoundary {
   readonly key: string
@@ -66,6 +71,10 @@ interface DomViewBoundary {
   depth: number
   pendingTransaction?: Transaction
   readonly pendingMutations: StateMutation[]
+  readonly pendingDependencies: Set<StateRef<unknown>>
+  compiledPatchPlan?: NonNullable<ViewHostNode["compiledBody"]>
+  compiledPatchMasks?: Map<StateRef<unknown>, Uint32Array>
+  compiledPatchDirty?: Uint32Array
   scheduled: boolean
   mounted: boolean
   localSafe: boolean
@@ -80,6 +89,12 @@ interface DomCompiledTemplateInstance {
   readonly textSlots: Array<Text | undefined>
   /** Live DOM ranges produced by compiler-proven generic View slots. */
   readonly viewSlots: Array<Node[] | undefined>
+  /** Stable pre-order host-node table addressed by compiler Patch IR. */
+  nodes: Node[]
+  /** Last renderer-committed values, used to refine compiler candidate bits. */
+  patchValues?: unknown[]
+  /** Reused compiler scratch storage for dependency-narrowed patch evaluation. */
+  patchScratch?: unknown[]
 }
 
 interface DomCompiledTemplateBinding {
@@ -177,6 +192,148 @@ function compiledTextSlotValue(value: unknown): { readonly ok: true; readonly va
   return { ok: false }
 }
 
+const compiledTemplatePatchPrograms = new WeakMap<object, PatchIR>()
+
+function patchProgram(template: CompiledTemplateDescriptor): PatchIR | undefined {
+  if (!template.patchIR) return undefined
+  let program = compiledTemplatePatchPrograms.get(template)
+  if (!program) {
+    program = definePatchIR(template.patchIR.locations)
+    compiledTemplatePatchPrograms.set(template, program)
+  }
+  return program
+}
+
+function templateNodeTable(output: Node): Node[] {
+  const nodes: Node[] = []
+  const visit = (node: Node): void => {
+    nodes.push(node)
+    const content = node.nodeType === 1 ? domContentContainer(node as Element) : node
+    for (let child = content.firstChild; child; child = child.nextSibling) visit(child)
+  }
+  for (const root of outputNodes(output)) visit(root)
+  return nodes
+}
+
+const fullPatchDirtyMasks = new WeakMap<PatchIR, Uint32Array>()
+
+function fullPatchCandidates(program: PatchIR, values: readonly unknown[]): CompiledPatchValues {
+  let dirty = fullPatchDirtyMasks.get(program)
+  if (!dirty) {
+    dirty = new Uint32Array(program.dirtyWordCount)
+    dirty.fill(0xffff_ffff)
+    const remainder = program.locations.length & 31
+    if (remainder !== 0) dirty[dirty.length - 1] = (2 ** remainder - 1) >>> 0
+    fullPatchDirtyMasks.set(program, dirty)
+  }
+  return { dirty, values }
+}
+
+function rebuildCompiledPatchMasks(
+  boundary: DomViewBoundary,
+  plan: NonNullable<ViewHostNode["compiledBody"]>,
+  program: PatchIR,
+): void {
+  const mappings = plan.patchDependencyIndices
+  boundary.compiledPatchPlan = plan
+  boundary.compiledPatchMasks = new Map()
+  boundary.compiledPatchDirty = new Uint32Array(program.dirtyWordCount)
+  if (!mappings) return
+  for (const [propName, indices] of Object.entries(mappings)) {
+    const dependency = boundary.resolvedProps[propName]
+    if (!isStateRef(dependency) || !boundary.dependencies.has(dependency)) continue
+    let mask = boundary.compiledPatchMasks.get(dependency)
+    if (!mask) {
+      mask = new Uint32Array(program.dirtyWordCount)
+      boundary.compiledPatchMasks.set(dependency, mask)
+    }
+    for (const index of indices) {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= program.locations.length) continue
+      mask[index >>> 5] |= 1 << (index & 31)
+    }
+  }
+}
+
+/** Resolve pending State identities to one renderer-owned reusable Patch IR mask. */
+function dependencyPatchCandidates(
+  boundary: DomViewBoundary,
+  plan: NonNullable<ViewHostNode["compiledBody"]>,
+  program: PatchIR,
+): Uint32Array | undefined {
+  if (!plan.evaluatePatch || !plan.patchDependencyIndices || boundary.pendingDependencies.size === 0) return undefined
+  if (boundary.compiledPatchPlan !== plan || !boundary.compiledPatchMasks || !boundary.compiledPatchDirty) {
+    rebuildCompiledPatchMasks(boundary, plan, program)
+  }
+  let masks = boundary.compiledPatchMasks!
+  // State-bearing props can be replaced without changing the compiled plan.
+  // Refresh once on a cache miss before conservatively falling back.
+  if ([...boundary.pendingDependencies].some(dependency => !masks.has(dependency))) {
+    rebuildCompiledPatchMasks(boundary, plan, program)
+    masks = boundary.compiledPatchMasks!
+  }
+  const dirty = boundary.compiledPatchDirty!
+  dirty.fill(0)
+  for (const dependency of boundary.pendingDependencies) {
+    const mask = masks.get(dependency)
+    if (!mask) return undefined
+    for (let word = 0; word < dirty.length; word += 1) dirty[word] |= mask[word]!
+  }
+  return dirty.some(word => word !== 0) ? dirty : undefined
+}
+
+function applyCompiledPatch(
+  instance: DomCompiledTemplateInstance,
+  program: PatchIR,
+  candidate: CompiledPatchValues,
+  context: DomRenderContext,
+): boolean {
+  if (!(candidate.dirty instanceof Uint32Array)
+    || candidate.dirty.length !== program.dirtyWordCount
+    || candidate.values.length !== program.locations.length) return false
+  const dirty = new Uint32Array(program.dirtyWordCount)
+  const nextValues = instance.patchValues ? [...instance.patchValues] : new Array<unknown>(program.locations.length)
+  let dirtyCount = 0
+  for (let index = 0; index < program.locations.length; index += 1) {
+    if ((candidate.dirty[index >>> 5]! & (1 << (index & 31))) === 0) continue
+    const value = candidate.values[index]
+    if (instance.patchValues && Object.is(instance.patchValues[index], value)) continue
+    nextValues[index] = value
+    dirty[index >>> 5] |= 1 << (index & 31)
+    dirtyCount += 1
+  }
+  if (dirtyCount > 0) {
+    applyPatchIR(instance.nodes, program, { dirty, values: candidate.values })
+    for (let index = 0; index < program.locations.length; index += 1) {
+      if ((dirty[index >>> 5]! & (1 << (index & 31))) === 0) continue
+      const location = program.locations[index]!
+      if (location.kind === "text" || location.kind === "child-range") continue
+      const node = instance.nodes[location.node]
+      if (!node || node.nodeType !== 1) continue
+      const element = node as Element
+      const remembered = cloneStoredDomProps(context.domProps.get(element)) ?? {}
+      if (location.kind === "style") {
+        const style = remembered.style && typeof remembered.style === "object"
+          ? { ...remembered.style as Record<string, unknown> }
+          : {}
+        if (candidate.values[index] == null || candidate.values[index] === false) delete style[location.key]
+        else style[location.key] = candidate.values[index]
+        remembered.style = style
+      } else if (location.kind === "class") {
+        remembered.class = element.getAttribute("class") ?? ""
+      } else if (candidate.values[index] == null || candidate.values[index] === false) {
+        delete remembered[location.key]
+      } else {
+        remembered[location.key] = candidate.values[index]
+      }
+      context.domProps.set(element, remembered)
+      const rootIndex = instance.roots.indexOf(element)
+      if (rootIndex >= 0) (instance.rootProps as Array<Record<string, unknown> | null>)[rootIndex] = cloneStoredDomProps(remembered)
+    }
+  }
+  instance.patchValues = nextValues
+  return true
+}
+
 interface DomViewRuntime {
   readonly boundaries: Map<string, DomViewBoundary>
   readonly nodeKeys: WeakMap<Node, Set<string>>
@@ -189,6 +346,7 @@ interface DomViewRuntime {
   readonly compiledTemplateRoots: WeakMap<Node, DomCompiledTemplateBinding>
   readonly compiledTemplateTextSlots: WeakMap<Node, DomCompiledTemplateBinding>
   readonly compiledTemplateViewSlots: WeakMap<Node, DomCompiledTemplateBinding>
+  readonly compiledTemplateNodes: WeakMap<Node, DomCompiledTemplateBinding>
   readonly compiledTemplatePatches: WeakMap<Node, () => void>
   /** Per-render animation domains attached by .animation(_:value:). */
   readonly motionStates: WeakMap<Node, DomMotionRenderState>
@@ -767,6 +925,12 @@ function bindCandidateNode(candidate: Node, live: Node, context: DomRenderContex
     }
     runtime.compiledTemplateViewSlots.set(live, viewSlotBinding)
   }
+  const nodeBinding = runtime.compiledTemplateNodes.get(candidate)
+  if (nodeBinding) {
+    const instance = runtime.compiledTemplates.get(nodeBinding.key)
+    if (instance && nodeBinding.index < instance.nodes.length) instance.nodes[nodeBinding.index] = live
+    runtime.compiledTemplateNodes.set(live, nodeBinding)
+  }
   const candidateMotion = runtime.motionStates.get(candidate)
   if (candidateMotion && live.nodeType === 1) {
     runtime.motionStates.set(live, {
@@ -979,6 +1143,8 @@ function copyCandidateMetadata(source: Node, target: Node, context: DomRenderCon
     if (slotBinding) runtime.compiledTemplateTextSlots.set(target, slotBinding)
     const viewSlotBinding = runtime.compiledTemplateViewSlots.get(source)
     if (viewSlotBinding) runtime.compiledTemplateViewSlots.set(target, viewSlotBinding)
+    const nodeBinding = runtime.compiledTemplateNodes.get(source)
+    if (nodeBinding) runtime.compiledTemplateNodes.set(target, nodeBinding)
     copyMotionRenderState(source, target, runtime)
     const transition = runtime.transitionStates.get(source)
     if (transition) runtime.transitionStates.set(target, transition)
@@ -1345,10 +1511,12 @@ function releaseDomSubtree(node: Node, context: DomRenderContext): void {
   if (compiledRoot) runtime?.compiledTemplates.delete(compiledRoot.key)
   if (node.nodeType === 1) {
     const element = node as Element
+    if (element.localName === "canvas") disposeParticleFieldGPUIslandCanvas(element as HTMLCanvasElement)
     context.refElements.delete(element)
     if (element.hasAttribute("data-vune-presentation")) disposeWebPresentation(element as HTMLElement)
     cancelWebContentTransition(element)
     cancelDomAnimations(element)
+    disposeContinuousCorners(element)
     disposeFocusScope(element)
     if (context.eventTargetCount > 0) clearDomEvents(element, context)
     for (const child of domContentContainer(element).childNodes) releaseDomSubtree(child, context)
@@ -3384,6 +3552,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
         outerModifiers: [],
         parentKey,
         pendingMutations: [],
+        pendingDependencies: new Set(),
         depth: 0,
         scheduled: false,
         mounted: false,
@@ -3490,6 +3659,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     boundary.scheduled = false
     boundary.pendingTransaction = undefined
     boundary.pendingMutations.length = 0
+    boundary.pendingDependencies.clear()
     markBoundaryOutput(output, key, runtime)
 
     if (force && previousOuterModifiers.length > 0) {
@@ -3517,6 +3687,27 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
     value(value) {
       return renderValue(value)
     },
+    gpuIsland(node: GPUIslandViewNode) {
+      const canvas = renderElement("canvas", {
+        ...(node.options.width === undefined ? {} : { width: node.options.width }),
+        ...(node.options.height === undefined ? {} : { height: node.options.height }),
+        ...(node.options.class === undefined ? {} : { class: node.options.class }),
+        ...(node.options.style === undefined ? {} : { style: node.options.style }),
+        ...(node.options.ariaLabel === undefined ? {} : { "aria-label": node.options.ariaLabel }),
+        "data-vune-gpu-island": node.ir.id,
+        "data-vune-gpu-kind": node.ir.kind,
+        "data-vune-gpu-owner": "direct-web",
+        "data-vune-gpu-readback": "forbidden",
+        "data-vune-gpu-fallback": node.ir.fallback,
+      }, [])
+      if (canvas.nodeType === 1 && (canvas as Element).localName === "canvas") {
+        mountParticleFieldGPUIslandCanvas(canvas as HTMLCanvasElement, node, {
+          experimentalResidentCompute: context.experimentalResidentCompute === true
+            || node.options.experimentalResidentCompute === true,
+        })
+      }
+      return canvas
+    },
     template(node, renderSlot, identity) {
       let factory = templateFactories.get(node.template)
       if (!factory) {
@@ -3528,6 +3719,7 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       const textOnly = node.template.slotKinds.length === node.template.slotCount
         && node.template.slotKinds.every(kind => kind === "text")
       const previous = runtime?.compiledTemplates.get(key)
+      const program = patchProgram(node.template)
 
       // Compiler-proven text-only templates do not need their immutable host
       // tree rebuilt on every evaluation. Render only the dynamic primitive
@@ -3557,10 +3749,11 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
           const patch = () => {
             if (patched) return
             patched = true
-            for (let index = 0; index < nextText.length; index += 1) {
-              const live = previous.textSlots[index]
-              if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
-            }
+            if (program) applyCompiledPatch(previous, program, fullPatchCandidates(program, nextText), context)
+            else for (let index = 0; index < nextText.length; index += 1) {
+                const live = previous.textSlots[index]
+                if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
+              }
           }
           if (previous.roots.length === 1) {
             const candidate = reusableCompiledTemplateCandidate(previous.roots[0], previous.rootProps[0] ?? null, context)
@@ -3598,12 +3791,14 @@ function createDomRenderer(context: DomRenderContext): VuneRenderer<Node> {
       const output = factory(renderCachedSlot)
       if (runtime) {
         const roots = outputNodes(output)
+        const nodes = templateNodeTable(output)
         const rootProps = roots.map(root => root.nodeType === 1
           ? cloneStoredDomProps(context.domProps.get(root as Element))
           : null)
-        const instance: DomCompiledTemplateInstance = { template: node.template, roots: [...roots], rootProps, textSlots: slotNodes, viewSlots: viewSlotNodes }
+        const instance: DomCompiledTemplateInstance = { template: node.template, roots: [...roots], rootProps, textSlots: slotNodes, viewSlots: viewSlotNodes, nodes }
         runtime.compiledTemplates.set(key, instance)
         roots.forEach((root, index) => runtime.compiledTemplateRoots.set(root, { key, index }))
+        nodes.forEach((item, index) => runtime.compiledTemplateNodes.set(item, { key, index }))
       }
       return output
     },
@@ -3736,9 +3931,15 @@ function sameGeometry(left: GeometryProxy, right: GeometryProxy): boolean {
 export interface WebMountOptions {
   readonly hydrate?: boolean
   readonly disablesAnimations?: boolean | (() => boolean)
+  /** Opt in to experimental Resident Compute WASM/Worker/GPU paths. */
+  readonly experimentalResidentCompute?: boolean | Readonly<{ enabled?: boolean; gpu?: boolean }>
 }
 
 export function mount(value: ViewGraphValue, container: Element, options: WebMountOptions = {}): () => void {
+  const experimentalResidentCompute = options.experimentalResidentCompute === true
+    || (typeof options.experimentalResidentCompute === "object"
+      && options.experimentalResidentCompute.enabled === true
+      && options.experimentalResidentCompute.gpu !== false)
   let stopped = false
   let scheduled = false
   let pendingTransaction: Transaction | undefined
@@ -3771,6 +3972,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
   if (canMaterializeDOM) {
     const context: DomRenderContext = {
       document,
+      experimentalResidentCompute,
       states: new Map(),
       visitedStateIdentities: new Set(),
       geometries: new Map(),
@@ -3807,6 +4009,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       compiledTemplateRoots: new WeakMap(),
       compiledTemplateTextSlots: new WeakMap(),
       compiledTemplateViewSlots: new WeakMap(),
+      compiledTemplateNodes: new WeakMap(),
       compiledTemplatePatches: new WeakMap(),
       collections: new Map(),
       collectionKeysByOwner: new Map(),
@@ -3936,6 +4139,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           recordVuneRuntimeEvent("boundaryInvalidations")
           boundary.pendingTransaction = hostTransaction(transaction)
           boundary.pendingMutations.push(...batch.mutations)
+          boundary.pendingDependencies.add(dependency)
           if (boundary.scheduled || stopped) return
           boundary.scheduled = true
           if (!boundary.mounted || boundary.currentNodes.length === 0) {
@@ -4243,15 +4447,18 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       const directOuterModifiers = plan.patchesModifiers ? boundary.outerModifiers : []
       if (directOuterModifiers.some(modifier => !directCompiledBodyModifierNames.has(modifier.name))) return false
       const template = plan.template
-      if (template.slotKinds.length !== template.slotCount || template.slotKinds.some(kind => kind !== "text")) return false
+      const textOnly = template.slotKinds.length === template.slotCount && template.slotKinds.every(kind => kind === "text")
+      const program = patchProgram(template)
+      if (!program && !textOnly) return false
 
       const templateKey = viewIdentityKey([...boundary.identity, "body", "compiled-template"])
       const instance = viewRuntime.compiledTemplates.get(templateKey)
       if (!instance || instance.template !== template
         || instance.roots.length === 0
         || instance.roots.some(root => root.parentNode === null)
-        || instance.textSlots.length !== template.slotCount
-        || instance.textSlots.some(slot => slot?.parentNode === null)) return false
+        || (textOnly && (instance.textSlots.length !== template.slotCount
+          || instance.textSlots.some(slot => slot?.parentNode === null)))
+        || (program && (instance.nodes.length === 0 || instance.nodes.some(node => node.parentNode === null)))) return false
 
       const previousTransaction = context.activeTransaction
       context.activeTransaction = transaction
@@ -4260,20 +4467,40 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
           if (root.nodeType === 1) captureLayoutNeighborhood(root as Element, undefined, context)
         }
         const patched = withRenderTransaction(transaction, () => {
-          const evaluation = plan.evaluate(boundary.resolvedProps)
-          if (!evaluation || typeof evaluation !== "object" || !Array.isArray(evaluation.slots)
-            || evaluation.slots.length !== template.slotCount) return false
+          const sparseDirty = program && !plan.patchesModifiers
+            ? dependencyPatchCandidates(boundary, plan, program)
+            : undefined
+          let evaluation: ReturnType<typeof plan.evaluate> | undefined
+          let nextText = new Array<string>(0)
+          let candidatePatch: CompiledPatchValues | undefined
+          if (program && sparseDirty && plan.evaluatePatch) {
+            const scratch = instance.patchScratch ?? (instance.patchScratch = new Array(program.locations.length))
+            plan.evaluatePatch(boundary.resolvedProps, sparseDirty, scratch)
+            candidatePatch = { dirty: sparseDirty, values: scratch }
+          } else {
+            evaluation = plan.evaluate(boundary.resolvedProps)
+            if (!evaluation || typeof evaluation !== "object" || !Array.isArray(evaluation.slots)
+              || evaluation.slots.length !== template.slotCount) return false
 
-          const nextText = new Array<string>(template.slotCount)
-          for (let index = 0; index < template.slotCount; index += 1) {
-            const value = compiledTextSlotValue(evaluation.slots[index])
-            if (!value.ok) return false
-            nextText[index] = value.value
+            nextText = new Array<string>(textOnly ? template.slotCount : 0)
+            if (textOnly) for (let index = 0; index < template.slotCount; index += 1) {
+                const value = compiledTextSlotValue(evaluation.slots[index])
+                if (!value.ok) return false
+                nextText[index] = value.value
+              }
+            candidatePatch = program
+              ? evaluation.patch ?? (textOnly && program.locations.length === nextText.length
+                ? fullPatchCandidates(program, nextText)
+                : undefined)
+              : undefined
+            if (evaluation.patch !== undefined && !program) return false
           }
+          if (program && !candidatePatch) return false
 
           let nextRootProps: Array<Record<string, unknown> | null> | undefined
           let nextMotionStates: Array<DomMotionRenderState | null> | undefined
           if (plan.patchesModifiers) {
+            if (!evaluation) return false
             if (evaluation.modifiers !== undefined && !Array.isArray(evaluation.modifiers)) return false
             nextRootProps = instance.roots.map((root, index) => root.nodeType === 1
               ? cloneStoredDomProps(instance.rootProps[index] ?? null)
@@ -4334,7 +4561,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
             // Preserve normal modifier precedence: template props → body
             // modifiers → modifiers attached to the View at the call site.
             for (const modifier of directOuterModifiers) mergeModifier(modifier)
-          } else if (evaluation.modifiers !== undefined) {
+          } else if (evaluation?.modifiers !== undefined) {
             return false
           }
 
@@ -4345,10 +4572,12 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
             return resolved
           })
 
-          for (let index = 0; index < nextText.length; index += 1) {
-            const live = instance.textSlots[index]
-            if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
-          }
+          if (program) {
+            if (!applyCompiledPatch(instance, program, candidatePatch!, context)) return false
+          } else for (let index = 0; index < nextText.length; index += 1) {
+              const live = instance.textSlots[index]
+              if (live && live.nodeValue !== nextText[index]) live.nodeValue = nextText[index]
+            }
           if (nextRootProps) {
             for (let index = 0; index < instance.roots.length; index += 1) {
               const root = instance.roots[index]
@@ -4368,6 +4597,7 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       boundary.scheduled = false
       boundary.pendingTransaction = undefined
       boundary.pendingMutations.length = 0
+      boundary.pendingDependencies.clear()
       return true
     }
 
@@ -4458,6 +4688,9 @@ export function mount(value: ViewGraphValue, container: Element, options: WebMou
       }
       boundary.pendingTransaction = hostTransaction(transaction)
       boundary.pendingMutations.push(...mutations)
+      // This invalidation route does not carry the originating StateRef, so a
+      // compiler sparse mask cannot safely narrow the update.
+      boundary.pendingDependencies.clear()
       if (boundary.scheduled || stopped) return
       boundary.scheduled = true
       // Collection fallbacks and direct runtime invalidations share the same

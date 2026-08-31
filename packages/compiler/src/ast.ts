@@ -467,7 +467,11 @@ function parseStructMembers(body: string, baseOffset: number): { fields: VuneStr
   const initializers: VuneStructInitializer[] = []
   const nestedMaskedBody = maskNestedStructs(body)
   const maskedBody = maskInitializerBodies(nestedMaskedBody)
-  const fieldPattern = /(?:^|[;\n])\s*(?:(@State|@Binding)\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([^=\n;]+))?(?:\s*=\s*([^\n;]+))?/g
+  // `=` starts a stored-property initializer, but the same character is also
+  // part of a TypeScript function type (`(value: string) => void`). Keep `=>`
+  // inside the type span instead of truncating the type and inventing a
+  // default value such as `> void`.
+  const fieldPattern = /(?:^|[;\n])\s*(?:(@State|@Binding)\s+)?(?:let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*((?:(?:=>)|[^=\n;])+))?(?:\s*=(?!>)\s*([^\n;]+))?/g
   for (const match of maskedBody.matchAll(fieldPattern)) {
     if (match[2] === "body") continue
     const start = baseOffset + (match.index ?? 0) + match[0].indexOf(match[2])

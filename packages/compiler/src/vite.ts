@@ -1,6 +1,7 @@
 import { createVuneSourceMap } from "./source-map.js"
 import { hasVuneSyntax, transformVuneSource } from "./pipeline.js"
 import { staticModifierNames } from "./specialization.js"
+import { createVuneExecutionPlan } from "./execution-plan.js"
 import { generateVueHostModule } from "./vue-host.js"
 import type { VuneSourceMap, VuneTransformResult, VuneVitePluginOptions } from "./types.js"
 
@@ -161,6 +162,9 @@ export function createVuneVitePlugin(options: VuneVitePluginOptions = {}) {
     const transformed = code === source ? null : {
       code,
       map: sourceMapEnabled ? createVuneSourceMap(source, code, fileName) : emptySourceMap(fileName),
+    }
+    if (transformed && options.onExecutionPlan) {
+      options.onExecutionPlan(createVuneExecutionPlan(code, fileName), id)
     }
     remember(cacheKey, { source, result: transformed })
     return transformed

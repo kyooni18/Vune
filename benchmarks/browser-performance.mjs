@@ -80,6 +80,7 @@ try {
     "authored.web.single": 50,
     "authored.react.single": 60,
     "authored.vue.single": 60,
+    "misutgaru.web.reaction.single": 15,
     "vune.react.full": 150,
     "vune.react.compiled.full": 150,
     "vune.react.compiler-map.full": 120,

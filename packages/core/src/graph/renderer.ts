@@ -38,6 +38,8 @@ export function collectLogicalViewIdentities(value: ViewGraphValue, identity: Vi
     }
     case "geometry":
       return []
+    case "gpu-island":
+      return []
     case "lazy":
       return value.children.flatMap((child, index) => collectLogicalViewIdentities(child as ViewGraphValue, [...identity, "lazy", index]))
   }
@@ -191,6 +193,16 @@ function renderViewNodeStack<Output>(value: ViewGraphValue, renderer: VuneRender
       return renderer.lazy
         ? renderer.lazy(value, renderChildren, lazyIdentity, renderItem)
         : renderer.element("div", value.props, ...value.children.map((child, index) => renderViewNodeStack(child as ViewGraphValue, renderer, [...lazyIdentity, "lazy", index])))
+    }
+    case "gpu-island": {
+      const islandIdentity: ViewIdentity = [...identity, "gpu-island", value.ir.id]
+      if (renderer.gpuIsland) return renderer.gpuIsland(value, islandIdentity)
+      return renderer.element("canvas", {
+        ...(value.options.width === undefined ? {} : { width: value.options.width }),
+        ...(value.options.height === undefined ? {} : { height: value.options.height }),
+        "data-vune-gpu-island": value.ir.id,
+        "data-vune-gpu-fallback": value.ir.fallback,
+      })
     }
   }
 }

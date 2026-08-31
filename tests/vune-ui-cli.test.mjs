@@ -95,6 +95,7 @@ test('local create mode wires a separate app to the source checkout without npm 
   assert.match(manifest.devDependencies['@vune-ui/vite'], /^link:/u)
   assert.match(manifest.devDependencies['@vune-ui/core'], /^link:/u)
   assert.match(manifest.devDependencies['@vune-ui/compiler'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/execution'], /^link:/u)
   assert.equal(manifest.devDependencies['@vune-ui/legacy-react'], undefined)
   assert.equal(manifest.pnpm?.overrides, undefined)
   const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
@@ -122,6 +123,7 @@ test('vune-ui link upgrades an existing project to robust local source links', (
   assert.match(manifest.devDependencies['@vune-ui/vite'], /^link:/u)
   assert.match(manifest.devDependencies['@vune-ui/core'], /^link:/u)
   assert.match(manifest.devDependencies['@vune-ui/compiler'], /^link:/u)
+  assert.match(manifest.devDependencies['@vune-ui/execution'], /^link:/u)
   assert.equal(manifest.devDependencies['@vune-ui/legacy-react'], undefined)
   assert.equal(manifest.pnpm?.overrides, undefined)
   const workspaceConfig = readFileSync(resolve(project, 'pnpm-workspace.yaml'), 'utf8')
@@ -130,6 +132,7 @@ test('vune-ui link upgrades an existing project to robust local source links', (
     '@vune-ui/animation',
     '@vune-ui/core',
     '@vune-ui/compiler',
+    '@vune-ui/execution',
     '@vune-ui/legacy-react',
     '@vune-ui/react',
     '@vune-ui/vue',

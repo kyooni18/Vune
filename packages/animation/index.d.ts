@@ -1,3 +1,5 @@
+import { FrameBudgetGovernor as ExecutionFrameBudgetGovernor, type FrameBudgetSnapshot } from '@vune-ui/execution';
+
 export type AnimationStatus = 'finished' | 'interrupted' | 'cancelled';
 export type AnimationResult = { status: AnimationStatus; value: number; reducedMotion?: boolean };
 export type SpringSpec = { kind: 'spring'; omega: number; dampingRatio: number; initialVelocity?: number; blendDuration?: number; source: string };
@@ -158,24 +160,12 @@ export class MotionEngine {
 }
 
 
-export type FrameBudgetSnapshot = {
-  budgetMs: number;
-  emaMainThreadMs: number;
-  peakMainThreadMs: number;
-  pressure: number;
-  level: 'idle' | 'comfortable' | 'pressured' | 'critical';
-  samples: number;
-};
+export type { FrameBudgetLevel, FrameBudgetSnapshot } from '@vune-ui/execution';
 
-export class FrameBudgetGovernor {
+export class FrameBudgetGovernor extends ExecutionFrameBudgetGovernor {
   constructor(options?: { budgetMs?: number; alpha?: number; minWasmThreshold?: number; minWorkerThreshold?: number });
-  readonly budgetMs: number;
-  readonly pressure: number;
-  readonly level: FrameBudgetSnapshot['level'];
-  observe(mainThreadMs: number): FrameBudgetSnapshot;
   wasmThreshold(baseThreshold: number, activeCount: number): number;
   workerThreshold(baseThreshold: number, activeCount: number): number;
-  snapshot(): FrameBudgetSnapshot;
 }
 
 export const defaultEngine: MotionEngine;

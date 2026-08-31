@@ -2,12 +2,14 @@ import {
   Fragment,
   cloneElement,
   createElement,
+  forwardRef,
   useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type RefObject,
   type ReactNode,
 } from "react"
 import { createRoot, hydrateRoot, type Root } from "react-dom/client"
@@ -49,6 +51,96 @@ import {
   type KeyedCollectionViewNode,
   type StateMutationBatch,
 } from "@vune-ui/core/internal/runtime"
+import type { GPUIslandViewNode } from "@vune-ui/core/internal/runtime"
+import { APPLE_CONTINUOUS_CORNER_SMOOTHING } from "@vune-ui/core/corners"
+import { attachContinuousCorners, disposeContinuousCorners, isContinuousCornerStyle } from "./continuous-corners.js"
+
+function setForwardedRef(reference: unknown, value: HTMLElement | null): void {
+  if (typeof reference === "function") {
+    reference(value)
+    return
+  }
+  if (!reference || typeof reference !== "object") return
+  try {
+    const target = reference as { current?: HTMLElement | null }
+    target.current = value
+  } catch { /* readonly or hostile refs are ignored */ }
+}
+
+type ContinuousCornerHostProps = Record<string, unknown> & {
+  readonly as: string
+  readonly children?: ReactNode
+}
+
+function runReactParticleFallback(canvas: HTMLCanvasElement, node: GPUIslandViewNode): () => void {
+  const context = canvas.getContext("2d")
+  if (!context) return () => undefined
+  const count = node.ir.render.vertexCount
+  const data = node.options.initialData ? new Float32Array(node.options.initialData) : new Float32Array(count * 8)
+  if (!node.options.initialData) for (let index = 0; index < count; index += 1) {
+    const offset = index * 8
+    data[offset] = ((index * 37) % Math.max(1, count)) / Math.max(1, count - 1) * 2 - 1
+    data[offset + 1] = ((index * 53) % Math.max(1, count)) / Math.max(1, count - 1) * 2 - 1
+    data[offset + 2] = (((index * 17) % 31) - 15) / 150
+    data[offset + 3] = (((index * 23) % 29) - 14) / 150
+    data[offset + 4] = 0.7; data[offset + 5] = 0.8; data[offset + 6] = 1; data[offset + 7] = 1
+  }
+  let request = 0
+  let stopped = false
+  const draw = () => {
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 8
+      context.fillStyle = `rgba(${data[offset + 4]! * 255},${data[offset + 5]! * 255},${data[offset + 6]! * 255},${data[offset + 7]!})`
+      context.fillRect((data[offset]! + 1) * canvas.width / 2, (1 - data[offset + 1]!) * canvas.height / 2, 2, 2)
+      if (node.ir.fallback === "canvas") {
+        data[offset] = Math.max(-1, Math.min(1, data[offset]! + data[offset + 2]!))
+        data[offset + 1] = Math.max(-1, Math.min(1, data[offset + 1]! + data[offset + 3]!))
+      }
+    }
+    if (!stopped && node.ir.fallback === "canvas") request = requestAnimationFrame(draw)
+  }
+  draw()
+  return () => { stopped = true; if (request) cancelAnimationFrame(request) }
+}
+
+function ReactGPUIslandCanvas({ node }: { readonly node: GPUIslandViewNode }): ReactNode {
+  const canvas = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    if (!canvas.current) return
+    canvas.current.dataset.vuneGpuBackend = node.ir.fallback === "canvas" ? "cpu-canvas" : "static"
+    return runReactParticleFallback(canvas.current, node)
+  }, [node])
+  return createElement("canvas", {
+    ref: canvas as RefObject<HTMLCanvasElement>,
+    width: node.options.width,
+    height: node.options.height,
+    className: node.options.class,
+    style: node.options.style as CSSProperties | undefined,
+    "aria-label": node.options.ariaLabel,
+    "data-vune-gpu-island": node.ir.id,
+    "data-vune-gpu-kind": node.ir.kind,
+    "data-vune-gpu-owner": "react",
+    "data-vune-gpu-readback": "forbidden",
+    "data-vune-gpu-fallback": node.ir.fallback,
+  })
+}
+
+const ContinuousCornerHost = forwardRef<HTMLElement, ContinuousCornerHostProps>(function ContinuousCornerHost(input, forwardedRef) {
+  const { as, children, ...hostProps } = input
+  const host = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    setForwardedRef(forwardedRef, host.current)
+    return () => setForwardedRef(forwardedRef, null)
+  }, [forwardedRef])
+  useEffect(() => {
+    const element = host.current
+    if (!element) return
+    attachContinuousCorners(element)
+    return () => disposeContinuousCorners(element)
+  }, [hostProps.style])
+  return createElement(as as string, { ...hostProps, ref: host } as any, children as ReactNode)
+})
 
 function alignmentCSSPosition(value: unknown, fallback = "center"): string {
   switch (value) {
@@ -289,8 +381,8 @@ function modifierProps(modifier: ViewModifierNode): Record<string, unknown> {
     case "accessibilityElement": result = { role: value === "contain" ? "group" : undefined, "data-accessibility-children": String(value ?? "ignore") }; break
     case "accessibilityAction": result = typeof modifier.arguments[1] === "function" ? { "data-accessibility-action": String(value), onClick: modifier.arguments[1] } : {}; break
     case "continuousCorners": {
-      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
-      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing } }
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : APPLE_CONTINUOUS_CORNER_SMOOTHING
+      result = { style: { cornerShape: "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": smoothing, "--vune-corner-preserve-smoothing": 1 } }
       break
     }
     case "style": result = { style: value }; break
@@ -1090,13 +1182,20 @@ function compileReactTemplate(value: CompiledTemplateValue): ReactTemplateFactor
 const renderer: VuneRenderer<ReactNode> = {
   element(type, props, ...children) {
     const component = isForeignComponent(type) ? type.component : type
-    return createElement(component as any, normalizeForeignProps(type, props, children) as any, ...children)
+    const normalizedProps = normalizeForeignProps(type, props, children)
+    if (typeof component === "string" && isContinuousCornerStyle(normalizedProps?.style)) {
+      return createElement(ContinuousCornerHost, { as: component, ...(normalizedProps ?? {}) } as ContinuousCornerHostProps, ...children)
+    }
+    return createElement(component as any, normalizedProps as any, ...children)
   },
   fragment(children) {
     return createElement(Fragment, null, ...children)
   },
   value(value) {
     return value as ReactNode
+  },
+  gpuIsland(node, identity) {
+    return createElement(ReactGPUIslandCanvas, { key: viewIdentityKey(identity), node })
   },
   template(node, renderSlot) {
     let factory = reactTemplateFactories.get(node.template)

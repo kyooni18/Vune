@@ -2,6 +2,7 @@ import { classNameOf, type Animation } from "@vune-ui/core"
 import { cssPropertyName, htmlAttributeName, isBooleanHtmlAttribute, isEnumeratedBooleanAttribute, normalizedTextAreaValue, type DomRenderContext } from "./shared.js"
 import { animateDomAttribute, animateDomStyles, cancelDomAnimations, cancelDomAttributeAnimation, cancelDomStyleAnimation, type DomStyleMotionChange } from "./motion.js"
 import { syncFocusScope } from "./focus.js"
+import { syncContinuousCorners } from "./continuous-corners.js"
 
 const XLINK_NS = "http://www.w3.org/1999/xlink"
 const XML_NS = "http://www.w3.org/XML/1998/namespace"
@@ -327,7 +328,10 @@ function applyDomPropsNow(
   if (!renderable) return
   const entries = Object.entries(renderable)
   if (entries.length === 0) return
-  if (renderable.ref !== undefined && renderable.ref !== null) context.hasRefs = true
+  // Keep callback/object refs indexed even when props are applied directly
+  // (for example during a direct initial mount or staged-prop activation).
+  // commitRefs() relies on refElements rather than scanning the DOM.
+  trackDomRef(element, renderable, context)
   for (const [key, value] of entries) {
     if (key === "children" || key === "key") continue
     if (/^on[A-Za-z]/.test(key)) {
@@ -353,6 +357,7 @@ export function applyDomProps(element: Element, props: Record<string, unknown> |
     && Object.prototype.hasOwnProperty.call(props, "data-vune-focus-scope")) {
     syncFocusScope(element, props["data-vune-focus-scope"])
   }
+  if (!context.stagingProps && !context.hydrating) syncContinuousCorners(element, props?.style)
 }
 
 export function commitStagedDomProps(element: Element, context: DomRenderContext): void {
@@ -369,6 +374,7 @@ export function commitStagedDomProps(element: Element, context: DomRenderContext
     if (Object.prototype.hasOwnProperty.call(props, "data-vune-focus-scope")) {
       syncFocusScope(element, props["data-vune-focus-scope"])
     }
+    syncContinuousCorners(element, props.style)
   } finally {
     context.stagingProps = stagingProps
     context.stagingEvents = stagingEvents
@@ -551,4 +557,5 @@ export function patchDomProps(
     trackDomRef(element, renderable, context)
   }
   syncFocusScope(element, renderable?.["data-vune-focus-scope"])
+  syncContinuousCorners(element, renderable?.style)
 }

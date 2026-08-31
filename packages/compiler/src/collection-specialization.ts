@@ -1,4 +1,9 @@
 import * as ts from "typescript"
+import {
+  analyzeVuneScalarExpression,
+  scalarExpressionMatchesPolicy,
+  unwrapCompilerExpression,
+} from "./effect-analysis.js"
 
 interface RowAnalysis {
   readonly pure: boolean
@@ -46,17 +51,7 @@ const unsafeCompiledCollectionProps = new Set([
   "__proto__",
 ])
 
-function unwrapExpression(expression: ts.Expression): ts.Expression {
-  let current = expression
-  while (ts.isParenthesizedExpression(current)
-    || ts.isAsExpression(current)
-    || ts.isTypeAssertionExpression(current)
-    || ts.isNonNullExpression(current)
-    || ts.isSatisfiesExpression(current)) {
-    current = current.expression
-  }
-  return current
-}
+const unwrapExpression = unwrapCompilerExpression
 
 function mergeAnalysis(...values: readonly RowAnalysis[]): RowAnalysis {
   return {
@@ -80,50 +75,15 @@ function analyzeScalarRowExpression(
   itemName: string,
   indexName: string | undefined,
 ): RowAnalysis {
-  const value = unwrapExpression(expression)
-  if (ts.isStringLiteralLike(value) || ts.isNumericLiteral(value) || ts.isBigIntLiteral(value)
-    || value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword
-    || value.kind === ts.SyntaxKind.NullKeyword) return { pure: true, indexDependent: false }
-  if (ts.isIdentifier(value)) {
-    if (value.text === itemName || value.text === "undefined") return { pure: true, indexDependent: false }
-    if (indexName && value.text === indexName) return { pure: true, indexDependent: true }
-    return { pure: false, indexDependent: false }
+  const facts = analyzeVuneScalarExpression(expression, itemName, indexName)
+  return {
+    pure: scalarExpressionMatchesPolicy(facts, {
+      allowCapturedIdentifiers: false,
+      allowBareItem: true,
+      allowDynamicItemElementAccess: true,
+    }),
+    indexDependent: facts.indexDependent,
   }
-  if (ts.isPropertyAccessExpression(value)) return analyzeScalarRowExpression(value.expression, itemName, indexName)
-  if (ts.isElementAccessExpression(value)) {
-    if (!value.argumentExpression) return { pure: false, indexDependent: false }
-    return mergeAnalysis(
-      analyzeScalarRowExpression(value.expression, itemName, indexName),
-      analyzeScalarRowExpression(value.argumentExpression, itemName, indexName),
-    )
-  }
-  if (ts.isPrefixUnaryExpression(value)) {
-    if (value.operator !== ts.SyntaxKind.PlusToken
-      && value.operator !== ts.SyntaxKind.MinusToken
-      && value.operator !== ts.SyntaxKind.ExclamationToken
-      && value.operator !== ts.SyntaxKind.TildeToken) return { pure: false, indexDependent: false }
-    return analyzeScalarRowExpression(value.operand, itemName, indexName)
-  }
-  if (ts.isBinaryExpression(value)) {
-    const operator = value.operatorToken.kind
-    if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) return { pure: false, indexDependent: false }
-    if (operator === ts.SyntaxKind.CommaToken) return { pure: false, indexDependent: false }
-    return mergeAnalysis(
-      analyzeScalarRowExpression(value.left, itemName, indexName),
-      analyzeScalarRowExpression(value.right, itemName, indexName),
-    )
-  }
-  if (ts.isConditionalExpression(value)) {
-    return mergeAnalysis(
-      analyzeScalarRowExpression(value.condition, itemName, indexName),
-      analyzeScalarRowExpression(value.whenTrue, itemName, indexName),
-      analyzeScalarRowExpression(value.whenFalse, itemName, indexName),
-    )
-  }
-  if (ts.isTemplateExpression(value)) {
-    return mergeAnalysis(...value.templateSpans.map(span => analyzeScalarRowExpression(span.expression, itemName, indexName)))
-  }
-  return { pure: false, indexDependent: false }
 }
 
 function analyzeCollectionStyle(

@@ -1,4 +1,10 @@
 import * as ts from "typescript"
+import {
+  analyzeVuneMapperFunction,
+  compilerFunctionResultExpression,
+  scalarExpressionMatchesPolicy,
+  unwrapCompilerExpression,
+} from "./effect-analysis.js"
 
 interface ImportedBindings {
   readonly names: Set<string>
@@ -10,15 +16,7 @@ interface ScopedStateBinding {
   readonly localName: string
 }
 
-function unwrapExpression(expression: ts.Expression): ts.Expression {
-  let current = expression
-  while (ts.isParenthesizedExpression(current)
-    || ts.isAsExpression(current)
-    || ts.isTypeAssertionExpression(current)
-    || ts.isNonNullExpression(current)
-    || ts.isSatisfiesExpression(current)) current = current.expression
-  return current
-}
+const unwrapExpression = unwrapCompilerExpression
 
 function importedBindings(sourceFile: ts.SourceFile, importedName: string): ImportedBindings {
   const names = new Set<string>()
@@ -103,7 +101,7 @@ function objectProperty(object: ts.ObjectLiteralExpression, name: string): ts.Pr
 function functionResultObject(expression: ts.Expression): ts.ObjectLiteralExpression | undefined {
   const value = unwrapExpression(expression)
   if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return undefined
-  const result = closureResult(value)
+  const result = compilerFunctionResultExpression(value)
   return result && ts.isObjectLiteralExpression(result) ? result : undefined
 }
 
@@ -164,95 +162,14 @@ function nestedScopeShadowsIdentifier(identifier: ts.Identifier, boundary: ts.Ar
   return false
 }
 
-function closureResult(closure: ts.ArrowFunction | ts.FunctionExpression): ts.Expression | undefined {
-  if (!ts.isBlock(closure.body)) return unwrapExpression(closure.body)
-  if (closure.body.statements.length !== 1) return undefined
-  const statement = closure.body.statements[0]
-  return ts.isReturnStatement(statement) && statement.expression ? unwrapExpression(statement.expression) : undefined
-}
-
-function safeScalarExpression(expression: ts.Expression, itemName: string, indexName: string | undefined): boolean {
-  const value = unwrapExpression(expression)
-  if (ts.isStringLiteralLike(value) || ts.isNumericLiteral(value) || ts.isBigIntLiteral(value)
-    || value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword
-    || value.kind === ts.SyntaxKind.NullKeyword) return true
-  // Captured scalar bindings keep ordinary closure semantics; only the row
-  // parameter itself is substituted with the descriptor-validated raw row.
-  // Calls and ambient property access stay rejected below because they may be
-  // effectful or accessor-backed.
-  if (ts.isIdentifier(value)) return value.text !== itemName
-  if (ts.isPropertyAccessExpression(value)) {
-    const owner = unwrapExpression(value.expression)
-    return ts.isIdentifier(owner) && owner.text === itemName
-  }
-  if (ts.isElementAccessExpression(value)) {
-    const owner = unwrapExpression(value.expression)
-    const key = value.argumentExpression && unwrapExpression(value.argumentExpression)
-    return ts.isIdentifier(owner) && owner.text === itemName
-      && Boolean(key && (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)))
-  }
-  if (ts.isPrefixUnaryExpression(value)) {
-    return (value.operator === ts.SyntaxKind.PlusToken || value.operator === ts.SyntaxKind.MinusToken
-      || value.operator === ts.SyntaxKind.ExclamationToken || value.operator === ts.SyntaxKind.TildeToken)
-      && safeScalarExpression(value.operand, itemName, indexName)
-  }
-  if (ts.isBinaryExpression(value)) {
-    const operator = value.operatorToken.kind
-    if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) return false
-    return operator !== ts.SyntaxKind.CommaToken
-      && safeScalarExpression(value.left, itemName, indexName)
-      && safeScalarExpression(value.right, itemName, indexName)
-  }
-  if (ts.isConditionalExpression(value)) {
-    return safeScalarExpression(value.condition, itemName, indexName)
-      && safeScalarExpression(value.whenTrue, itemName, indexName)
-      && safeScalarExpression(value.whenFalse, itemName, indexName)
-  }
-  if (ts.isTemplateExpression(value)) {
-    return value.templateSpans.every(span => safeScalarExpression(span.expression, itemName, indexName))
-  }
-  return false
-}
-
-function safeMappedObject(expression: ts.Expression, itemName: string, indexName: string | undefined): boolean {
-  const value = unwrapExpression(expression)
-  if (!ts.isObjectLiteralExpression(value)) return false
-  for (const property of value.properties) {
-    if (ts.isSpreadAssignment(property)) {
-      const spread = unwrapExpression(property.expression)
-      if (!ts.isIdentifier(spread) || spread.text !== itemName) return false
-      continue
-    }
-    if (!ts.isPropertyAssignment(property)
-      || (!ts.isIdentifier(property.name) && !ts.isStringLiteralLike(property.name) && !ts.isNumericLiteral(property.name))
-      || !safeScalarExpression(property.initializer, itemName, indexName)) return false
-  }
-  return true
-}
-
-function safeMappedResult(expression: ts.Expression, itemName: string, indexName: string | undefined): boolean {
-  const value = unwrapExpression(expression)
-  if (ts.isIdentifier(value) && value.text === itemName) return true
-  if (safeMappedObject(value, itemName, indexName)) return true
-  if (ts.isConditionalExpression(value)) {
-    return safeScalarExpression(value.condition, itemName, indexName)
-      && safeMappedResult(value.whenTrue, itemName, indexName)
-      && safeMappedResult(value.whenFalse, itemName, indexName)
-  }
-  return false
-}
-
 function safeMapper(expression: ts.Expression): boolean {
-  const value = unwrapExpression(expression)
-  if (!ts.isArrowFunction(value) && !ts.isFunctionExpression(value)) return false
-  if (value.asteriskToken || value.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false
-  if (value.parameters.length < 1 || value.parameters.length > 2) return false
-  const item = value.parameters[0]
-  const index = value.parameters[1]
-  if (!ts.isIdentifier(item.name) || item.dotDotDotToken || item.initializer) return false
-  if (index && (!ts.isIdentifier(index.name) || index.dotDotDotToken || index.initializer)) return false
-  const result = closureResult(value)
-  return Boolean(result && safeMappedResult(result, item.name.text, index && ts.isIdentifier(index.name) ? index.name.text : undefined))
+  const facts = analyzeVuneMapperFunction(expression)
+  return Boolean(facts && scalarExpressionMatchesPolicy(facts, {
+    allowCapturedIdentifiers: true,
+    allowBareItem: true,
+    allowDynamicItemElementAccess: false,
+    maxItemAccessDepth: 1,
+  }))
 }
 
 function stateValueOwner(

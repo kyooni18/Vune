@@ -151,6 +151,129 @@ test("@vune-ui/web bypasses exhaustive compiled View bodies on State-only text u
   dom.window.close()
 })
 
+test("@vune-ui/web evaluates only Patch IR slots owned by the invalidated State", async () => {
+  let left
+  let right
+  let bodyRuns = 0
+  let fullEvaluations = 0
+  let leftEvaluations = 0
+  let rightEvaluations = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "div", props: null, children: [
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 0, identity: ["element", 0, "element", 0] }] },
+      { kind: "element", type: "span", props: null, children: [{ kind: "slot", index: 1, identity: ["element", 1, "element", 0] }] },
+    ],
+  }, 2, ["text", "text"], [
+    { node: 2, kind: "text" },
+    { node: 4, kind: "text" },
+  ])
+  const App = defineView("SparseCompiledBoundaryPatch", {
+    initializers: [initializer("SparseCompiledBoundaryPatch()", args => args.length === 0)],
+    state: () => ({ left: left = State(0), right: right = State(0) }),
+    dependencies: ({ left, right }) => [left, right],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      patchDependencyIndices: { left: [0], right: [1] },
+      evaluatePatch: ({ left, right }, dirty, values) => {
+        if (dirty[0] & 1) { leftEvaluations += 1; values[0] = String(left.value) }
+        if (dirty[0] & 2) { rightEvaluations += 1; values[1] = String(right.value) }
+      },
+      evaluate: ({ left, right }) => {
+        fullEvaluations += 1
+        return { slots: [String(left.value), String(right.value)] }
+      },
+    },
+    body: ({ left, right }) => {
+      bodyRuns += 1
+      return compiledTemplate(template, [String(left.value), String(right.value)])
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  const unmount = mount(App(), container)
+  const texts = [...container.querySelectorAll("span")].map(element => element.firstChild)
+  assert.deepEqual(texts.map(text => text?.nodeValue), ["0", "0"])
+
+  left.value = 7
+  await Promise.resolve(); await Promise.resolve()
+  assert.deepEqual(texts.map(text => text?.nodeValue), ["7", "0"])
+  assert.equal(leftEvaluations, 1)
+  assert.equal(rightEvaluations, 0)
+  assert.equal(fullEvaluations, 0)
+  assert.equal(bodyRuns, 1)
+
+  right.value = 9
+  await Promise.resolve(); await Promise.resolve()
+  assert.deepEqual(texts.map(text => text?.nodeValue), ["7", "9"])
+  assert.equal(leftEvaluations, 1)
+  assert.equal(rightEvaluations, 1)
+  assert.equal(fullEvaluations, 0)
+  assert.equal(bodyRuns, 1)
+
+  unmount()
+  dom.window.close()
+})
+
+test("@vune-ui/web applies general compiled Patch IR through a stable host-node table", async () => {
+  let value
+  let bodyRuns = 0
+  const template = defineCompiledTemplate({
+    kind: "element", type: "button", props: null, children: ["old"],
+  }, 0, [], [
+    { node: 1, kind: "text" },
+    { node: 0, kind: "attribute", key: "aria-label" },
+    { node: 0, kind: "property", key: "disabled" },
+    { node: 0, kind: "style", key: "--patch-x" },
+    { node: 0, kind: "class", key: "active" },
+  ])
+  const App = defineView("CompiledGeneralPatch", {
+    initializers: [initializer("CompiledGeneralPatch()", args => args.length === 0)],
+    state: () => ({ value: value = State(0) }),
+    dependencies: ({ value }) => [value],
+    dependenciesComplete: true,
+    compiledBody: {
+      template,
+      evaluate: ({ value }) => ({
+        slots: [],
+        patch: {
+          dirty: new Uint32Array([31]),
+          values: [`value-${value.value}`, `label-${value.value}`, value.value > 0, `${value.value}px`, value.value > 0],
+        },
+      }),
+    },
+    body: () => {
+      bodyRuns += 1
+      return compiledTemplate(template, [])
+    },
+  })
+
+  const dom = new JSDOM("<div id=app></div>")
+  const container = dom.window.document.querySelector("#app")
+  assert.ok(container)
+  const unmount = mount(App().className("outer"), container)
+  const button = container.querySelector("button")
+  const text = button?.firstChild
+  assert.equal(bodyRuns, 1)
+
+  value.value = 4
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.strictEqual(container.querySelector("button"), button)
+  assert.strictEqual(button?.firstChild, text)
+  assert.equal(text?.nodeValue, "value-4")
+  assert.equal(button?.getAttribute("aria-label"), "label-4")
+  assert.equal(button?.disabled, true)
+  assert.equal(button?.style.getPropertyValue("--patch-x"), "4px")
+  assert.equal(button?.classList.contains("active"), true)
+  assert.equal(button?.classList.contains("outer"), true)
+  assert.equal(bodyRuns, 1)
+
+  unmount()
+  dom.window.close()
+})
+
 test("@vune-ui/web direct-patches compiled State modifiers without rerunning the View body", async () => {
   let count
   let bodyRuns = 0

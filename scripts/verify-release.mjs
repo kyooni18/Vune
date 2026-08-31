@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const canonicalPackages = ["animation", "core", "compiler", "react", "vue", "web", "vite"]
+const canonicalPackages = ["execution", "animation", "core", "compiler", "react", "vue", "web", "vite"]
 const compatibilityPackages = ["legacy-react"]
 const releaseTargets = [
   { dir: root, canonical: false, publishPrefix: "dist/", requireExports: true },
@@ -121,6 +121,7 @@ for (const target of releaseTargets) {
       '@vune-ui/animation',
       '@vune-ui/compiler',
       '@vune-ui/core',
+      '@vune-ui/execution',
       '@vune-ui/react',
       '@vune-ui/vite',
       '@vune-ui/vue',
@@ -148,6 +149,7 @@ try {
     dependencies: {
       "vune-ui": `file:${packedTarballs.get("vune-ui")}`,
       "@vune-ui/core": `file:${packedTarballs.get("@vune-ui/core")}`,
+      "@vune-ui/execution": `file:${packedTarballs.get("@vune-ui/execution")}`,
       // Satisfy external dependencies/peers from this workspace so the
       // canonical packed-install smoke test is genuinely cache-independent.
       react: localDependency("react"),
@@ -193,6 +195,7 @@ try {
       "@vune-ui/animation": dependency("@vune-ui/animation"),
       "@vune-ui/core": dependency("@vune-ui/core"),
       "@vune-ui/compiler": dependency("@vune-ui/compiler"),
+      "@vune-ui/execution": dependency("@vune-ui/execution"),
       "@vune-ui/legacy-react": dependency("@vune-ui/legacy-react"),
       "@vune-ui/react": dependency("@vune-ui/react"),
       "@vune-ui/vue": dependency("@vune-ui/vue"),
@@ -210,6 +213,7 @@ try {
   const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import * as canonical from "vune-ui";
     import { spring } from "@vune-ui/animation";
+    import { FrameBudgetSignal } from "@vune-ui/execution";
     import { Text } from "vune-ui";
     import { renderToStaticMarkup } from "react-dom/server";
     import { render as renderReact } from "@vune-ui/react";
@@ -219,6 +223,7 @@ try {
     import { vunePlugin } from "@vune-ui/vite";
     if (typeof canonical.Text !== "function") throw new Error("packed canonical entry failed");
     if (spring().kind !== "spring") throw new Error("packed animation runtime failed");
+    if (new FrameBudgetSignal().snapshot().level !== "idle") throw new Error("packed execution runtime failed");
     if (renderToStaticMarkup(renderReact(Text("react"))) !== "<span>react</span>") throw new Error("packed React render failed");
     if (!renderVue(Text("vue"))) throw new Error("packed Vue render failed");
     if (renderToHTML(Text("packed")) !== "<span>packed</span>") throw new Error("packed Web render failed");

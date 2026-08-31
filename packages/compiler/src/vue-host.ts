@@ -1,3 +1,4 @@
+import ts from "typescript"
 import { createSemanticModel } from "./semantic.js"
 import { transformVuneSource } from "./pipeline.js"
 
@@ -44,8 +45,18 @@ export function generateVueHostModule(
   fileName: string,
   options: VuneVueHostGenerationOptions,
 ): VuneVueHostGenerationResult {
-  const model = createSemanticModel(source, fileName, transformVuneSource(source, fileName))
-  const view = options.viewName ? model.view(options.viewName) : model.views[0]
+  const generatedSource = transformVuneSource(source, fileName)
+  const model = createSemanticModel(source, fileName, generatedSource)
+  const defaultExportName = model.typescript.statements.flatMap(statement => ts.isExportAssignment(statement)
+    && !statement.isExportEquals
+    && ts.isIdentifier(statement.expression)
+    ? [statement.expression.text]
+    : []).at(0)
+  const view = options.viewName
+    ? model.view(options.viewName)
+    : defaultExportName
+      ? model.view(defaultExportName)
+      : model.views[0]
   if (!view) throw new TypeError(`No Vune View found in ${fileName}`)
   if (options.viewName && view.name !== options.viewName && view.qualifiedName !== options.viewName) {
     throw new TypeError(`Vune View ${options.viewName} was not found in ${fileName}`)
@@ -76,26 +87,35 @@ export function generateVueHostModule(
     ? `, { initializerIndex: ${initializerIndex}${aliasSource} }`
     : ""
   const hostName = `${view.name}VueHost`
+  // A native Web host cannot materialize legacy Vue slot VNodes. Keep the
+  // fast Web placement for slotless Views, but use the Vue materializer at the
+  // compatibility boundary when the initializer owns a ViewBuilder slot.
+  const hostFactory = initializer?.parameters.some(parameter => parameter.kind === "viewBuilder")
+    ? "createVuneVueHost"
+    : "createVuneWebHost"
   const propsDeclaration = properties.length > 0
     ? [`export interface ${propsTypeName} {`, ...properties, "}"].join("\n")
     : `export interface ${propsTypeName} {}`
   const emitTypes = options.emitTypes !== false
+  const viewImport = !options.viewName && defaultExportName === view.name
+    ? `import ${view.name} from ${JSON.stringify(options.viewImport)}`
+    : `import { ${view.name} } from ${JSON.stringify(options.viewImport)}`
   const code = emitTypes
     ? [
-      `import { ${view.name} } from ${JSON.stringify(options.viewImport)}`,
-      `import { createVuneWebHost } from ${JSON.stringify(options.hostFactoryImport ?? "@/vune/compat-vue.js")}`,
+      viewImport,
+      `import { ${hostFactory} } from ${JSON.stringify(options.hostFactoryImport ?? "@/vune/compat-vue.js")}`,
       "",
       propsDeclaration,
       "",
-      `const ${hostName} = createVuneWebHost(${view.name}${hostOptions})`,
+      `const ${hostName} = ${hostFactory}(${view.name}${hostOptions})`,
       `export default ${hostName} as typeof ${hostName} & { new(): { $props: ${propsTypeName} } }`,
       "",
     ].join("\n")
     : [
-      `import { ${view.name} } from ${JSON.stringify(options.viewImport)}`,
-      `import { createVuneWebHost } from ${JSON.stringify(options.hostFactoryImport ?? "@/vune/compat-vue.js")}`,
+      viewImport,
+      `import { ${hostFactory} } from ${JSON.stringify(options.hostFactoryImport ?? "@/vune/compat-vue.js")}`,
       "",
-      `const ${hostName} = createVuneWebHost(${view.name}${hostOptions})`,
+      `const ${hostName} = ${hostFactory}(${view.name}${hostOptions})`,
       `export default ${hostName}`,
       "",
     ].join("\n")

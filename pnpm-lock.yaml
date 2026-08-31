@@ -17,6 +17,9 @@ importers:
       '@vune-ui/core':
         specifier: workspace:*
         version: link:packages/core
+      '@vune-ui/execution':
+        specifier: workspace:*
+        version: link:packages/execution
       '@vune-ui/react':
         specifier: workspace:*
         version: link:packages/react
@@ -87,24 +90,37 @@ importers:
 
   editors/vscode: {}
 
-  packages/animation: {}
+  packages/animation:
+    dependencies:
+      '@vune-ui/execution':
+        specifier: workspace:*
+        version: link:../execution
 
   packages/compiler:
     dependencies:
       '@vune-ui/core':
         specifier: workspace:*
         version: link:../core
+      '@vune-ui/execution':
+        specifier: workspace:*
+        version: link:../execution
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@vune-ui/execution':
+        specifier: workspace:*
+        version: link:../execution
 
   packages/create-vune-ui:
     dependencies:
       vune-ui:
         specifier: workspace:*
         version: link:../..
+
+  packages/execution: {}
 
   packages/legacy-react:
     dependencies:

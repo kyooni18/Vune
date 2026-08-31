@@ -3,6 +3,7 @@ import type { FrameOptions } from "../layout.js"
 import type { Transition } from "../transition.js"
 import type { ContentTransition } from "../content-transition.js"
 import type { VuneStyleProperties } from "../html.js"
+import { APPLE_CONTINUOUS_CORNER_SMOOTHING } from "../corners.js"
 import { arrayCheck, snapshotArrayValues } from "./arrays.js"
 import type { ClassValue, Length, ModifiableViewNode, Modifiers, OffsetValue, ScaleEffectValue, ViewModifierNode, ViewNode } from "./types.js"
 
@@ -303,7 +304,7 @@ const modifierPrototype = Object.freeze(Object.assign(Object.create(Object.proto
   withProps(this: ViewNode, value: Record<string, unknown>) { return applyModifier(this, "withProps", [value]) },
   keyed(this: ViewNode, value: string | number) { return applyModifier(this, "keyed", [value]) },
   elementRef(this: ViewNode, value: unknown) { return applyModifier(this, "elementRef", [value]) },
-  continuousCorners(this: ViewNode, smoothing = 0.6) { return applyModifier(this, "continuousCorners", [smoothing]) },
+  continuousCorners(this: ViewNode, smoothing = APPLE_CONTINUOUS_CORNER_SMOOTHING) { return applyModifier(this, "continuousCorners", [smoothing]) },
 }) as Modifiers)
 
 /** Add the shared immutable modifier surface to a graph node. */

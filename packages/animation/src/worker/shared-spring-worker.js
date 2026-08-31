@@ -13,7 +13,8 @@ function canUseSharedMemory() {
 async function createWorker(url) {
   if (typeof globalThis.Worker === 'function') return new globalThis.Worker(url, { type: 'module' });
   if (typeof process !== 'undefined' && process.versions?.node) {
-    const { Worker } = await import('node:worker_threads');
+    const nodeWorkers = ['node', 'worker_threads'].join(':');
+    const { Worker } = await import(/* @vite-ignore */ nodeWorkers);
     const execArgv = process.execArgv.filter((arg) => !arg.startsWith('--input-type'));
     try {
       return new Worker(url, { type: 'module', execArgv });

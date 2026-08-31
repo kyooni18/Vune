@@ -81,6 +81,9 @@ export function renderViewNode<Output>(
       ...snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)),
     )
   }
+  if (value.kind === 'gpu-island') {
+    throw new TypeError('Legacy React renderer does not support GPU island nodes')
+  }
   return renderer.element(
     value.type,
     value.props,

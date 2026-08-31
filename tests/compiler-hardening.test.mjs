@@ -65,6 +65,18 @@ test("statement-aware ViewBuilder recursively collects conditional, loop, and tr
   parses(output)
 })
 
+test("statement-aware ViewBuilder lowers labeled nested calls before TypeScript parser recovery", () => {
+  const source = `VStack() {
+  if (enabled) {
+    Badge("ready", className: "status")
+  }
+}`
+  const output = transformVuneSource(source, "StatementAwareNamedCall.vune.ts")
+  assert.match(output, /Badge\("ready", namedArguments\(\{ className: "status" \}\)\)/)
+  assert.doesNotMatch(output, /Badge\("ready", className, "status"\)/)
+  parses(output)
+})
+
 test("top-level State ownership is per-view and shared State remains module-scoped", () => {
   const source = `import { State } from "vune-ui"
 import { view } from "@vune-ui/react"
@@ -267,6 +279,52 @@ test("dynamic Button values defer initializer choice instead of producing a fals
   parses(transformVuneSource(named, "DynamicNamedButton.vune.ts"))
 })
 
+test("SwiftUI labeled calls remain valid TypeScript inside struct View bodies", () => {
+  const source = `import { Button, Text } from "vune-ui"
+export struct ToolbarButton: View {
+  let action: () => void
+  init(action: () => void) { self.action = action }
+  var body: some View {
+    Button(action: action, label: { Text("Save") })
+  }
+}`
+  const output = transformVuneSource(source, "StructNamedButton.vune")
+  assert.match(output, /Button\(namedArguments\(\{ action: action, label:/)
+  assert.doesNotMatch(output, /Button\(action,\s*action,\s*label,/)
+  parses(output)
+})
+
+test("parameterized Swift action closures lower inside struct View bodies", () => {
+  const source = `import { Text } from "vune-ui"
+struct Field: View {
+  let onChange: (value: string) => void
+  init(@Action onChange: (value: string) => void) { self.onChange = onChange }
+  var body: some View { Text("Field") }
+}
+export struct Form: View {
+  var body: some View {
+    Field(onChange: { value in save(value) })
+  }
+}`
+  const output = transformVuneSource(source, "ParameterizedAction.vune")
+  assert.match(output, /\(value\) => \{\s*save\(value\)\s*\}/)
+  assert.doesNotMatch(output, /value\s+in/)
+  assert.match(output, /type: "\(value: string\) => void", defaultValue: undefined/)
+  parses(output)
+})
+
+test("aliased dollar imports are never mistaken for Binding shorthand", () => {
+  const source = `import { $i as currentUser } from "./identity.js"
+import { Text } from "vune-ui"
+export struct AccountLabel: View {
+  var body: some View { Text(currentUser?.username ?? "guest") }
+}`
+  const output = transformVuneSource(source, "DollarImport.vune")
+  assert.match(output, /import \{ \$i as currentUser \} from "\.\/identity\.js"/)
+  assert.doesNotMatch(output, /Binding\(i\)/)
+  parses(output)
+})
+
 
 test("Grid and LazyGrid static specialization indices match runtime initializer order", () => {
   const source = `import { Grid, LazyGrid, Text } from "vune-ui"
@@ -355,6 +413,17 @@ const view = Text("Press return .red to confirm")`
   assert.match(output, /Press return \.red to confirm/)
   assert.match(output, /return \.red inside a comment/)
   assert.doesNotMatch(output, /"red" to confirm/)
+  parses(output)
+})
+
+test("binding shorthand never rewrites dollar-prefixed import or export aliases", () => {
+  const source = `import { $i as currentUser } from "./identity.js"
+export { $i as exportedUser } from "./identity.js"
+const title = currentUser?.name ?? "guest"`
+  const output = transformVuneSource(source, "DollarImportAlias.vune.ts")
+  assert.match(output, /import \{ \$i as currentUser \}/)
+  assert.match(output, /export \{ \$i as exportedUser \}/)
+  assert.doesNotMatch(output, /Binding\(i\)/)
   parses(output)
 })
 

@@ -11,6 +11,11 @@ The dependency direction is:
 .vune / .vune.ts -> @vune-ui/compiler -> Vune View graph -> @vune-ui/react, @vune-ui/vue, or @vune-ui/web
 ```
 
+Data-oriented acceleration follows the separate
+[Resident Compute Islands](docs/RESIDENT_COMPUTE.md) rule: only an entire
+packed producer-to-consumer region may be promoted. Ordinary object State and
+DOM rendering remain on their existing paths.
+
 React is a renderer, not the definition of a Vune View.
 
 New framework code should import graph values from `vune-ui` and select a renderer
@@ -682,3 +687,6 @@ do not guarantee pixel-for-pixel SwiftUI behavior.
 See [Getting started](docs/GETTING_STARTED.md), [Design](docs/DESIGN.md),
 [Styling](docs/STYLING.md), [Migration](docs/MIGRATION.md), [API](docs/API.md),
 [Roadmap](docs/ROADMAP.md), and [Changelog](docs/CHANGELOG.md).
+
+For a complete learning-oriented treatment, read [Vune: a human-first guide](docs/VUNE_BOOK.md).
+For coding agents and compact retrieval, use the [Vune AI agent reference](docs/AI_AGENT_REFERENCE.md).

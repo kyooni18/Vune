@@ -10,12 +10,16 @@ export {
   keyedCollectionEntries,
   keyedCollectionEntryKey,
   keyedCollectionView,
+  gpuIslandView,
 } from "./graph/nodes.js"
 export { renderViewNodeAt } from "./graph/renderer.js"
 export { ignoresSafeAreaStyle, paddingStyle, safeAreaPaddingStyle } from "./internal-layout.js"
 export { mapStateArrayData, reactiveIdentity } from "./state.js"
 export { snapshotStateArrayForSubscription } from "./state-internal.js"
 export type {
+  CompiledPatchIR,
+  CompiledPatchLocation,
+  CompiledPatchValues,
   CompiledCollectionPlan,
   CompiledCollectionRow,
   CompiledTemplateSlotKind,
@@ -25,5 +29,8 @@ export type {
   KeyedCollectionEntry,
   KeyedCollectionIdentity,
   KeyedCollectionViewNode,
+  GPUIslandGraphIR,
+  GPUIslandViewNode,
+  GPUIslandViewOptions,
 } from "./graph/types.js"
 export type { StateListener, StateMutation, StateMutationBatch } from "./state.js"

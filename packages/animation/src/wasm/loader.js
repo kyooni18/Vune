@@ -1,6 +1,7 @@
 async function readWasm(url) {
   if (url.protocol === 'file:' && typeof process !== 'undefined' && process.versions?.node) {
-    const { readFile } = await import('node:fs/promises');
+    const nodeFs = ['node', 'fs/promises'].join(':');
+    const { readFile } = await import(/* @vite-ignore */ nodeFs);
     return readFile(url);
   }
   const response = await fetch(url);

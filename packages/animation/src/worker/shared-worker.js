@@ -2,7 +2,8 @@ import { instantiateSharedSpringKernel } from '../wasm/loader.js';
 
 let nodeParentPort = null;
 try {
-  ({ parentPort: nodeParentPort } = await import('node:worker_threads'));
+  const nodeWorkers = ['node', 'worker_threads'].join(':');
+  ({ parentPort: nodeParentPort } = await import(/* @vite-ignore */ nodeWorkers));
 } catch {}
 
 const endpoint = nodeParentPort ?? globalThis;

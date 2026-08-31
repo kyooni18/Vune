@@ -6,11 +6,15 @@ import { collectStateReads, isStateRef, type StateRef } from "../state.js"
 import type {
   CompiledTemplateDescriptor,
   CompiledTemplateValue,
+  CompiledPatchLocation,
   CompiledCollectionPlan,
   CompiledViewBodyPlan,
   ForeignComponentDescriptor,
   ForeignComponentOptions,
   GeometryProxy,
+  GPUIslandGraphIR,
+  GPUIslandViewNode,
+  GPUIslandViewOptions,
   LazyViewNode,
   ModifiableViewNode,
   ViewGraphChild,
@@ -140,6 +144,7 @@ export function defineCompiledTemplate(
   root: CompiledTemplateValue,
   slotCount: number,
   slotKinds: readonly ("view" | "text")[] = Array(slotCount).fill("view"),
+  patchLocations: readonly CompiledPatchLocation[] = [],
 ): CompiledTemplateDescriptor {
   if (!Number.isSafeInteger(slotCount) || slotCount < 0) throw new RangeError("Compiled template slotCount must be a non-negative safe integer")
   if (slotKinds.length !== slotCount) throw new RangeError(`Compiled template expected ${slotCount} slot kinds but received ${slotKinds.length}`)
@@ -148,11 +153,29 @@ export function defineCompiledTemplate(
   const snapshot = snapshotCompiledTemplateValue(root, slotCount, slotIdentities)
   const missing = slotIdentities.findIndex(identity => identity === undefined)
   if (missing >= 0) throw new RangeError(`Compiled template slot ${missing} is declared but never referenced`)
+  const patchIR = patchLocations.length > 0 ? Object.freeze({
+    version: 1 as const,
+    locations: Object.freeze(patchLocations.map(location => {
+      if (!Number.isSafeInteger(location.node) || location.node < 0) throw new RangeError("Compiled patch node must be a non-negative safe integer")
+      if (location.kind === "child-range" && (!Number.isSafeInteger(location.endNode) || location.endNode < 0 || location.endNode === location.node)) {
+        throw new RangeError("Compiled child-range patch requires distinct non-negative safe node indices")
+      }
+      if ((location.kind === "attribute" || location.kind === "property" || location.kind === "style") && (!location.key || /^on/iu.test(location.key))) {
+        throw new TypeError(`Unsafe compiled ${location.kind} patch key`)
+      }
+      if (location.kind === "property" && ["__proto__", "constructor", "innerHTML", "outerHTML", "prototype", "textContent"].includes(location.key)) {
+        throw new TypeError("Unsafe compiled property patch key")
+      }
+      return Object.freeze({ ...location })
+    })),
+    dirtyWordCount: Math.ceil(patchLocations.length / 32),
+  }) : undefined
   return Object.freeze({
     root: snapshot,
     slotCount,
     slotIdentities: Object.freeze(slotIdentities as readonly (readonly (string | number)[])[]),
     slotKinds: Object.freeze([...slotKinds]),
+    ...(patchIR ? { patchIR } : {}),
   })
 }
 
@@ -323,6 +346,10 @@ export function viewHost(
     ...(compiledBody ? { compiledBody: Object.freeze({
       template: compiledBody.template,
       ...(compiledBody.patchesModifiers ? { patchesModifiers: true } : {}),
+      ...(compiledBody.patchDependencyIndices ? { patchDependencyIndices: Object.freeze(Object.fromEntries(
+        Object.entries(compiledBody.patchDependencyIndices).map(([key, indices]) => [key, Object.freeze([...indices])]),
+      )) } : {}),
+      ...(compiledBody.evaluatePatch ? { evaluatePatch: compiledBody.evaluatePatch } : {}),
       evaluate: compiledBody.evaluate,
     }) } : {}),
   }, true)
@@ -349,13 +376,77 @@ export function lazyView(
   }, true)
 }
 
+function positiveDimension(value: number | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${label} must be a positive safe integer`)
+  return value
+}
+
+/**
+ * Internal compiler/runtime bridge for a strict compute-to-render GPU island.
+ * The exact proof is rechecked here so hand-written graph values cannot turn a
+ * CPU/object region into an implicit native backend.
+ */
+export function gpuIslandView(ir: GPUIslandGraphIR, options: GPUIslandViewOptions = {}): ModifiableViewNode {
+  const residentBufferName = ir?.kind === "line-chart" ? "points" : "particles"
+  const residentBuffer = ir?.buffers?.find(buffer => buffer.name === residentBufferName)
+  if (!ir || ir.version !== 1 || (ir.kind !== "particle-field" && ir.kind !== "line-chart") || ir.typeProof !== "numeric-packed"
+    || ir.inputResidency !== "gpu" || ir.outputResidency !== "gpu" || ir.readback !== "forbidden"
+    || ir.materialization !== "renderer-owned" || ir.lifetime !== "frame-persistent"
+    || ir.render?.target !== "gpu-canvas" || !Number.isSafeInteger(ir.render.vertexCount)
+    || ir.render.vertexCount <= 0 || (ir.fallback !== "canvas" && ir.fallback !== "static")) {
+    throw new TypeError("GPU Island graph nodes require compiler-proven gpu-to-gpu, no-readback IR")
+  }
+  if (!residentBuffer || residentBuffer.authority !== "gpu" || residentBuffer.cpuReadable !== false
+    || !residentBuffer.usages.includes("storage") || !residentBuffer.usages.includes("vertex")
+    || ir.compute.workgroupSize !== 64 || !ir.compute.writes.includes(residentBufferName)
+    || !ir.render.reads.includes(residentBufferName) || ir.compute.dispatchCount !== Math.ceil(ir.render.vertexCount / 64)) {
+    throw new TypeError("GPU Island graph nodes require one GPU-authoritative compute-to-render resident buffer")
+  }
+  if (ir.kind === "particle-field" && residentBuffer.stride !== 32) {
+    throw new TypeError("ParticleField GPU Islands require the canonical 32-byte particle layout")
+  }
+  if (ir.kind === "line-chart" && (residentBuffer.stride !== 16 || ir.render.vertexCount < 2 || ir.render.topology !== "line-strip")) {
+    throw new TypeError("LineChart GPU Islands require the canonical 16-byte point layout and line-strip renderer")
+  }
+  const width = positiveDimension(options.width, "GPU Island width")
+  const height = positiveDimension(options.height, "GPU Island height")
+  const expectedFloats = residentBuffer.byteLength / Float32Array.BYTES_PER_ELEMENT
+  if (options.initialData && (!(options.initialData instanceof Float32Array) || options.initialData.length !== expectedFloats)) {
+    throw new RangeError(`GPU Island initialData must contain exactly ${expectedFloats} float values`)
+  }
+  const initialData = options.initialData ? new Float32Array(options.initialData) : undefined
+  if (options.clearColor && (options.clearColor.length !== 4 || options.clearColor.some(channel => !Number.isFinite(channel)))) {
+    throw new TypeError("GPU Island clearColor must contain four finite channels")
+  }
+  const clearColor = options.clearColor ? Object.freeze([...options.clearColor] as [number, number, number, number]) : undefined
+  const style = options.style === undefined
+    ? undefined
+    : snapshotRecord(options.style as Record<string, unknown>, true) as Readonly<Record<string, unknown>>
+  const node: GPUIslandViewNode = Object.freeze({
+    kind: "gpu-island",
+    ir,
+    options: Object.freeze({
+      ...(options.experimentalResidentCompute === true ? { experimentalResidentCompute: true } : {}),
+      ...(width === undefined ? {} : { width }),
+      ...(height === undefined ? {} : { height }),
+      ...(options.class === undefined ? {} : { class: options.class }),
+      ...(style === undefined ? {} : { style }),
+      ...(options.ariaLabel === undefined ? {} : { ariaLabel: options.ariaLabel }),
+      ...(initialData === undefined ? {} : { initialData }),
+      ...(clearColor === undefined ? {} : { clearColor }),
+    }),
+  })
+  return decorate(node, true)
+}
+
 export function isViewNode(value: unknown): value is ViewNode {
   if (typeof value !== "object" || value === null) return false
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, "kind")
     if (!descriptor || !("value" in descriptor)) return false
     const kind = descriptor.value
-    return kind === "element" || kind === "fragment" || kind === "template" || kind === "collection" || kind === "view" || kind === "geometry" || kind === "lazy" || kind === "modified"
+    return kind === "element" || kind === "fragment" || kind === "template" || kind === "collection" || kind === "view" || kind === "geometry" || kind === "lazy" || kind === "gpu-island" || kind === "modified"
   } catch {
     return false
   }

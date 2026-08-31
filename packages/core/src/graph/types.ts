@@ -142,6 +142,28 @@ export type CompiledTemplateValue = ViewGraphLeaf | CompiledTemplateSlot | Compi
 
 export type CompiledTemplateSlotKind = "view" | "text"
 
+/** Renderer-neutral location inside the stable host-node table of a compiled template. */
+export type CompiledPatchLocation =
+  | { readonly node: number; readonly kind: "text" }
+  | { readonly node: number; readonly kind: "attribute"; readonly key: string }
+  | { readonly node: number; readonly kind: "property"; readonly key: string }
+  | { readonly node: number; readonly kind: "style"; readonly key: string }
+  | { readonly node: number; readonly kind: "class"; readonly key?: string }
+  | { readonly node: number; readonly kind: "child-range"; readonly endNode: number }
+
+/** Compact renderer-neutral patch program. Renderers retain ownership of materialization. */
+export interface CompiledPatchIR {
+  readonly version: 1
+  readonly locations: readonly CompiledPatchLocation[]
+  readonly dirtyWordCount: number
+}
+
+/** Values produced by a compiler plan; dirty is a packed candidate bitset. */
+export interface CompiledPatchValues {
+  readonly dirty: Uint32Array
+  readonly values: readonly unknown[]
+}
+
 /** Immutable static tree plus the number of runtime graph/value slots it consumes. */
 export interface CompiledTemplateDescriptor {
   readonly root: CompiledTemplateValue
@@ -150,6 +172,8 @@ export interface CompiledTemplateDescriptor {
   readonly slotIdentities: readonly (readonly ViewIdentitySegment[])[]
   /** Compiler-proven slot shape. Older/manual templates default to generic view slots. */
   readonly slotKinds: readonly CompiledTemplateSlotKind[]
+  /** Optional compact host patch program. Ordinary framework renderers may ignore it. */
+  readonly patchIR?: CompiledPatchIR
 }
 
 /** Runtime instance of a compiler template. Only its slot array changes between evaluations. */
@@ -168,6 +192,8 @@ export type CompiledViewModifierSpec = readonly [name: string, arguments: readon
 
 export interface CompiledViewBodyEvaluation {
   readonly slots: readonly ViewGraphValue[]
+  /** Compiler-emitted candidate patches. The renderer filters unchanged values. */
+  readonly patch?: CompiledPatchValues
   /** Optional non-structural modifier graph proven safe for direct renderer patching. */
   readonly modifiers?: readonly CompiledViewModifierSpec[]
 }
@@ -176,6 +202,17 @@ export interface CompiledViewBodyPlan<Props extends object = Record<string, unkn
   readonly template: CompiledTemplateDescriptor
   /** Lets renderers reject modifier patching before evaluating a plan when the surrounding graph makes it unsafe. */
   readonly patchesModifiers?: boolean
+  /**
+   * Compiler-proven mapping from a State-bearing View prop to Patch IR
+   * locations affected by that dependency. Renderers may resolve the prop to
+   * a StateRef once and keep a reusable dirty mask per mounted boundary.
+   */
+  readonly patchDependencyIndices?: Readonly<Record<string, readonly number[]>>
+  /**
+   * Optional sparse patch evaluator. `values` is renderer-owned scratch
+   * storage and only indices selected by `dirty` need to be written.
+   */
+  readonly evaluatePatch?: (props: Props, dirty: Uint32Array, values: unknown[]) => void
   /** Re-evaluate only dynamic slots/modifier arguments, never the immutable View body graph. */
   readonly evaluate: (props: Props) => CompiledViewBodyEvaluation
 }
@@ -280,6 +317,63 @@ export interface LazyViewNode {
   readonly children: readonly ViewGraphChild[]
 }
 
+/**
+ * The renderer-facing subset of compiler-owned GPU Island IR. Core transports
+ * this proof but never selects a device, creates a canvas, or executes a pass.
+ */
+export interface GPUIslandGraphIR {
+  readonly version: 1
+  readonly id: string
+  readonly kind: "particle-field" | "line-chart"
+  readonly typeProof: "numeric-packed"
+  readonly inputResidency: "gpu"
+  readonly outputResidency: "gpu"
+  readonly readback: "forbidden"
+  readonly materialization: "renderer-owned"
+  readonly lifetime: "frame-persistent"
+  readonly buffers: readonly {
+    readonly name: string
+    readonly byteLength: number
+    readonly stride: number
+    readonly usages: readonly ("storage" | "vertex" | "uniform" | "copy-dst")[]
+    readonly authority: "gpu"
+    readonly cpuReadable: false
+  }[]
+  readonly compute: {
+    readonly workgroupSize: number
+    readonly dispatchCount: number
+    readonly reads: readonly string[]
+    readonly writes: readonly string[]
+  }
+  readonly render: {
+    readonly topology?: "point-list" | "line-list" | "line-strip" | "triangle-list"
+    readonly vertexCount: number
+    readonly reads: readonly string[]
+    readonly target: "gpu-canvas"
+  }
+  readonly fallback: "canvas" | "static"
+}
+
+export interface GPUIslandViewOptions {
+  /** Explicit per-island opt-in; mount-level policy may still disable it. */
+  readonly experimentalResidentCompute?: boolean
+  readonly width?: number
+  readonly height?: number
+  readonly class?: string
+  readonly style?: Readonly<Record<string, unknown>>
+  readonly ariaLabel?: string
+  /** One initial upload. Per-frame GPU-to-CPU materialization is forbidden. */
+  readonly initialData?: Float32Array
+  readonly clearColor?: readonly [number, number, number, number]
+}
+
+/** Internal graph boundary whose materialization and lifetime belong to the renderer. */
+export interface GPUIslandViewNode {
+  readonly kind: "gpu-island"
+  readonly ir: GPUIslandGraphIR
+  readonly options: GPUIslandViewOptions
+}
+
 export interface ModifiedContent {
   readonly kind: "modified"
   /** The unmodified graph node; modifiers are stored in one flat sequence. */
@@ -291,7 +385,7 @@ export interface ModifiedContent {
   readonly arguments: readonly unknown[]
 }
 
-export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateViewNode | KeyedCollectionViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | ModifiedContent
+export type ViewNode = ElementViewNode | FragmentViewNode | CompiledTemplateViewNode | KeyedCollectionViewNode | ViewHostNode | GeometryViewNode | LazyViewNode | GPUIslandViewNode | ModifiedContent
 /** Public View value: an immutable graph node with value-semantic modifiers. */
 export type View = ViewNode & Modifiers
 export type ViewModifier = ViewModifierNode
@@ -455,4 +549,6 @@ export interface VuneRenderer<Output = unknown> {
   geometry?(node: GeometryViewNode, render: (geometry: GeometryProxy) => Output): Output
   /** Materialize a lazy container; `render` may request a visible child range. */
   lazy?(node: LazyViewNode, render: (range?: LazyViewRange) => Output, identity: ViewIdentity, renderItem?: (index: number) => Output): Output
+  /** Materialize and own a compiler-proven GPU compute-to-render island. */
+  gpuIsland?(node: GPUIslandViewNode, identity: ViewIdentity): Output
 }

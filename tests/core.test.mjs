@@ -1647,6 +1647,77 @@ test("@vune-ui/core routes a trailing closure past omitted optional parameters",
   assert.equal(result.ok && result.resolution.arguments[1]?.trailing, true)
 })
 
+test("@vune-ui/core recovers runtime trailing closures after omitted optional parameters", () => {
+  let captured
+  const RuntimeLink = defineView("RuntimeLink", {
+    initializers: [initializer(
+      "RuntimeLink(to, activeClass = null, behavior = null, @Action onClick = undefined, @ViewBuilder content)",
+      args => args.length >= 2 && args.length <= 5,
+      args => {
+        captured = args
+        return { content: args[4] }
+      },
+      [
+        initializerKinds.value(true, undefined, undefined, "string", false, "to"),
+        initializerKinds.value(false, "activeClass", undefined, "string | null", false, "activeClass"),
+        initializerKinds.value(false, "behavior", undefined, "string | null", false, "behavior"),
+        initializerKinds.action(false, "onClick", "function | undefined", "onClick"),
+        initializerKinds.viewBuilder(true, "content", "function", true, "content"),
+      ],
+    )],
+    body: ({ content }) => resolveBuilderInput(content),
+  })
+  const overloaded = overloadClosure(() => [CoreText("runtime")], () => undefined)
+
+  assert.doesNotThrow(() => RuntimeLink("/runtime", overloaded))
+  assert.equal(captured[0], "/runtime")
+  assert.equal(captured[1], undefined)
+  assert.equal(captured[2], undefined)
+  assert.equal(captured[3], undefined)
+  assert.equal(closureKindOf(captured[4]), "viewBuilder")
+
+  assert.doesNotThrow(() => RuntimeLink("/runtime", namedArguments({ behavior: "window" }), overloaded))
+  assert.equal(captured[0], "/runtime")
+  assert.equal(captured[1], undefined)
+  assert.equal(captured[2], "window")
+  assert.equal(captured[3], undefined)
+  assert.equal(closureKindOf(captured[4]), "viewBuilder")
+})
+
+test("@vune-ui/core resolves MkA-shaped labeled optionals with a runtime trailing builder", () => {
+  let captured
+  const RuntimeMkA = defineView("RuntimeMkA", {
+    initializers: [initializer(
+      "RuntimeMkA(to, activeClass = null, behavior = null, className = '', router = mainRouter, @Action onClick = undefined, @ViewBuilder content)",
+      args => args.length >= 2 && args.length <= 7,
+      args => {
+        captured = args
+        return { content: args[6] }
+      },
+      [
+        initializerKinds.value(true, undefined, undefined, "string", false, "to"),
+        initializerKinds.value(false, "activeClass", undefined, "string | null", false, "activeClass"),
+        initializerKinds.value(false, "behavior", undefined, "string | null", false, "behavior"),
+        initializerKinds.value(false, "className", undefined, "any", false, "className"),
+        initializerKinds.value(false, "router", undefined, "object", false, "router"),
+        initializerKinds.action(false, "onClick", "function | undefined", "onClick"),
+        initializerKinds.viewBuilder(true, "content", "function", true, "content"),
+      ],
+    )],
+    body: ({ content }) => resolveBuilderInput(content),
+  })
+  const content = overloadClosure(() => [CoreText("runtime")], () => undefined)
+
+  assert.doesNotThrow(() => RuntimeMkA("/runtime", namedArguments({ className: "a" }), content))
+  assert.equal(captured[0], "/runtime")
+  assert.equal(captured[1], undefined)
+  assert.equal(captured[2], undefined)
+  assert.equal(captured[3], "a")
+  assert.equal(captured[4], undefined)
+  assert.equal(captured[5], undefined)
+  assert.equal(closureKindOf(captured[6]), "viewBuilder")
+})
+
 test("@vune-ui/core applies Content: View constraints to built-in stack builders", () => {
   assert.doesNotThrow(() => CoreVStack(() => [CoreText("valid")]))
   assert.throws(() => CoreVStack(() => ["not a View"]), /No matching initializer for VStack/)

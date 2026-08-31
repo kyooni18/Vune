@@ -10,9 +10,12 @@ function isIdentifierDeclaration(node: ts.Identifier): boolean {
   if (ts.isFunctionDeclaration(parent) && parent.name === node) return true
   if (ts.isClassDeclaration(parent) && parent.name === node) return true
   if (ts.isImportClause(parent) && parent.name === node) return true
-  if (ts.isImportSpecifier(parent) && parent.name === node) return true
+  // Both sides of `import { $remote as local }` are declaration syntax. The
+  // imported property name is not a Vune Binding projection and must survive
+  // shorthand lowering verbatim.
+  if (ts.isImportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true
   if (ts.isNamespaceImport(parent) && parent.name === node) return true
-  if (ts.isExportSpecifier(parent) && parent.name === node) return true
+  if (ts.isExportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true
   return false
 }
 

@@ -66,6 +66,37 @@ test('vue host codegen supports Views with the implicit zero-argument initialize
   assert.match(generated.code, /createVuneWebHost\(LoadingPage\)/)
 })
 
+test('vue host codegen selects the file default export when helper Views come first', () => {
+  const source = `struct HelperView: View {
+  var body: some View { Text('Helper') }
+}
+struct MainView: View {
+  var body: some View { Text('Main') }
+}
+export default MainView`
+  const generated = generateVueHostModule(source, 'MainView.vune', {
+    viewImport: './MainView.vune',
+    hostFactoryImport: '#legacy-host',
+  })
+  assert.equal(generated.viewName, 'MainView')
+  assert.match(generated.code, /createVuneWebHost\(MainView\)/)
+  assert.match(generated.code, /const MainViewVueHost/)
+  assert.match(generated.code, /import MainView from ["']\.\/MainView\.vune["']/)
+})
+
+test('vue host codegen treats object-literal initializer arguments without contextual TypeScript inference', () => {
+  const source = `type Props = { height: number }
+struct StyledHost: View {
+  let props: Props
+  init(_ props: Props) { self.props = props }
+  var body: some View { Box(style: { height: \`${'${props.height}'}px\` }) }
+}`
+  assert.doesNotThrow(() => generateVueHostModule(source, 'StyledHost.vune', {
+    viewImport: './StyledHost.vune',
+    hostFactoryImport: '#legacy-host',
+  }))
+})
+
 
 test('vite hot updates invalidate only the changed Vune source cache', () => {
   const plugin = createVuneVitePlugin({ sourceMap: false })

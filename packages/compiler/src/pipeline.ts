@@ -273,7 +273,12 @@ function lowerViewBuilderAstStatements(source: string, registry: InitializerSymb
   // binding shorthand) so the statement tree is valid TypeScript. Then let
   // TypeScript own control-flow parsing instead of maintaining a second,
   // incomplete statement grammar in Vune.
-  const lowered = lowerRange(source, registry)
+  // Labeled Vune arguments are not valid TypeScript syntax. They must be
+  // converted before the TypeScript parser sees statement-bearing builders;
+  // otherwise parser recovery rewrites `Foo(value, label: other)` into the
+  // semantically different `Foo(value, label, other)` and leaks `label` as an
+  // undeclared runtime identifier.
+  const lowered = lowerRange(lowerNamedVuneCalls(source, registry), registry)
   const wrapper = `function __vune_builder__() {\n${lowered}\n}`
   const file = ts.createSourceFile("vune-view-builder.ts", wrapper, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const fn = file.statements.find(ts.isFunctionDeclaration)
@@ -371,11 +376,15 @@ function lowerViewBuilderClosure(body: string, parameter: string | undefined, re
 function lowerClosure(value: string, role?: "value" | "viewBuilder" | "action", registry: InitializerSymbolRegistry = canonicalInitializerSymbols): string {
   const source = value.trim()
   if (!source.startsWith("{") || matching(source, 0, "{", "}") !== source.length - 1) return lowerRange(source, registry)
-  const body = source.slice(1, -1).trim()
-  if (role === "viewBuilder") return lowerViewBuilderClosure(body, undefined, registry)
+  const inner = source.slice(1, -1).trim()
+  const parameterMatch = /^([A-Za-z_$][A-Za-z0-9_$]*)\s+in\s+([\s\S]*)$/.exec(inner)
+  const parameter = parameterMatch?.[1]
+  const body = parameterMatch?.[2] ?? inner
+  if (role === "viewBuilder") return lowerViewBuilderClosure(body, parameter, registry)
   const lowered = lowerStatements(body, registry)
   const asynchronous = containsAwaitKeyword(body)
-  if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
+  if (role === "action") return `${asynchronous ? "async " : ""}(${parameter ?? ""}) => {${lowerRange(body, registry)}}`
+  if (parameter) return `(${parameter}) => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
   return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
@@ -470,9 +479,9 @@ function lowerAstClosure(body: string, parameter?: string, role?: "value" | "vie
     closure: (nestedBody, nestedParameter, nestedRole) => lowerAstClosure(nestedBody, nestedParameter, nestedRole, registry),
     closureRole: (nestedCall, context) => closureRoleForKnownCall(nestedCall, context, registry),
   }).join(", ")
-  if (parameter) return `(${parameter}) => [${lowered}]`
   const asynchronous = containsAwaitKeyword(body)
-  if (role === "action") return `${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}}`
+  if (role === "action") return `${asynchronous ? "async " : ""}(${parameter ?? ""}) => {${lowerRange(body, registry)}}`
+  if (parameter) return `(${parameter}) => [${lowered}]`
   const action = asynchronous || /\b(const|let|var|return|throw)\b/.test(body)
   const builder = action ? "() => []" : `() => [${lowered}]`
   return `overloadClosure(${builder}, ${asynchronous ? "async " : ""}() => {${lowerRange(body, registry)}})`
@@ -981,7 +990,11 @@ function lowerStructDefinition(
     ? ""
     : `, state: () => ({ ${stateFields.map(field => `${field.name}: ${field.defaultValue !== undefined && /^State\s*\(/.test(field.defaultValue) ? field.defaultValue : `State(${field.defaultValue ?? "undefined"})`}`).join(", ")} })`
   const bodySource = declaration.bodyExpressionSource.trim().replace(/^return\s+/, "").replace(/;\s*$/, "")
-  const loweredBody = lowerRange(bodySource, registry)
+  // Struct bodies are lowered before the module-wide named-call pass. Keep
+  // SwiftUI-style labels intact by lowering them here as well; otherwise a
+  // call such as Button(action: ..., label: { ... }) is consumed by the
+  // builder pass and can reach TypeScript as `Button(action, ..., label, ...)`.
+  const loweredBody = lowerRange(lowerNamedVuneCalls(bodySource, registry), registry)
   const stateNames = new Set(stateFields.map(field => field.name))
   const bodyExpression = stateFields.length > 0 && stateProof ? parsedCompilerExpression(loweredBody) : undefined
   const dependenciesComplete = bodyExpression && stateProof
@@ -996,7 +1009,7 @@ function lowerStructDefinition(
     fieldMetadata,
     `legacyHost: ${legacyHostPlanSource(plans)}`,
   ].filter((item): item is string => item !== undefined).join(", ")
-  return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}${dependencies}, body: (props: any) => { const { ${fields.map(field => field.name).join(", ")} } = props; return ${loweredBody} } })`
+  return `defineView(${JSON.stringify(declaration.name)}, { ${definitionMetadata}, initializers: [${initializers.join(", ")}]${state}${dependencies}, body: (__vuneProps: any) => { const { ${fields.map(field => field.name).join(", ")} } = __vuneProps; return ${loweredBody} } })`
 }
 
 function lowerStructs(

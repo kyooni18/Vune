@@ -348,23 +348,31 @@ function checkerTypeForExpression(source: string, checker: ts.TypeChecker, sourc
   }
   visit(sourceFile)
   if (!candidate) return undefined
-  const type = checker.getTypeAtLocation(candidate)
-  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
-  // `const label = "x"` has the literal type `"x"`, but a normal Vune
-  // initializer accepting `string` must still accept it. Preserve literal
-  // precision in TypeScript itself while normalizing the compiler-facing
-  // semantic category used for overload matching.
-  const primitiveCategory = (value: ts.Type): "string" | "number" | "boolean" | undefined => {
-    if (value.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return "string"
-    if (value.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return "number"
-    if (value.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "boolean"
-    if (value.isUnion()) {
-      const categories = new Set(value.types.map(primitiveCategory))
-      if (categories.size === 1 && !categories.has(undefined)) return [...categories][0]
+  try {
+    const type = checker.getTypeAtLocation(candidate)
+    if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
+    // `const label = "x"` has the literal type `"x"`, but a normal Vune
+    // initializer accepting `string` must still accept it. Preserve literal
+    // precision in TypeScript itself while normalizing the compiler-facing
+    // semantic category used for overload matching.
+    const primitiveCategory = (value: ts.Type): "string" | "number" | "boolean" | undefined => {
+      if (value.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return "string"
+      if (value.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return "number"
+      if (value.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "boolean"
+      if (value.isUnion()) {
+        const categories = new Set(value.types.map(primitiveCategory))
+        if (categories.size === 1 && !categories.has(undefined)) return [...categories][0]
+      }
+      return undefined
     }
+    return primitiveCategory(type) ?? checker.typeToString(type)
+  } catch {
+    // Type inference is an optional refinement for semantic overload scoring.
+    // Generated Vune expressions can occasionally drive TypeScript's
+    // contextual-type machinery into an internal error; preserve compilation
+    // by falling back to the declared/unknown semantic type instead.
     return undefined
   }
-  return primitiveCategory(type) ?? checker.typeToString(type)
 }
 
 function compilerSemanticArgument(
@@ -392,6 +400,7 @@ function compilerSemanticArgument(
   if (/^null$/.test(value)) return { label, type: "null" }
   if (/^undefined$/.test(value)) return { label, type: "undefined" }
   if (/^(?:\[|Array\s*\()/.test(value)) return { label, type: "array" }
+  if (/^\{[\s\S]*\}$/.test(value)) return { label, type: "object" }
   if (/=>|^function\b/.test(value)) return { label, type: "function" }
   const declared = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) ? declaredTypes.get(value) : undefined
   return { label, type: checkerTypeForExpression(value, checker, sourceFile) ?? declared ?? "unknown" }
@@ -485,13 +494,17 @@ function expressionValueType(expression: ts.Expression, checker: ts.TypeChecker)
   if (ts.isNumericLiteral(expression)) return "number"
   if (expression.kind === ts.SyntaxKind.TrueKeyword || expression.kind === ts.SyntaxKind.FalseKeyword) return "boolean"
   if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return "event"
-  const type = checker.getTypeAtLocation(expression)
-  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
-  if (type.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return "string"
-  if (type.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return "number"
-  if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "boolean"
-  if (type.getCallSignatures().length > 0) return "event"
-  return undefined
+  try {
+    const type = checker.getTypeAtLocation(expression)
+    if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
+    if (type.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return "string"
+    if (type.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return "number"
+    if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return "boolean"
+    if (type.getCallSignatures().length > 0) return "event"
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 function acceptsHtmlValue(

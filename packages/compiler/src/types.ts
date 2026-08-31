@@ -1,4 +1,6 @@
 import type { VuneSemanticModel } from "./semantic.js"
+import type { VuneExecutionPlan } from "./execution-plan.js"
+import type { ResidentComputeExperimentalOptions } from "@vune-ui/execution"
 
 export interface VuneSourceMap {
   readonly version: 3
@@ -36,6 +38,8 @@ export interface VuneLanguageService {
 }
 
 export interface VuneVitePluginOptions {
+  /** Opt in to experimental Resident Compute native/GPU planning (default: false). */
+  readonly experimentalResidentCompute?: boolean | ResidentComputeExperimentalOptions
   readonly include?: RegExp
   /** Generate detailed compiler maps for transformed modules (default: true). */
   readonly sourceMap?: boolean
@@ -48,4 +52,9 @@ export interface VuneVitePluginOptions {
   readonly vueHost?: {
     readonly factoryImport: string
   }
+  /**
+   * Optional compiler execution-plan tap for DevTools/profiling integrations.
+   * Planning is completely skipped when this callback is absent.
+   */
+  readonly onExecutionPlan?: (plan: VuneExecutionPlan, id: string) => void
 }

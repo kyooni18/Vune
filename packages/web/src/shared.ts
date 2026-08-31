@@ -1,5 +1,6 @@
 import type { LazyMeasurementIndex } from "./lazy-index.js"
 import { animationCSSStyle, classNameOf, currentRenderTransaction, frameStyle, layoutLength, swiftUIAnimatableModifierNames, type Animation, type GeometryProxy, type LazyViewNode, type LazyViewRange, type Transaction, type ViewModifierNode } from "@vune-ui/core"
+import { APPLE_CONTINUOUS_CORNER_SMOOTHING } from "@vune-ui/core/corners"
 import { ignoresSafeAreaStyle, paddingStyle, safeAreaPaddingStyle } from "@vune-ui/core/internal/runtime"
 
 function alignmentCSSPosition(value: unknown, fallback = "center"): string {
@@ -298,8 +299,8 @@ export function styleOf(modifier: ViewModifierNode, includeAnimationFallback = t
     case "symbolRenderingMode": style = { "--vune-symbol-rendering-mode": value == null ? "automatic" : String(value) }; break
     case "symbolVariant": style = { "--vune-symbol-variant": String(value) }; break
     case "continuousCorners": {
-      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6
-      style = { "corner-shape": "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": String(smoothing) }
+      const smoothing = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : APPLE_CONTINUOUS_CORNER_SMOOTHING
+      style = { "corner-shape": "squircle", "--vune-corner-style": "continuous", "--vune-corner-smoothing": String(smoothing), "--vune-corner-preserve-smoothing": "1" }
       break
     }
     case "frame": {
@@ -486,6 +487,7 @@ export const voidHtmlElements = new Set(["area", "base", "br", "col", "embed", "
 
 export interface DomRenderContext {
   readonly document: Document
+  readonly experimentalResidentCompute?: boolean
   readonly states: Map<string, { readonly host: unknown; readonly value: Record<string, unknown> }>
   readonly visitedStateIdentities: Set<string>
   readonly geometries: Map<number, GeometryProxy>

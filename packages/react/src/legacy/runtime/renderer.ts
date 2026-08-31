@@ -81,6 +81,14 @@ export function renderViewNode<Output>(
       ...snapshotArrayValues(value.children).map(child => renderViewNode(child as ViewGraphValue, renderer)),
     )
   }
+  if (value.kind === 'gpu-island') {
+    return renderer.element('canvas', {
+      'data-vune-gpu-island': value.ir.id,
+      'data-vune-gpu-owner': 'react-legacy',
+      'data-vune-gpu-readback': 'forbidden',
+      'data-vune-gpu-fallback': value.ir.fallback,
+    })
+  }
   return renderer.element(
     value.type,
     value.props,

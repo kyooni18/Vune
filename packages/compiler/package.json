@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@vune-ui/core": "workspace:*",
+    "@vune-ui/execution": "workspace:*",
     "typescript": "^5.8.3"
   },
   "sideEffects": false,

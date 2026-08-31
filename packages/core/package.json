@@ -21,6 +21,10 @@
       "types": "./dist/internal-runtime.d.ts",
       "import": "./dist/internal-runtime.js"
     },
+    "./internal/execution": {
+      "types": "./dist/resident-execution.d.ts",
+      "import": "./dist/resident-execution.js"
+    },
     "./web-primitives": {
       "types": "./dist/web-primitives.d.ts",
       "import": "./dist/web-primitives.js"
@@ -34,6 +38,9 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "watch": "tsc -w -p tsconfig.json --preserveWatchOutput"
+  },
+  "dependencies": {
+    "@vune-ui/execution": "workspace:*"
   },
   "sideEffects": false,
   "publishConfig": {

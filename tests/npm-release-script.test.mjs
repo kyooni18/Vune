@@ -19,6 +19,8 @@ test('npm release plan lists all publishable packages in dependency order', () =
   const result = run(['--plan'])
   assert.equal(result.status, 0, result.stderr)
   const names = [
+    '@vune-ui/execution',
+    '@vune-ui/animation',
     '@vune-ui/core',
     '@vune-ui/compiler',
     '@vune-ui/legacy-react',

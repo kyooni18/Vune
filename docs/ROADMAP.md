@@ -35,6 +35,22 @@ The first workspace architecture slice is now implemented:
 - State dependency metadata can bypass first-render dependency discovery only
   when a conservative closed-body proof succeeds; opaque helpers and shared
   State automatically retain runtime collection.
+- Data-oriented compiler specialization now shares one effect-analysis layer
+  and emits an initial backend-neutral Kernel IR for representable scalar/map
+  expressions. An opt-in Vite execution-plan tap reports residency and blocks
+  packed/native promotion for object State and DOM boundaries. The first true
+  packed-to-packed ResidentRegionIR, storage contract, reference executor, and
+  fused compile-time TypedArray emitter are implemented. PackedState now owns
+  persistent authoritative packed memory with reserved capacity, logical length,
+  versioned dirty ranges, and range-aware resident execution. Eligible dense
+  `f32` regions now also carry a region-specific direct WASM module without
+  interpreter dispatch; runtime recent-median calibration still keeps packed
+  JS when it wins. Region-specific `f32x4` generation now removes the generic
+  interpreter from SIMD hot loops, and a benchmark matrix verifies its
+  crossover against packed JS across row counts and dirty ranges. Fusion also
+  performs field liveness and safe expression folding before backend lowering.
+  Generic packed-f32 Kernel IR can now lower to WGSL, while WebGPU remains legal
+  only when a GPU-resident renderer consumes the result without readback.
 - The Web renderer is split into shared serialization/DOM contracts, SSR,
   DOM props, hydration, and live DOM reconciliation modules; its public barrel
   remains unchanged and the existing lazy, GeometryReader, hydration, and
@@ -143,6 +159,11 @@ than documentation-only goals:
 Performance remains guarded by both modifier-depth and application-style
 workloads so semantic fixes cannot silently introduce unbounded compile or render
 regressions.
+
+Resident native performance has its own release gate. It verifies direct SIMD
+code generation and guards large full-range workloads against a conservative
+packed-JS ratio ceiling; it deliberately does not require native promotion for
+small sparse updates where JavaScript is normally cheaper.
 
 ## Deliberately deferred work
 
