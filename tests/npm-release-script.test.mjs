@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { resolve } from 'node:path'
+import { discoverReleaseTargets } from '../scripts/release-targets.mjs'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
 const script = resolve(root, 'scripts/publish-npm.mjs')
@@ -18,25 +19,36 @@ function run(args) {
 test('npm release plan lists all publishable packages in dependency order', () => {
   const result = run(['--plan'])
   assert.equal(result.status, 0, result.stderr)
-  const names = [
-    '@vune-ui/execution',
-    '@vune-ui/animation',
-    '@vune-ui/core',
-    '@vune-ui/compiler',
-    '@vune-ui/legacy-react',
-    '@vune-ui/react',
-    '@vune-ui/vue',
-    '@vune-ui/web',
-    '@vune-ui/vite',
-    'vune-ui',
-    'create-vune-ui',
-  ]
+  const names = discoverReleaseTargets(root).map(target => target.manifest.name)
+  assert.ok(names.includes('@vune-ui/animation'), '@vune-ui/animation must be a release target')
   const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version
   let offset = -1
   for (const name of names) {
     const next = result.stdout.indexOf(`${name}@${version}`)
     assert.ok(next > offset, `${name} must appear after the previous package`)
     offset = next
+  }
+})
+
+test('release target discovery includes every public package and publishes dependencies first', () => {
+  const targets = discoverReleaseTargets(root)
+  const indexByName = new Map(targets.map((target, index) => [target.manifest.name, index]))
+
+  assert.equal(indexByName.has('@vune-ui/animation'), true)
+  assert.ok(indexByName.get('@vune-ui/execution') < indexByName.get('@vune-ui/animation'))
+  assert.ok(indexByName.get('@vune-ui/animation') < indexByName.get('@vune-ui/web'))
+  assert.ok(indexByName.get('@vune-ui/animation') < indexByName.get('vune-ui'))
+
+  for (const target of targets) {
+    const dependencies = {
+      ...target.manifest.dependencies,
+      ...target.manifest.optionalDependencies,
+      ...target.manifest.peerDependencies,
+    }
+    for (const dependency of Object.keys(dependencies)) {
+      if (!indexByName.has(dependency)) continue
+      assert.ok(indexByName.get(dependency) < indexByName.get(target.manifest.name), `${dependency} must publish before ${target.manifest.name}`)
+    }
   }
 })
 

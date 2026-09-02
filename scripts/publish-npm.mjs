@@ -3,34 +3,21 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
-  mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
+import { discoverReleaseTargets } from './release-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packDir = resolve(root, 'local-packages')
 const defaultRegistry = 'https://registry.npmjs.org/'
 
-const releaseTargets = [
-  'packages/execution',
-  'packages/animation',
-  'packages/core',
-  'packages/compiler',
-  'packages/legacy-react',
-  'packages/react',
-  'packages/vue',
-  'packages/web',
-  'packages/vite',
-  '.',
-  'packages/create-vune-ui',
-].map(relativeDir => ({ relativeDir, dir: resolve(root, relativeDir) }))
+let releaseTargets = []
 
 const options = {
   bump: null,
@@ -137,7 +124,7 @@ so rerunning after a partial release continues with the remaining packages.`)
 }
 
 function manifestFor(target) {
-  return readJSON(resolve(target.dir, 'package.json'))
+  return readJSON(target.manifestPath)
 }
 
 function validateSemver(version) {
@@ -188,6 +175,26 @@ function syncVersions(version) {
     manifest.version = version
     writeJSON(path, manifest)
     console.log(`Versioned ${manifest.name} -> ${version}`)
+  }
+}
+
+function snapshotReleaseManifests() {
+  return new Map(releaseTargets.map(target => [target.manifestPath, readFileSync(target.manifestPath, 'utf8')]))
+}
+
+function restoreReleaseManifests(snapshot) {
+  for (const [path, contents] of snapshot) writeFileSync(path, contents)
+}
+
+function buildReleaseTarballs(version) {
+  if (!options.bump && !options.version) return packAll()
+
+  const snapshot = snapshotReleaseManifests()
+  try {
+    syncVersions(version)
+    return packAll()
+  } finally {
+    restoreReleaseManifests(snapshot)
   }
 }
 
@@ -280,6 +287,21 @@ function packageVersionExists(name, version) {
   fail(`Could not query ${name}@${version} from npm:\n${message.trim()}`)
 }
 
+function ensureDistTag(name, version, tag) {
+  const result = npm(['view', name, 'dist-tags', '--json'], { stdio: 'pipe' })
+  if (result.status !== 0) fail(`Could not query dist-tags for ${name}:\n${`${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim()}`)
+  let tags
+  try {
+    tags = JSON.parse(result.stdout || '{}')
+  } catch {
+    fail(`npm returned invalid dist-tag data for ${name}: ${result.stdout.trim()}`)
+  }
+  if (tags?.[tag] === version) return
+  const tagged = npm(['dist-tag', 'add', `${name}@${version}`, tag])
+  if (tagged.status !== 0) fail(`Could not set dist-tag ${tag} on ${name}@${version}.`)
+  console.log(`TAG  ${name}@${version} -> ${tag}`)
+}
+
 function printPlan(version, tag) {
   console.log(`\nVune npm release plan`)
   console.log(`  Version : ${version}`)
@@ -318,6 +340,11 @@ function publishArgs(tarball, manifest, tag) {
 
 async function main() {
   parseArgs()
+  try {
+    releaseTargets = discoverReleaseTargets(root)
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error))
+  }
   const version = targetVersion()
   const tag = options.tag ?? (version.includes('-') ? 'next' : 'latest')
 
@@ -332,10 +359,9 @@ async function main() {
   // working tree dirty at bumped versions, which would block a resumable
   // rerun behind the assertGitClean gate above.
   runChecks()
-  if (options.bump || options.version) syncVersions(version)
   printPlan(version, tag)
 
-  const tarballs = packAll()
+  const tarballs = buildReleaseTarballs(version)
 
   for (const target of releaseTargets) {
     const expected = manifestFor(target)
@@ -361,6 +387,7 @@ async function main() {
 
     if (!options.dryRun && packageVersionExists(name, version)) {
       console.log(`SKIP ${name}@${version} (already published)`)
+      ensureDistTag(name, version, tag)
       skipped.push(name)
       continue
     }
@@ -379,6 +406,7 @@ async function main() {
   console.log(`  Published: ${published.length}`)
   if (skipped.length) console.log(`  Resumed/skipped: ${skipped.length}`)
   if (options.dryRun) console.log('  Nothing was uploaded (dry-run).')
+  else if (options.bump || options.version) syncVersions(version)
 }
 
 main().catch(error => fail(error instanceof Error ? error.stack ?? error.message : String(error)))

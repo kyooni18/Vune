@@ -2,13 +2,14 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, resolve, sep } from 'node:path'
+import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { updatePnpmWorkspaceOverrides } from './pnpm-workspace.mjs'
 import { installEditors } from '../editors/install.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageManifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
+const supportedPackageManagers = ['pnpm', 'npm', 'yarn', 'bun']
 const argv = process.argv.slice(2)
 const command = argv[0]
 const positionals = []
@@ -38,6 +39,7 @@ function takeValue(argument, index, longName) {
 try {
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index]
+    if (argument === '--') continue
     if (argument === '--force') options.force = true
     else if (argument === '--no-install' || argument === '--skip-install') options.noInstall = true
     else if (argument === '--local') options.local = true
@@ -142,11 +144,19 @@ function detectPackageManager(projectRoot) {
   return 'npm'
 }
 
-function installDependencies(projectRoot) {
+function packageManagerFor(projectRoot, { local = false } = {}) {
+  if (local) {
+    assertLocalPackageManager()
+    return 'pnpm'
+  }
   const packageManager = options.packageManager ?? detectPackageManager(projectRoot)
-  if (!['pnpm', 'npm', 'yarn', 'bun'].includes(packageManager)) {
+  if (!supportedPackageManagers.includes(packageManager)) {
     throw new Error(`Unsupported package manager: ${packageManager}. Use pnpm, npm, yarn, or bun.`)
   }
+  return packageManager
+}
+
+function installDependencies(projectRoot, packageManager) {
   console.log(`Installing dependencies with ${packageManager}...`)
   const result = spawnSync(packageManager, ['install'], { cwd: projectRoot, stdio: 'inherit' })
   if (result.error) throw new Error(`Could not run ${packageManager}: ${result.error.message}`)
@@ -163,6 +173,39 @@ function assertLocalPackageManager() {
   }
 }
 
+function packageRunCommand(packageManager, script) {
+  if (packageManager === 'npm' || packageManager === 'bun') return `${packageManager} run ${script}`
+  return `${packageManager} ${script}`
+}
+
+function shellPath(path) {
+  if (/^[A-Za-z0-9_./~-]+$/u.test(path)) return path
+  return `'${path.replaceAll("'", "'\\''")}'`
+}
+
+function displayProjectPath(projectRoot) {
+  const path = relative(process.cwd(), projectRoot)
+  if (!path || path === '.') return '.'
+  if (!path.startsWith('..') && !path.startsWith(sep)) return path
+  return projectRoot
+}
+
+function printScaffoldNextSteps(projectRoot, packageManager, installed) {
+  const steps = []
+  const projectPath = displayProjectPath(projectRoot)
+  if (projectPath !== '.') steps.push(`cd ${shellPath(projectPath)}`)
+  if (!installed) steps.push(`${packageManager} install`)
+  steps.push(packageRunCommand(packageManager, 'dev'))
+  console.log(`\nNext steps:\n${steps.map(step => `  ${step}`).join('\n')}`)
+}
+
+function printInstallRecovery(projectRoot, packageManager) {
+  const projectPath = displayProjectPath(projectRoot)
+  const prefix = projectPath === '.' ? '' : `  cd ${shellPath(projectPath)}\n`
+  console.error('\nThe project files are ready, but dependency installation did not finish.')
+  console.error(`Retry with:\n${prefix}  ${packageManager} install`)
+}
+
 function assertSourceCheckout(localRoot) {
   const manifestPath = resolve(localRoot, 'package.json')
   if (!existsSync(manifestPath)) throw new Error(`Local Vune checkout has no package.json: ${localRoot}`)
@@ -175,6 +218,21 @@ function assertSourceCheckout(localRoot) {
     }
   }
   return localRoot
+}
+
+function detectRenderer(projectRoot) {
+  const manifestPath = resolve(projectRoot, 'package.json')
+  if (!existsSync(manifestPath)) throw new Error(`Target project has no package.json: ${projectRoot}`)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const dependencies = { ...manifest.dependencies, ...manifest.devDependencies, ...manifest.peerDependencies }
+  const hasReact = Boolean(dependencies.react || dependencies['react-dom'])
+  const hasVue = Boolean(dependencies.vue)
+  if (hasReact && hasVue) {
+    throw new Error('Both React and Vue are present in the target project. Pass --renderer react, --renderer vue, or --renderer web explicitly.')
+  }
+  if (hasVue) return 'vue'
+  if (hasReact) return 'react'
+  return 'web'
 }
 
 function linkSpecifier(path) {
@@ -231,7 +289,7 @@ function printHelp() {
 
 Usage:
   vune-ui create <directory> [--pm <manager>] [--no-install] [--force] [--local] [--local-root <path>]
-  vune-ui init [--force] [--no-install] [--local] [--local-root <path>]
+  vune-ui init [--pm <manager>] [--force] [--no-install] [--local] [--local-root <path>]
   vune-ui link <project> [--renderer react|vue|web] [--pm <manager>] [--no-install] [--local-root <path>]
   vune-ui lsp [--stdio]
   vune-ui lsp install [--editor ...] [--project <path>] [--global]
@@ -252,7 +310,10 @@ Initializer aliases after publishing:
 
 create scaffolds a renderer-independent Web + Vite + TypeScript Vune app.
 --local rewrites Vune dependencies to link: paths pointing at the source checkout.
-link adds the same local links and pnpm-workspace.yaml overrides to an existing project.`)
+Local source mode always uses pnpm because it relies on pnpm workspace overrides.
+--no-install leaves dependency installation to you and prints the exact commands to continue.
+link auto-detects React or Vue from the target package.json and otherwise uses Web.
+Use --renderer to override detection. link adds the same local links and pnpm-workspace.yaml overrides to an existing project.`)
 }
 
 function editorCommand() {
@@ -272,33 +333,54 @@ function editorCommand() {
 }
 
 function scaffold(projectRoot, commandName) {
-  if (options.local) assertLocalPackageManager()
-  if (existsSync(projectRoot) && !options.force && readdirSync(projectRoot).length > 0) {
+  const targetExists = existsSync(projectRoot)
+  const targetIsNonEmpty = targetExists && readdirSync(projectRoot).length > 0
+  if (targetIsNonEmpty && !options.force) {
     console.error(`Vune ${commandName} cannot use a non-empty directory: ${projectRoot}`)
     console.error('Choose a new directory, use an empty directory, or re-run with --force.')
     return 1
+  }
+  if (targetIsNonEmpty && options.force) {
+    console.warn('Using --force: Vune template files will be replaced; unrelated files will be kept.')
   }
 
   if (options.renderer && options.renderer !== 'web') {
     throw new Error('The built-in project template uses the renderer-independent Web adapter. Use `vune-ui link` to connect an existing React or Vue project.')
   }
 
+  const packageManager = packageManagerFor(projectRoot, { local: options.local })
+  const localRoot = options.local ? assertSourceCheckout(normalizeLocalRoot(options.localRoot)) : undefined
+
   mkdirSync(projectRoot, { recursive: true })
   writeTemplates(projectRoot, projectFiles)
-  if (options.local) configureLocalDependencies(projectRoot, normalizeLocalRoot(options.localRoot), 'web', { includeRootPackage: false })
-  console.log(`Created canonical Vune app in ${projectRoot}`)
-  if (!options.noInstall) installDependencies(projectRoot)
-  else console.log('Skipped dependency installation (--no-install).')
+  if (localRoot) configureLocalDependencies(projectRoot, localRoot, 'web', { includeRootPackage: false })
+  console.log(`Created Vune app in ${projectRoot}`)
+  if (!options.noInstall) {
+    try {
+      installDependencies(projectRoot, packageManager)
+    } catch (error) {
+      printInstallRecovery(projectRoot, packageManager)
+      console.error(`Install error: ${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+  } else {
+    console.log('Skipped dependency installation (--no-install).')
+  }
+  printScaffoldNextSteps(projectRoot, packageManager, !options.noInstall)
   return 0
 }
 
 function linkProject(target) {
-  assertLocalPackageManager()
   const projectRoot = resolve(process.cwd(), target)
   const localRoot = normalizeLocalRoot(options.localRoot)
-  configureLocalDependencies(projectRoot, localRoot, options.renderer ?? 'react')
-  if (!options.noInstall) installDependencies(projectRoot)
-  else console.log('Skipped dependency installation (--no-install).')
+  const packageManager = packageManagerFor(projectRoot, { local: true })
+  const renderer = options.renderer ?? detectRenderer(projectRoot)
+  configureLocalDependencies(projectRoot, localRoot, renderer)
+  if (!options.noInstall) installDependencies(projectRoot, packageManager)
+  else {
+    console.log('Skipped dependency installation (--no-install).')
+    console.log(`\nNext step:\n  ${packageManager} install`)
+  }
   return 0
 }
 
@@ -314,9 +396,7 @@ function main() {
       return 1
     }
     const projectRoot = resolve(process.cwd(), target)
-    const status = scaffold(projectRoot, 'create')
-    if (status === 0) console.log(`\nNext steps:\n  cd ${target}\n  ${options.packageManager ?? detectPackageManager(projectRoot)} run dev`)
-    return status
+    return scaffold(projectRoot, 'create')
   }
   if (command === 'init') {
     if (positionals.length > 0) {

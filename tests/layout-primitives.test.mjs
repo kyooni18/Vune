@@ -20,6 +20,15 @@ test("migrated layout primitives keep the graph-first contract", () => {
   assert.match(html, /padding:8px/)
 })
 
+test("stack stretch alignment fills the cross axis", () => {
+  const outputs = [
+    renderToStaticMarkup(renderReact(VStack({ alignment: "stretch" }, Text("VStack")))),
+    renderToStaticMarkup(renderReact(HStack({ alignment: "stretch" }, Text("HStack")))),
+  ]
+  assert.match(outputs[0], /align-items:stretch/)
+  assert.match(outputs[1], /align-items:stretch/)
+})
+
 test("Capsule and RoundedRectangle opt into measured continuous corners in every renderer", async () => {
   const values = [
     Capsule().frame({ width: 180, height: 64 }),

@@ -114,8 +114,16 @@ configure React or Vue. Add a renderer package separately when an existing
 React or Vue application needs framework-specific interop.
 
 The equivalent CLI form is `pnpm dlx vune-ui create my-vune-app`. From an empty
-directory, pass `.` to create the app in place. Use `--no-install` to inspect the
-generated files before installing dependencies.
+directory, pass `.` to create the app in place. The CLI installs dependencies
+by default and prints the command to start development. Use `--no-install` to
+inspect the generated files first; Vune will print both the install and dev
+commands so setup remains resumable. If installation fails, the scaffold is
+kept and the CLI prints the exact recovery command.
+
+Local source scaffolding and linking use pnpm automatically because they rely
+on pnpm 11 workspace overrides. `vune-ui link` detects React or Vue from the
+target package manifest and falls back to the direct Web renderer when neither
+is present; pass `--renderer` when you need to override detection.
 
 For the canonical Vite compiler, put `vunePlugin()` before the renderer plugin:
 

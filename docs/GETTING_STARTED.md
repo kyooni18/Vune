@@ -45,7 +45,10 @@ pnpm create vune-ui my-vune-app
 # or: npm create vune-ui my-vune-app
 ```
 
-Use `--no-install` when you want to inspect generated files before installing.
+The initializer installs dependencies by default and prints the exact command
+to start the dev server. Use `--no-install` when you want to inspect generated
+files first; the CLI will then print both the install and dev commands so the
+flow is still complete.
 
 ## Install Vune manually
 
@@ -80,12 +83,24 @@ vune-ui init
 ```
 
 Use `--no-install` to defer dependency installation or `--force` when the
-directory already contains files you explicitly want to replace.
+directory already contains files you explicitly want to replace. `--force`
+only replaces files owned by the Vune template; unrelated files are left in
+place and the CLI warns before writing.
 
 The initializer creates a renderer-independent Web app using `@vune-ui/core`,
 `@vune-ui/web`, and `@vune-ui/vite`; React and Vue are not installed or
 configured. Use `vune-ui link --renderer react` or `--renderer vue` when
 connecting an existing framework application.
+
+When using the local source checkout, Vune validates the checkout and package
+manager before creating files. Local linking always uses pnpm because the
+workspace override contract depends on pnpm 11. `vune-ui link` auto-detects
+React or Vue from the target `package.json`; projects with neither use the Web
+renderer, while projects containing both require an explicit `--renderer`.
+
+If dependency installation fails after scaffolding, the generated project is
+kept intact and the CLI prints a recovery command instead of leaving the setup
+state ambiguous.
 
 ## Configure Vite
 

@@ -28,12 +28,12 @@ import { arrayCheck, snapshotDataArrayValues } from "./graph/arrays.js"
 import { keyedContent } from "./graph/modifiers.js"
 
 export interface VStackOptions {
-  readonly alignment?: "leading" | "center" | "trailing"
+  readonly alignment?: "leading" | "center" | "trailing" | "stretch"
   readonly spacing?: number | string
 }
 
 export interface HStackOptions {
-  readonly alignment?: "top" | "center" | "bottom"
+  readonly alignment?: "top" | "center" | "bottom" | "stretch"
   readonly spacing?: number | string
 }
 
@@ -122,7 +122,7 @@ export const VStack = defineBuiltinView<VStackProps>(
       flexDirection: "column",
       width: "100%",
       boxSizing: "border-box",
-      alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : "center",
+      alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : options.alignment === "stretch" ? "stretch" : "center",
       gap: layoutLength(options.spacing),
     },
   }, content),
@@ -141,7 +141,7 @@ export const HStack = defineBuiltinView<HStackProps>(
       width: "100%",
       boxSizing: "border-box",
       justifyContent: "center",
-      alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
+      alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : options.alignment === "stretch" ? "stretch" : "center",
       gap: layoutLength(options.spacing),
     },
   }, content),
@@ -664,7 +664,7 @@ export const LazyVStack = defineBuiltinView<LazyVStackProps>(
       flexDirection: "column",
       width: "100%",
       boxSizing: "border-box",
-      alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : "center",
+      alignItems: options.alignment === "leading" ? "flex-start" : options.alignment === "trailing" ? "flex-end" : options.alignment === "stretch" ? "stretch" : "center",
       gap: layoutLength(options.spacing),
       ...lazyStyle(options),
     },
@@ -683,7 +683,7 @@ export const LazyHStack = defineBuiltinView<LazyHStackProps>(
       flexDirection: "row",
       width: "100%",
       boxSizing: "border-box",
-      alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : "center",
+      alignItems: options.alignment === "top" ? "flex-start" : options.alignment === "bottom" ? "flex-end" : options.alignment === "stretch" ? "stretch" : "center",
       gap: layoutLength(options.spacing),
       ...lazyStyle(options),
     },

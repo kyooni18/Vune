@@ -1,18 +1,20 @@
 # Publishing Vune to npm
 
-Vune publishes a synchronized set of nine packages:
+Vune publishes every non-private package in the repository root and `packages/*` as one synchronized release. The current set is eleven packages:
 
-1. `@vune-ui/core`
-2. `@vune-ui/compiler`
-3. `@vune-ui/legacy-react`
-4. `@vune-ui/react`
-5. `@vune-ui/vue`
-6. `@vune-ui/web`
+1. `@vune-ui/execution`
+2. `@vune-ui/animation`
+3. `@vune-ui/core`
+4. `@vune-ui/compiler`
+5. `@vune-ui/legacy-react`
+6. `@vune-ui/react`
 7. `@vune-ui/vite`
-8. `vune-ui`
-9. `create-vune-ui`
+8. `@vune-ui/vue`
+9. `@vune-ui/web`
+10. `vune-ui`
+11. `create-vune-ui`
 
-The repository includes a release helper that verifies, packs, and publishes them in dependency order.
+The repository includes a release helper that discovers these packages from their manifests and topologically sorts their internal dependencies. `@vune-ui/animation` therefore publishes after `@vune-ui/execution` and before packages such as `@vune-ui/web` and `vune-ui` that depend on it. Adding another non-private package under `packages/*` automatically adds it to both packing and publishing instead of requiring two hard-coded target lists to be kept in sync.
 
 ## One-time npm setup
 
@@ -58,11 +60,11 @@ The command:
 5. verifies npm authentication;
 6. asks for final confirmation;
 7. publishes packages in dependency order;
-8. skips an identical version that is already on npm, so an interrupted release can be resumed safely.
+8. skips an identical version that is already on npm and repairs the requested dist-tag if necessary, so an interrupted release can be resumed safely.
 
 ## Bump and publish
 
-All publishable Vune packages always share one version. The helper can update every package manifest before verification and publication:
+All publishable Vune packages always share one version. For a bumped release, the helper temporarily versions the manifests while creating the release tarballs, restores the checkout before npm publication, then persists the new versions only after the whole release succeeds. This keeps a failed or partially published release rerunnable without `--allow-dirty`:
 
 ```bash
 pnpm release:patch
@@ -104,6 +106,6 @@ Use `--skip-checks` only when the exact artifacts were already validated elsewhe
 
 ## Partial failure / resume
 
-If npm accepts some packages and a later package fails, fix the npm/auth/network problem and run the same release command again. Before each real publish the helper queries npm for that exact `name@version`. Existing versions are skipped, and the remaining packages continue in the original dependency order.
+If npm accepts some packages and a later package fails, fix the npm/auth/network problem and run the same release command again. Before each real publish the helper queries npm for that exact `name@version`. Existing versions are skipped, their requested dist-tag is repaired if necessary, and the remaining packages continue in dependency order. A version bump is not left behind in source manifests until the complete publish succeeds.
 
 Do not bump the version after a partial release unless you intentionally want to abandon that release and publish a new version.

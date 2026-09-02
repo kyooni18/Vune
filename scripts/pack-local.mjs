@@ -4,22 +4,11 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { discoverReleaseTargets } from './release-targets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const out = resolve(root, 'local-packages')
-const targets = [
-  root,
-  resolve(root, 'packages/execution'),
-  resolve(root, 'packages/animation'),
-  resolve(root, 'packages/core'),
-  resolve(root, 'packages/compiler'),
-  resolve(root, 'packages/legacy-react'),
-  resolve(root, 'packages/react'),
-  resolve(root, 'packages/vue'),
-  resolve(root, 'packages/web'),
-  resolve(root, 'packages/vite'),
-  resolve(root, 'packages/create-vune-ui'),
-]
+const targets = discoverReleaseTargets(root)
 
 mkdirSync(out, { recursive: true })
 for (const name of readdirSync(out)) {
@@ -34,9 +23,9 @@ function pnpm(args, cwd) {
 }
 
 for (const target of targets) {
-  const manifest = JSON.parse(readFileSync(resolve(target, 'package.json'), 'utf8'))
+  const manifest = JSON.parse(readFileSync(target.manifestPath, 'utf8'))
   console.log(`Packing ${manifest.name}@${manifest.version}`)
-  const result = pnpm(['pack', '--pack-destination', out], target)
+  const result = pnpm(['pack', '--pack-destination', out], target.dir)
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
