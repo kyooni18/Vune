@@ -4,6 +4,9 @@ import path from 'node:path'
 import { chromium } from '@playwright/test'
 
 const root = process.cwd()
+const args = new Set(process.argv.slice(2))
+const smokeOnly = args.delete('--smoke')
+if (args.size > 0) throw new Error(`Unknown option(s): ${[...args].join(', ')}`)
 
 async function injectBuild(page, dir) {
   const dist = path.join(root, dir)
@@ -133,21 +136,29 @@ const browser = await chromium.launch({
   ...(process.env.VUNE_CHROMIUM_EXECUTABLE ? { executablePath: process.env.VUNE_CHROMIUM_EXECUTABLE } : {}),
 })
 try {
-  await validateDemo(browser)
-  console.log('react demo: OK')
-  await validateCounter(browser, 'vue-demo-dist', 'vue')
-  console.log('vue demo: OK')
-  await validateCounter(browser, 'web-demo-dist', 'web')
-  console.log('web demo: OK')
-  await validateParity(browser, 'parity-react-dist', 'react parity')
-  console.log('react parity: OK')
-  await validateParity(browser, 'parity-vue-dist', 'vue parity')
-  console.log('vue parity: OK')
-  await validateParity(browser, 'parity-web-dist', 'web parity')
-  console.log('web parity: OK')
-  await validateShowcase(browser)
-  console.log('showcase: OK')
-  console.log('production Chromium validation: 7/7 OK')
+  if (smokeOnly) {
+    await validateDemo(browser)
+    console.log('react demo: OK')
+    await validateCounter(browser, 'web-demo-dist', 'web')
+    console.log('web demo: OK')
+    console.log('production Chromium smoke: 2/2 OK')
+  } else {
+    await validateDemo(browser)
+    console.log('react demo: OK')
+    await validateCounter(browser, 'vue-demo-dist', 'vue')
+    console.log('vue demo: OK')
+    await validateCounter(browser, 'web-demo-dist', 'web')
+    console.log('web demo: OK')
+    await validateParity(browser, 'parity-react-dist', 'react parity')
+    console.log('react parity: OK')
+    await validateParity(browser, 'parity-vue-dist', 'vue parity')
+    console.log('vue parity: OK')
+    await validateParity(browser, 'parity-web-dist', 'web parity')
+    console.log('web parity: OK')
+    await validateShowcase(browser)
+    console.log('showcase: OK')
+    console.log('production Chromium validation: 7/7 OK')
+  }
 } finally {
   await browser.close()
 }

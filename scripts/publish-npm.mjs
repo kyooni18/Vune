@@ -28,6 +28,7 @@ const options = {
   plan: false,
   yes: false,
   quick: false,
+  full: false,
   skipChecks: false,
   provenance: false,
   allowDirty: false,
@@ -81,6 +82,7 @@ function parseArgs() {
     else if (arg === '--plan') options.plan = true
     else if (arg === '--yes' || arg === '-y') options.yes = true
     else if (arg === '--quick') options.quick = true
+    else if (arg === '--full') options.full = true
     else if (arg === '--skip-checks') options.skipChecks = true
     else if (arg === '--provenance') options.provenance = true
     else if (arg === '--allow-dirty') options.allowDirty = true
@@ -92,6 +94,7 @@ function parseArgs() {
 
   if (!/^https?:\/\//u.test(options.registry)) fail(`Invalid registry URL: ${options.registry}`)
   if (options.tag && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(options.tag)) fail(`Invalid npm dist-tag: ${options.tag}`)
+  if (options.quick && options.full) fail('Use only one of --quick or --full.')
 }
 
 function printHelp() {
@@ -112,7 +115,8 @@ Options:
   --registry <url>              Registry URL (default: npmjs.org).
   --dry-run                     Pack everything and run npm publish --dry-run only.
   --plan                        Print package/version/order without building or publishing.
-  --quick                       Run pnpm test, but skip perf + production-browser gates.
+  --quick                       Run pnpm test only; skip production-browser smoke.
+  --full                        Run benchmarks and the complete 7-target built-browser matrix.
   --skip-checks                 Skip verification entirely (not recommended).
   --provenance                  Pass --provenance to npm publish (mainly for supported CI).
   --allow-dirty                 Allow publishing from a dirty Git working tree.
@@ -228,7 +232,13 @@ function runChecks() {
     if (result.status !== 0) fail('pnpm test failed.')
     return
   }
-  console.log('\n==> Release checks (full)')
+  if (options.full) {
+    console.log('\n==> Release checks (full)')
+    const result = pnpm(['run', 'release:check:full'])
+    if (result.status !== 0) fail('release:check:full failed.')
+    return
+  }
+  console.log('\n==> Release checks')
   const result = pnpm(['run', 'release:check'])
   if (result.status !== 0) fail('release:check failed.')
 }

@@ -81,3 +81,9 @@ test('release helper rejects conflicting version bump options', () => {
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /Use only one of --patch, --minor, --major, or --version/u)
 })
+
+test('release helper rejects conflicting check profiles', () => {
+  const result = run(['--quick', '--full', '--plan'])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Use only one of --quick or --full/u)
+})

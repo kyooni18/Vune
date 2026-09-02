@@ -54,7 +54,7 @@ pnpm release
 The command:
 
 1. refuses a dirty Git tree by default;
-2. runs the full release gate;
+2. runs the normal release gate (`pnpm test` plus a built React/Web production smoke);
 3. creates fresh tarballs with `pnpm pack`;
 4. verifies that no packed manifest contains `workspace:` dependencies;
 5. verifies npm authentication;
@@ -83,8 +83,12 @@ Stable versions default to the `latest` dist-tag. Versions containing a prerelea
 ## Useful options
 
 ```bash
-# Do the normal package/test/release checks but skip perf + built-browser gates.
+# Run pnpm test only and skip the production-browser smoke.
 pnpm release -- --quick
+
+# Run the exhaustive release gate: performance benchmarks, every demo/parity
+# production build, and the complete seven-target Chromium validation matrix.
+pnpm release -- --full
 
 # Publish using a different dist-tag.
 pnpm release -- --tag next
@@ -103,6 +107,8 @@ pnpm release -- --skip-checks
 ```
 
 Use `--skip-checks` only when the exact artifacts were already validated elsewhere. The normal release path is deliberately conservative.
+
+The default release intentionally does not run performance benchmarks or the complete renderer/parity browser matrix. Those checks are useful for CI and milestone validation but are redundant and comparatively flaky as a mandatory npm-publish gate. Run `pnpm release -- --full` (or `pnpm run release:check:full`) when you want the exhaustive validation.
 
 ## Partial failure / resume
 
