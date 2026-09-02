@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { resolve } from 'node:path'
 import { discoverReleaseTargets } from '../scripts/release-targets.mjs'
@@ -86,4 +87,49 @@ test('release helper rejects conflicting check profiles', () => {
   const result = run(['--quick', '--full', '--plan'])
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /Use only one of --quick or --full/u)
+})
+
+test('SIGINT stops the active release command tree instead of continuing', async () => {
+  const temp = mkdtempSync(resolve(tmpdir(), 'vune-release-sigint-'))
+  const fakePnpm = resolve(temp, 'fake-pnpm.mjs')
+  const survivor = resolve(temp, 'survived.txt')
+  writeFileSync(fakePnpm, `
+    import { spawn } from 'node:child_process'
+    spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(`
+      import { writeFileSync } from 'node:fs'
+      setTimeout(() => writeFileSync(${JSON.stringify(survivor)}, 'survived'), 1000)
+      setInterval(() => {}, 1000)
+    `)}], { stdio: 'ignore' })
+    console.log('fake release check ready')
+    setInterval(() => {}, 1000)
+  `)
+
+  try {
+    const child = spawn(process.execPath, [script, '--quick', '--dry-run', '--allow-dirty'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, VUNE_PNPM_CLI: fakePnpm },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', chunk => { stdout += chunk })
+
+    await new Promise((resolveReady, rejectReady) => {
+      const timeout = setTimeout(() => rejectReady(new Error(`release check did not start:\n${stdout}`)), 3000)
+      child.stdout.on('data', () => {
+        if (!stdout.includes('fake release check ready')) return
+        clearTimeout(timeout)
+        resolveReady()
+      })
+    })
+
+    child.kill('SIGINT')
+    const exit = await new Promise(resolveExit => child.once('exit', (code, signal) => resolveExit({ code, signal })))
+    assert.deepEqual(exit, { code: 130, signal: null })
+    await new Promise(resolveWait => setTimeout(resolveWait, 1200))
+    assert.equal(existsSync(survivor), false, 'SIGINT must terminate descendants of the active release check')
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
 })

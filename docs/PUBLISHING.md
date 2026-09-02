@@ -62,6 +62,8 @@ The command:
 7. publishes packages in dependency order;
 8. skips an identical version that is already on npm and repairs the requested dist-tag if necessary, so an interrupted release can be resumed safely.
 
+Pressing `Ctrl-C` is a hard cancellation boundary. The helper forwards `SIGINT` to the active check/build/package process tree, kills any stubborn descendants, exits with status 130, and does not advance to the next release phase. Temporary version changes are restored before it exits.
+
 ## Bump and publish
 
 All publishable Vune packages always share one version. For a bumped release, the helper temporarily versions the manifests while creating the release tarballs, restores the checkout before npm publication, then persists the new versions only after the whole release succeeds. This keeps a failed or partially published release rerunnable without `--allow-dirty`:

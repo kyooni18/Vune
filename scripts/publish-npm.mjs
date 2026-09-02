@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import {
   existsSync,
   readFileSync,
@@ -16,6 +16,7 @@ import { discoverReleaseTargets } from './release-targets.mjs'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packDir = resolve(root, 'local-packages')
 const defaultRegistry = 'https://registry.npmjs.org/'
+const interruptKillDelayMs = 500
 
 let releaseTargets = []
 
@@ -34,9 +35,18 @@ const options = {
   allowDirty: false,
 }
 
+class ReleaseFailure extends Error {}
+
+class ReleaseInterrupted extends Error {
+  constructor(signal) {
+    super(`Release interrupted by ${signal}.`)
+    this.signal = signal
+    this.exitCode = signal === 'SIGINT' ? 130 : 143
+  }
+}
+
 function fail(message) {
-  console.error(`\nVune release failed: ${message}`)
-  process.exit(1)
+  throw new ReleaseFailure(message)
 }
 
 function readJSON(path) {
@@ -190,69 +200,138 @@ function restoreReleaseManifests(snapshot) {
   for (const [path, contents] of snapshot) writeFileSync(path, contents)
 }
 
-function buildReleaseTarballs(version) {
+async function buildReleaseTarballs(version) {
   if (!options.bump && !options.version) return packAll()
 
   const snapshot = snapshotReleaseManifests()
   try {
     syncVersions(version)
-    return packAll()
+    return await packAll()
   } finally {
     restoreReleaseManifests(snapshot)
   }
 }
 
-function command(commandName, args, { cwd = root, stdio = 'inherit', env = process.env } = {}) {
-  const result = spawnSync(commandName, args, { cwd, stdio, encoding: stdio === 'pipe' ? 'utf8' : undefined, env })
-  if (result.error) fail(`Could not run ${commandName}: ${result.error.message}`)
-  return result
+function killCommandTree(child, signal, grouped) {
+  if (!child.pid) return
+  try {
+    if (grouped) process.kill(-child.pid, signal)
+    else child.kill(signal)
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
 }
 
-function pnpm(args, settings = {}) {
+function command(commandName, args, { cwd = root, stdio = 'inherit', env = process.env, interactive = false } = {}) {
+  const piped = stdio === 'pipe'
+  const grouped = process.platform !== 'win32' && !interactive
+  const child = spawn(commandName, args, {
+    cwd,
+    env,
+    detached: grouped,
+    stdio: piped ? ['ignore', 'pipe', 'pipe'] : interactive ? 'inherit' : ['ignore', 'inherit', 'inherit'],
+  })
+
+  let stdout = ''
+  let stderr = ''
+  let interruptedSignal = null
+  let forceKillTimer = null
+
+  if (piped) {
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => { stdout += chunk })
+    child.stderr.on('data', chunk => { stderr += chunk })
+  }
+
+  return new Promise((resolvePromise, rejectPromise) => {
+    const cleanup = () => {
+      process.off('SIGINT', onSigint)
+      process.off('SIGTERM', onSigterm)
+    }
+
+    const interrupt = signal => {
+      if (interruptedSignal) {
+        killCommandTree(child, 'SIGKILL', grouped)
+        return
+      }
+      interruptedSignal = signal
+      killCommandTree(child, signal, grouped)
+      forceKillTimer = setTimeout(() => killCommandTree(child, 'SIGKILL', grouped), interruptKillDelayMs)
+    }
+    const onSigint = () => interrupt('SIGINT')
+    const onSigterm = () => interrupt('SIGTERM')
+
+    process.on('SIGINT', onSigint)
+    process.on('SIGTERM', onSigterm)
+
+    child.once('error', error => {
+      cleanup()
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      rejectPromise(new ReleaseFailure(`Could not run ${commandName}: ${error.message}`))
+    })
+    child.once('close', (status, signal) => {
+      cleanup()
+      if (interruptedSignal) {
+        // Keep the parent alive long enough to reap stubborn descendants in
+        // the command's process group before returning terminal control.
+        setTimeout(() => {
+          killCommandTree(child, 'SIGKILL', grouped)
+          rejectPromise(new ReleaseInterrupted(interruptedSignal))
+        }, interruptKillDelayMs)
+        return
+      }
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      resolvePromise({ status, signal, stdout, stderr })
+    })
+  })
+}
+
+async function pnpm(args, settings = {}) {
   const cli = process.env.VUNE_PNPM_CLI || (process.env.npm_execpath?.includes('pnpm') ? process.env.npm_execpath : null)
   if (cli) return command(process.execPath, [cli, ...args], settings)
   return command('pnpm', args, settings)
 }
 
-function assertGitClean() {
+async function assertGitClean() {
   if (options.allowDirty || !existsSync(resolve(root, '.git'))) return
-  const result = command('git', ['status', '--porcelain'], { stdio: 'pipe' })
+  const result = await command('git', ['status', '--porcelain'], { stdio: 'pipe' })
   if (result.status !== 0) fail('git status failed. Use --allow-dirty only if you intentionally want to bypass this check.')
   if (result.stdout.trim()) fail('Git working tree is dirty. Commit/stash changes first, or explicitly pass --allow-dirty.')
 }
 
-function runChecks() {
+async function runChecks() {
   if (options.skipChecks) {
     console.warn('Skipping release checks (--skip-checks).')
     return
   }
   if (options.quick) {
     console.log('\n==> Release checks (quick)')
-    const result = pnpm(['test'])
+    const result = await pnpm(['test'])
     if (result.status !== 0) fail('pnpm test failed.')
     return
   }
   if (options.full) {
     console.log('\n==> Release checks (full)')
-    const result = pnpm(['run', 'release:check:full'])
+    const result = await pnpm(['run', 'release:check:full'])
     if (result.status !== 0) fail('release:check:full failed.')
     return
   }
   console.log('\n==> Release checks')
-  const result = pnpm(['run', 'release:check'])
+  const result = await pnpm(['run', 'release:check'])
   if (result.status !== 0) fail('release:check failed.')
 }
 
-function packAll() {
+async function packAll() {
   console.log('\n==> Building release tarballs')
-  const result = pnpm(['run', 'pack:local'])
+  const result = await pnpm(['run', 'pack:local'])
   if (result.status !== 0) fail('pack:local failed.')
 
   const tarballs = new Map()
   for (const file of readdirSync(packDir)) {
     if (!file.endsWith('.tgz')) continue
     const path = resolve(packDir, file)
-    const extracted = command('tar', ['-xOf', path, 'package/package.json'], { stdio: 'pipe' })
+    const extracted = await command('tar', ['-xOf', path, 'package/package.json'], { stdio: 'pipe' })
     if (extracted.status !== 0) fail(`Could not inspect ${file}.`)
     const manifest = JSON.parse(extracted.stdout)
     tarballs.set(manifest.name, { path, manifest })
@@ -266,13 +345,13 @@ function packAll() {
   return tarballs
 }
 
-function npm(args, settings = {}) {
+async function npm(args, settings = {}) {
   return command('npm', [...args, '--registry', options.registry], settings)
 }
 
-function authPreflight() {
+async function authPreflight() {
   console.log('\n==> npm authentication')
-  const result = npm(['whoami'], { stdio: 'pipe' })
+  const result = await npm(['whoami'], { stdio: 'pipe' })
   if (result.status !== 0) {
     fail(`npm authentication failed. Run \`npm login\` for ${options.registry} first.\n${result.stderr.trim()}`)
   }
@@ -280,7 +359,7 @@ function authPreflight() {
   console.log(`Authenticated as ${username}`)
 
   if (username !== 'vune-ui') {
-    const scopeProbe = npm(['team', 'ls', 'vune-ui:developers', '--json'], { stdio: 'pipe' })
+    const scopeProbe = await npm(['team', 'ls', 'vune-ui:developers', '--json'], { stdio: 'pipe' })
     if (scopeProbe.status !== 0) {
       console.warn('Warning: could not verify membership in the npm @vune-ui organization.')
       console.warn('First-time scoped publishing requires access to the @vune-ui scope; npm publish will be authoritative.')
@@ -289,16 +368,16 @@ function authPreflight() {
   return username
 }
 
-function packageVersionExists(name, version) {
-  const result = npm(['view', `${name}@${version}`, 'version', '--json'], { stdio: 'pipe' })
+async function packageVersionExists(name, version) {
+  const result = await npm(['view', `${name}@${version}`, 'version', '--json'], { stdio: 'pipe' })
   if (result.status === 0) return true
   const message = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
   if (/E404|404 Not Found|is not in this registry/iu.test(message)) return false
   fail(`Could not query ${name}@${version} from npm:\n${message.trim()}`)
 }
 
-function ensureDistTag(name, version, tag) {
-  const result = npm(['view', name, 'dist-tags', '--json'], { stdio: 'pipe' })
+async function ensureDistTag(name, version, tag) {
+  const result = await npm(['view', name, 'dist-tags', '--json'], { stdio: 'pipe' })
   if (result.status !== 0) fail(`Could not query dist-tags for ${name}:\n${`${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim()}`)
   let tags
   try {
@@ -307,7 +386,7 @@ function ensureDistTag(name, version, tag) {
     fail(`npm returned invalid dist-tag data for ${name}: ${result.stdout.trim()}`)
   }
   if (tags?.[tag] === version) return
-  const tagged = npm(['dist-tag', 'add', `${name}@${version}`, tag])
+  const tagged = await npm(['dist-tag', 'add', `${name}@${version}`, tag])
   if (tagged.status !== 0) fail(`Could not set dist-tag ${tag} on ${name}@${version}.`)
   console.log(`TAG  ${name}@${version} -> ${tag}`)
 }
@@ -329,13 +408,24 @@ async function confirmPublish(version, tag) {
   if (options.yes || options.dryRun) return
   if (!process.stdin.isTTY || !process.stdout.isTTY) fail('Non-interactive publishing requires --yes.')
   const rl = createInterface({ input, output })
+  let rejectInterrupt
+  const interrupted = new Promise((_, reject) => { rejectInterrupt = reject })
+  const onSigint = () => rejectInterrupt(new ReleaseInterrupted('SIGINT'))
+  const onSigterm = () => rejectInterrupt(new ReleaseInterrupted('SIGTERM'))
+  rl.once('SIGINT', onSigint)
+  process.once('SIGTERM', onSigterm)
   try {
-    const answer = await rl.question(`\nPublish Vune ${version} to npm with dist-tag "${tag}"? [y/N] `)
+    const answer = await Promise.race([
+      rl.question(`\nPublish Vune ${version} to npm with dist-tag "${tag}"? [y/N] `),
+      interrupted,
+    ])
     if (!/^(y|yes)$/iu.test(answer.trim())) {
       console.log('Release cancelled.')
       process.exit(0)
     }
   } finally {
+    rl.off('SIGINT', onSigint)
+    process.off('SIGTERM', onSigterm)
     rl.close()
   }
 }
@@ -363,15 +453,15 @@ async function main() {
     return
   }
 
-  assertGitClean()
+  await assertGitClean()
 
   // Validate before mutating manifests: a failed check must not leave the
   // working tree dirty at bumped versions, which would block a resumable
   // rerun behind the assertGitClean gate above.
-  runChecks()
+  await runChecks()
   printPlan(version, tag)
 
-  const tarballs = buildReleaseTarballs(version)
+  const tarballs = await buildReleaseTarballs(version)
 
   for (const target of releaseTargets) {
     const expected = manifestFor(target)
@@ -384,7 +474,7 @@ async function main() {
     }
   }
 
-  if (!options.dryRun) authPreflight()
+  if (!options.dryRun) await authPreflight()
   await confirmPublish(version, tag)
 
   console.log(`\n==> ${options.dryRun ? 'Dry-running' : 'Publishing'} packages`)
@@ -395,15 +485,15 @@ async function main() {
     const name = manifestFor(target).name
     const packed = tarballs.get(name)
 
-    if (!options.dryRun && packageVersionExists(name, version)) {
+    if (!options.dryRun && await packageVersionExists(name, version)) {
       console.log(`SKIP ${name}@${version} (already published)`)
-      ensureDistTag(name, version, tag)
+      await ensureDistTag(name, version, tag)
       skipped.push(name)
       continue
     }
 
     console.log(`${options.dryRun ? 'DRY ' : ''}PUBLISH ${name}@${version}`)
-    const result = npm(publishArgs(packed.path, packed.manifest, tag))
+    const result = await npm(publishArgs(packed.path, packed.manifest, tag), { interactive: true })
     if (result.status !== 0) {
       fail(`${name}@${version} was not published. Fix the npm error and rerun the same release command; already-published packages will be skipped.`)
     }
@@ -419,4 +509,17 @@ async function main() {
   else if (options.bump || options.version) syncVersions(version)
 }
 
-main().catch(error => fail(error instanceof Error ? error.stack ?? error.message : String(error)))
+main().catch(error => {
+  if (error instanceof ReleaseInterrupted) {
+    console.error('\nVune release interrupted.')
+    process.exitCode = error.exitCode
+    return
+  }
+  const message = error instanceof ReleaseFailure
+    ? error.message
+    : error instanceof Error
+      ? error.stack ?? error.message
+      : String(error)
+  console.error(`\nVune release failed: ${message}`)
+  process.exitCode = 1
+})
